@@ -30,7 +30,7 @@ process.env.TERM_PROGRAM = 'WezTerm' // DEC-2026 路径，与真机一致
 
 const { Writable, PassThrough } = await import('node:stream')
 const React = await import('react')
-const { Terminal: XTerm } = await import('@xterm/headless')
+const m = await import('@xterm/headless'); const XTerm = m.default?.Terminal ?? m.Terminal
 const { render, Box, Text } = await import('../lib/types/ui.js')
 
 const COLS = 100
