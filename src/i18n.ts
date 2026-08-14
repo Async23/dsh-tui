@@ -269,6 +269,19 @@ const dict = {
   'question-attached-label': { zh: '（附加：{{label}}）', en: '(attached: {{label}})' },
   'question-direct-input': { zh: '直接输入…', en: 'Type directly…' },
 
+  // ── components/approvals/ApprovalPanel.tsx ──────────────────────────
+  'approval-waiting': { zh: ' ⏳ 等待审批 · {{tool}} ', en: ' Awaiting approval · {{tool}} ' },
+  'approval-proceed': { zh: '要允许这次操作吗？', en: 'Do you want to proceed?' },
+  'approval-yes': { zh: '允许（仅本次）', en: 'Yes, allow once' },
+  'approval-no': { zh: '拒绝', en: 'No' },
+  'approval-hint': { zh: '↑/↓ 选择 · Enter 确认 · Esc 拒绝', en: '↑/↓ select · Enter confirm · Esc reject' },
+
+  // ── components/questions/PlanReviewPanel.tsx ────────────────────────
+  'plan-review-fallback-header': { zh: '计划评审', en: 'Plan review' },
+  'plan-review-feedback-placeholder': { zh: '输入反馈，告诉模型要改什么…', en: 'Tell the model what to change…' },
+  'plan-review-approve-needs-empty': { zh: '请先清空反馈再批准（或在输入行回车提交反馈）', en: 'Clear the feedback to approve (or press Enter on the input row to send it)' },
+  'plan-review-hint': { zh: '↑/↓ 选择 · 1/2 快选 · 打字输入反馈 · Enter 提交 · Esc 打断评审', en: '↑/↓ select · 1/2 quick-pick · type feedback · Enter submit · Esc dismiss' },
+
   // ── /lang command ───────────────────────────────────────────────────
   'lang-current': { zh: '当前语言  {{lang}}', en: 'Current language  {{lang}}' },
   'lang-switch-hint': { zh: '切换      /lang en | /lang zh', en: 'Switch      /lang en | /lang zh' },

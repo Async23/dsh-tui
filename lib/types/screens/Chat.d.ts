@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Channel } from '../channel.js';
 import type { QuestionStore } from '../questions.js';
+import type { ApprovalStore } from '../approvals.js';
 /**
  * Main chat screen in the Claude Code layout: a scrollable transcript
  * (with the current turn's prompt pinned above the viewport while scrolled
@@ -13,9 +14,10 @@ import type { QuestionStore } from '../questions.js';
  * interrupts the running turn, or (when idle) asks for a second Ctrl+C to
  * exit; Enter while scrolled up jumps back to the bottom.
  */
-export declare function Chat({ channel, questionStore, onExit, onUpdate, }: {
+export declare function Chat({ channel, questionStore, approvalStore, onExit, onUpdate, }: {
     channel: Channel;
     questionStore: QuestionStore;
+    approvalStore: ApprovalStore;
     onExit: () => void;
     /** Update the installed package and restart the current TUI process. */
     onUpdate?: () => void;
