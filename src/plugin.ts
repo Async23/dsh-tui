@@ -13,7 +13,7 @@ import { QuestionStore } from './questions.js'
 import { registerPackagedSkills } from './packaged-skills.js'
 import { readActivityFrames } from './activityPrefs.js'
 import { readModelPref } from './modelPrefs.js'
-import { explicitModelRoute, resolveModelRoute, validateModelRoute } from './modelRoute.js'
+import { explicitModelRoute, recordedModelRoute, resolveModelRoute, validateModelRoute } from './modelRoute.js'
 import type { ModelRoute } from './modelRoute.js'
 import { readPresetPref } from './presetPrefs.js'
 import { composePreset, resolvePersistedPreset, runningPresetOf } from './presets.js'
@@ -137,9 +137,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     config.preset,
   )
 
-  // Status-line route: the exact route the agent was created with; a resume
-  // shows the startup resolution (the session's own records re-assert the
-  // real route as they replay).
+  // Status-line route: the exact route the agent runs with — on create the
+  // validated startup resolution, on resume the route the target session's
+  // own records carry (a complete cordis.yml pin wins over them).
   const displayRoute = createdRoute ?? startupRoute
   const channel = createChannel(ctx, agent, {
     model: displayRoute.model,
@@ -379,7 +379,16 @@ async function resolveAgent(
         agentOptions: resumeOptions,
         ...(composed.setup === undefined ? {} : { setup: composed.setup }),
       })
-      return { agent: resumed.agent, handle: resumed, agentPreset: composed.agentPreset }
+      // Status-line route on resume: the route the session actually
+      // continues on — a complete cordis.yml pin, else the route its own
+      // request/header records carry (a bare log yields undefined and the
+      // caller falls back to the startup resolution, best effort).
+      return {
+        agent: resumed.agent,
+        handle: resumed,
+        agentPreset: composed.agentPreset,
+        route: resumeRoute ?? recordedModelRoute(resumed.agent.session.events),
+      }
     } catch (error) {
       // No artifact (first run / cleared storage) or persistence not
       // mounted: fall through to a fresh session, but stay loud in the log.

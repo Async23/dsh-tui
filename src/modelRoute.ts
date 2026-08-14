@@ -61,6 +61,32 @@ export function resolveModelRoute(
 }
 
 /**
+ * The route a persisted session's own log records (issues #30/#67): the last
+ * `request/header` snapshot carries the call config the agent loop builds its
+ * requests from, so it IS the route a resume continues on when cordis.yml
+ * does not pin a complete override. The status line derives the resumed
+ * session's route from this so the display follows the session, not the
+ * startup resolution. A log without any header (a session that never started
+ * a turn) records no route.
+ * @param events - The session's durable event log.
+ * @returns The last recorded route, or undefined when the log has none.
+ */
+export function recordedModelRoute(
+  events: readonly { type: string; data?: unknown }[],
+): ModelRoute | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (event === undefined || event.type !== 'request/header') continue
+    const config = (event.data as { header?: { config?: { provider?: unknown; model?: unknown } } } | undefined)
+      ?.header?.config
+    if (typeof config?.provider === 'string' && typeof config?.model === 'string') {
+      return { provider: config.provider, model: config.model }
+    }
+  }
+  return undefined
+}
+
+/**
  * Best-effort combination check (issue #67): when the llm runtime advertises
  * a non-empty catalog for the route's provider and the model is not in it,
  * reject the whole route in favor of `fallback` so a stale persisted choice

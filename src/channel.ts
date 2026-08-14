@@ -20,7 +20,7 @@ import { clearResumeTarget, readLastUsed, touchSession, type SessionRecord, writ
 import { writeActivityFrames } from './activityPrefs.js'
 import { readEffortPref, writeEffortPref } from './effortPrefs.js'
 import { readModelPref, writeModelPref } from './modelPrefs.js'
-import { explicitModelRoute, resolveModelRoute, validateModelRoute } from './modelRoute.js'
+import { explicitModelRoute, recordedModelRoute, resolveModelRoute, validateModelRoute } from './modelRoute.js'
 import { readPresetPref, writePresetPref } from './presetPrefs.js'
 import { composePreset, resolvePersistedPreset, rosterOf, runningPresetOf, serviceForAgent, type AgentPresetInfo } from './presets.js'
 import { isPresetName } from './components/activityFrames.js'
@@ -1415,6 +1415,15 @@ export function createChannel(
       state.status = handle.agent.status
       state.agentId = handle.agent.id
       state.agentPreset = resumeComposed.agentPreset
+      // Status-line route follows the resumed session (review feedback): the
+      // route it actually continues on — a complete cordis.yml pin, else the
+      // route its own request/header records carry. A bare log (no turn ever
+      // started) records none; keep the current display as best effort.
+      const resumedRoute = resumeRoute ?? recordedModelRoute(handle.agent.session.events)
+      if (resumedRoute !== undefined) {
+        state.provider = resumedRoute.provider
+        state.model = resumedRoute.model
+      }
       state.tps = undefined
       state.tpsSamples = []
       state.lastUsage = undefined

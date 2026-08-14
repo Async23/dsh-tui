@@ -20,6 +20,8 @@
  * 8. validateModelRoute: a route absent from a non-empty adapter catalog is
  *    rejected wholesale to the fallback; an empty/failed/missing catalog is
  *    trusted (best effort, never blocks startup).
+ * 9. recordedModelRoute: a resume's status-line route comes from the target
+ *    session's own log (last request/header wins; a bare log records none).
  *
  * Run with plain node against the compiled lib (after `pnpm build`):
  * `node scripts/verify-model-route.mjs`
@@ -27,6 +29,7 @@
 import {
   DEFAULT_MODEL_ROUTE,
   explicitModelRoute,
+  recordedModelRoute,
   resolveModelRoute,
   validateModelRoute,
 } from '../lib/types/modelRoute.js'
@@ -114,6 +117,32 @@ const PREF = { provider: 'my-gateway', model: 'glm-5.3' }
 
   const absent = await validateModelRoute(undefined, PREF)
   check('no llm service -> trusted', absent.rejected === undefined && eq(absent.route, PREF))
+}
+
+// 9. Resume status-line route (review feedback on #76): the status line
+//    derives the resumed session's route from its own log — the last
+//    request/header record wins, a log without any header records no route.
+{
+  const log = [
+    { type: 'session/start', data: {} },
+    { type: 'request/header', data: { header: { config: { provider: 'my-gateway', model: 'glm-5.3' } } } },
+    { type: 'request/header', data: { header: { config: { provider: 'deepseek-official', model: 'deepseek-v4-pro' } } } },
+    { type: 'assistant/message', data: {} },
+  ]
+  const route = recordedModelRoute(log)
+  check(
+    'resume -> last request/header route wins (status line follows the session)',
+    eq(route, { provider: 'deepseek-official', model: 'deepseek-v4-pro' }),
+    JSON.stringify(route),
+  )
+  check(
+    'resume -> a bare log records no route (caller falls back best-effort)',
+    recordedModelRoute([{ type: 'session/start', data: {} }]) === undefined,
+  )
+  check(
+    'resume -> malformed header data is skipped',
+    recordedModelRoute([{ type: 'request/header', data: { header: {} } }]) === undefined,
+  )
 }
 
 if (failed > 0) {
