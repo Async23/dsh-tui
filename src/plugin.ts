@@ -182,27 +182,21 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         const message = error instanceof Error ? error.message : String(error)
         ctx.logger.error(`cc-tui: exit after error: ${message}`)
         if (process.stderr.isTTY) {
-          process.stderr.write(`
-cc-tui crashed: ${message}
-`)
+          process.stderr.write(`\ncc-tui crashed: ${message}\n`)
         }
         disposeRootAndExit(ctx, 1)
         return
       }
       if (updateRequested) {
         if (process.stdout.isTTY) {
-          process.stdout.write('
-Updating dsh-cc-tui and restarting…
-')
+          process.stdout.write('\nUpdating dsh-cc-tui and restarting…\n')
         }
         disposeRootAndThen(ctx, () => {
           // updateRequested only flips when onUpdate exists, which itself
           // requires a resolved profile — narrow for the call below.
           const updateProfile = profile
           if (updateProfile === undefined) {
-            process.stderr.write('
-cc-tui update aborted: no dsh profile resolved.
-')
+            process.stderr.write('\ncc-tui update aborted: no dsh profile resolved.\n')
             process.exit(1)
           }
           void updateTuiAndRestart(channel.agentId, updateProfile).then(
@@ -212,12 +206,8 @@ cc-tui update aborted: no dsh profile resolved.
                 // resume.txt was already written. A bare non-zero exit would
                 // drop the user into a shell with no way back in.
                 process.stderr.write(
-                  `
-cc-tui update failed (exit ${updateCode}). Your session is preserved — resume with:
-` +
-                    `${resumeCommand(profile, channel.agentId)}
-
-`,
+                  `\ncc-tui update failed (exit ${updateCode}). Your session is preserved — resume with:\n` +
+                    `${resumeCommand(profile, channel.agentId)}\n\n`,
                 )
               }
               process.exit(restartCode)
@@ -225,12 +215,8 @@ cc-tui update failed (exit ${updateCode}). Your session is preserved — resume 
             updateError => {
               const message = updateError instanceof Error ? updateError.message : String(updateError)
               process.stderr.write(
-                `
-cc-tui update failed: ${message}. Your session is preserved — resume with:
-` +
-                  `${resumeCommand(profile, channel.agentId)}
-
-`,
+                `\ncc-tui update failed: ${message}. Your session is preserved — resume with:\n` +
+                  `${resumeCommand(profile, channel.agentId)}\n\n`,
               )
               process.exit(1)
             },
@@ -239,11 +225,7 @@ cc-tui update failed: ${message}. Your session is preserved — resume with:
         return
       }
       if (process.stdout.isTTY) {
-        process.stdout.write(`
-Resume with (set the env var, then boot the profile):
-${resumeCommand(profile, channel.agentId)}
-
-`)
+        process.stdout.write(`\nResume with (set the env var, then boot the profile):\n${resumeCommand(profile, channel.agentId)}\n\n`)
       }
       disposeRootAndExit(ctx, 0)
     },
