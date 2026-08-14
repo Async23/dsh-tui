@@ -839,8 +839,10 @@ export function createChannel(
     model: string
     cwd: string
     provider: string
-    /** Configured reasoning effort, shown from startup until the first
-     *  request/header event reports the adapter's live value. */
+    /** Configured reasoning effort: applied to the agent's requests when the
+     *  live route offers it (silently ignored otherwise), and shown from
+     *  startup until the first request/header event reports the adapter's
+     *  live value. */
     effort?: string
     /** Consume `activity/status` session events (dsh-working-activity) into
      *  the status line; default on. */

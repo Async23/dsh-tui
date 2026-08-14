@@ -26,8 +26,11 @@ export interface Config {
     model?: string;
     /** Session working directory; defaults to the invoking directory. */
     cwd?: string;
-    /** Configured reasoning effort, displayed from startup (the live value
-     *  from request headers replaces it once the first turn runs). */
+    /** Reasoning effort applied to every request, validated against the live
+     *  route's adapter levels (an unlisted level is ignored and the adapter
+     *  default applies). Wins over the persisted Shift+Tab choice; also seeds
+     *  the startup status line until the first request header reports the
+     *  live value. */
     effort?: string;
     /** Show the dsh-working-activity live working line on the status bar
      *  (consumes its log-only `activity/status` events; off hides it). */
