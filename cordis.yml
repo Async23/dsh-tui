@@ -142,10 +142,14 @@
 # Live working line for the status bar: thinking copy / running tool / turn
 # summary. dsh-cc consumes its log-only activity/status events; the
 # plugin's own TUI prompt slot is skipped without an official dsh-tui.
+# Mounted through dsh-cc-tui's `./working-activity` re-export (not the bare
+# `dsh-working-activity` name) so the row resolves from install layouts that
+# never link transitive dependencies into the boot anchor's node_modules —
+# pnpm's isolated profile layout, issue #60.
 # publishIntervalMs 500: live-phase snapshots republish every 500ms so the
 # cc-tui status-line elapsed timers tick smoothly (default 2000ms).
 - id: working-activity
-  name: 'dsh-working-activity'
+  name: 'dsh-cc-tui/working-activity'
   config:
     publishIntervalMs: 500
 

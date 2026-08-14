@@ -202,12 +202,15 @@
         sessionId: !!js process.env.DSH_CC_RESUME_SESSION ?? undefined
 
     # Live working-line data source (thinking copy / running tool / turn
-    # summary). dsh-working-activity ships as a plain npm dependency of
-    # dsh-cc-tui — transitive deps never enter dsh.profile.bundles — so this
-    # layer inserts the row itself instead of relying on a separate bundle.
+    # summary). Mounted through dsh-cc-tui's own `./working-activity`
+    # re-export, NOT the bare `dsh-working-activity` name: the dsh Loader
+    # resolves row names from the profile directory, and pnpm's isolated
+    # node_modules layout never links a transitive dependency into the
+    # profile root (npm's flat layout hid this), so the bare name died with
+    # ERR_MODULE_NOT_FOUND and disposed the whole app at boot (#60).
     # publishIntervalMs 500 keeps the status-line timers ticking smoothly
     # (default 2000ms).
     - id: working-activity
-      name: 'dsh-working-activity'
+      name: 'dsh-cc-tui/working-activity'
       config:
         publishIntervalMs: 500
