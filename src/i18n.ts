@@ -33,6 +33,7 @@ const dict = {
   'activity-indicator-switched': { zh: '指示器已切换：{{name}}（已保存）', en: 'Indicator switched: {{name}} (saved)' },
   'activity-pref-write-failed': { zh: '无法写入 ~/.dsh-cc/working-activity.json，切换未保存', en: 'Cannot write ~/.dsh-cc/working-activity.json, switch not saved' },
   'model-pref-write-failed': { zh: '无法写入 ~/.dsh-cc/model.json，模型选择不会保存到重启后', en: 'Cannot write ~/.dsh-cc/model.json, the model choice will not survive a restart' },
+  'model-route-invalid': { zh: '持久化的模型路由 {{provider}}/{{model}} 不在该 provider 的模型列表中，已整体回退到 {{fallback}}', en: 'Persisted model route {{provider}}/{{model}} is not advertised by that provider; fell back to {{fallback}}' },
   'unknown-activity-preset': { zh: '未知预设「{{name}}」· /activity frames 查看全部', en: 'Unknown preset "{{name}}" · /activity frames to view all' },
   'preset-unavailable': { zh: 'Preset 不可用——当前组合未挂载 agent-presets 名册', en: 'Preset unavailable — the agent-presets roster is not mounted' },
   'preset-agent-running': { zh: 'Agent 运行中，无法切换 preset', en: 'Agent is running, cannot switch preset' },

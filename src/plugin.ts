@@ -11,6 +11,8 @@ import { QuestionStore } from './questions.js'
 import { registerPackagedSkills } from './packaged-skills.js'
 import { readActivityFrames } from './activityPrefs.js'
 import { readModelPref } from './modelPrefs.js'
+import { explicitModelRoute, resolveModelRoute, validateModelRoute } from './modelRoute.js'
+import type { ModelRoute } from './modelRoute.js'
 import { readPresetPref } from './presetPrefs.js'
 import { composePreset, resolvePersistedPreset, runningPresetOf } from './presets.js'
 import { writeResumeTarget } from './sessionHistory.js'
@@ -89,20 +91,34 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Config-only route: resolveAgent applies the persisted `/model`
   // preference on CREATE only — a resumed session keeps the route its own
   // log records (last request/header), matching the preset rule.
-  const agentOptions = {
+  const configuredRoute = {
     provider: config.provider,
     model: config.model,
   }
+  // Atomic route resolution (issue #67): a complete cordis.yml route wins
+  // whole, else the persisted `/model` choice wins whole, else the harness
+  // defaults — a provider-only config pin never merges with the persisted
+  // model half. resolveAgent validates this route on create and reports the
+  // one actually used, so the status line shows the real request route.
+  const startupRoute = resolveModelRoute(configuredRoute, readModelPref())
   const meta = { cwd: config.cwd ?? process.cwd() }
-  const { agent, handle, agentPreset } = await resolveAgent(ctx, config.sessionId, agentOptions, meta, config.preset)
+  const { agent, handle, agentPreset, route: createdRoute } = await resolveAgent(
+    ctx,
+    config.sessionId,
+    configuredRoute,
+    startupRoute,
+    meta,
+    config.preset,
+  )
 
-  // Status-line route: cordis.yml explicit keys win over the persisted
-  // `/model` choice, which wins over the harness defaults.
-  const modelPref = readModelPref()
+  // Status-line route: the exact route the agent was created with; a resume
+  // shows the startup resolution (the session's own records re-assert the
+  // real route as they replay).
+  const displayRoute = createdRoute ?? startupRoute
   const channel = createChannel(ctx, agent, {
-    model: config.model ?? modelPref?.model ?? 'deepseek-v4-flash',
+    model: displayRoute.model,
     cwd: config.cwd ?? process.cwd(),
-    provider: config.provider ?? modelPref?.provider ?? 'deepseek-official',
+    provider: displayRoute.provider,
     // Raw cordis.yml route (undefined when unset): the channel's
     // new-session path re-resolves prefs against these, and resume passes
     // only explicit values so the target session's own record wins.
@@ -314,18 +330,24 @@ ${resumeCommand(profile, channel.agentId)}
  * preset the session's own log records. Without the roster both paths behave
  * as before presets existed.
  *
- * Model route (issues #14/#30): a create resolves cordis.yml
- * `provider`/`model` over the persisted `/model` choice; a resume passes the
- * config-only route through so the session's own recorded route wins when
- * cordis.yml sets nothing.
+ * Model route (issues #14/#30/#67): a create adopts the caller's atomically
+ * resolved route (validated against the adapter catalog below); a resume
+ * passes only a COMPLETE cordis.yml route through — a provider-only pin must
+ * not half-override the route the target session's own records carry.
  */
 async function resolveAgent(
   ctx: Context,
   requestedSessionId: string | undefined,
-  agentOptions: { provider?: string; model?: string },
+  configuredRoute: { provider?: string; model?: string },
+  startupRoute: ModelRoute,
   meta: { cwd: string },
   configuredPreset?: string,
-): Promise<{ agent: Agent; handle?: AgentHandle; agentPreset?: string }> {
+): Promise<{ agent: Agent; handle?: AgentHandle; agentPreset?: string; route?: ModelRoute }> {
+  // Resume override (issue #67): cordis.yml overrides the target session's
+  // recorded route only when it pins BOTH halves; undefined halves let the
+  // session's own request/header records win (issue #30).
+  const resumeRoute = explicitModelRoute(configuredRoute)
+  const resumeOptions = { provider: resumeRoute?.provider, model: resumeRoute?.model }
   if (requestedSessionId !== undefined) {
     const resumeId = SessionId(requestedSessionId)
     const existing = ctx.agents.get(resumeId)
@@ -340,7 +362,7 @@ async function resolveAgent(
       const composed = await composePreset(ctx, persisted)
       const resumed = await ctx.agents.resume({
         resumeSessionId: resumeId,
-        agentOptions,
+        agentOptions: resumeOptions,
         ...(composed.setup === undefined ? {} : { setup: composed.setup }),
       })
       return { agent: resumed.agent, handle: resumed, agentPreset: composed.agentPreset }
@@ -354,12 +376,19 @@ async function resolveAgent(
   }
   const sessionId = SessionId(randomUUID())
   const composed = await composePreset(ctx, configuredPreset ?? readPresetPref())
-  // Fresh-session route precedence (issues #14/#30): cordis.yml explicit
-  // keys > the persisted `/model` choice > the adapter/harness default.
-  const modelPref = readModelPref()
-  const route = {
-    provider: agentOptions.provider ?? modelPref?.provider,
-    model: agentOptions.model ?? modelPref?.model,
+  // Fresh-session route precedence (issues #14/#30/#67): resolved atomically
+  // by the caller (complete cordis.yml route > the persisted `/model` choice
+  // > the harness default), then validated against the adapter catalog — a
+  // stale persisted choice falls back to the default route wholesale instead
+  // of reaching the server as an unknown model name.
+  const llm = ctx.get('llm') as
+    | { listModels(provider: string): Promise<readonly { id: string }[]> }
+    | undefined
+  const { route, rejected } = await validateModelRoute(llm, startupRoute)
+  if (rejected !== undefined) {
+    ctx.logger.warn(
+      `cc-tui: model route ${rejected.provider}/${rejected.model} is not advertised by provider "${rejected.provider}"; falling back to ${route.provider}/${route.model}`,
+    )
   }
   const created = await ctx.agents.create({
     sessionId,
@@ -375,10 +404,10 @@ async function resolveAgent(
     // the worst outcome for a misconfigured leaf (unknown provider/model).
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(
-      `cc-tui: failed to create agent (provider=${route.provider ?? 'deepseek-official'}, model=${route.model ?? 'deepseek-v4-flash'}): ${message}`,
+      `cc-tui: failed to create agent (provider=${route.provider}, model=${route.model}): ${message}`,
     )
   })
-  return { agent: created.agent, handle: created, agentPreset: composed.agentPreset }
+  return { agent: created.agent, handle: created, agentPreset: composed.agentPreset, route }
 }
 
 /**

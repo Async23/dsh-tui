@@ -17,12 +17,15 @@ export declare const inject: string[];
 export interface Config {
     /** Existing session to attach; a fresh session is created when absent. */
     sessionId?: string;
-    /** LLM provider route. When absent, the `/model` choice persisted in
-     *  `~/.dsh-cc/model.json` wins, then the harness `deepseek-official`
-     *  route. */
+    /** LLM provider route. The route resolves atomically (issue #67): when
+     *  cordis.yml names BOTH `provider` and `model`, that pair wins; otherwise
+     *  the `/model` choice persisted in `~/.dsh-cc/model.json` wins whole;
+     *  otherwise the harness defaults (`deepseek-official`). A provider-only
+     *  pin never half-overrides the persisted choice. */
     provider?: string;
-    /** Model override passed to the agent. When absent, the persisted `/model`
-     *  choice wins, then the harness default (`deepseek-v4-flash`). */
+    /** Model override passed to the agent; resolved together with `provider`
+     *  as one atomic route (see `provider`). Harness default model:
+     *  `deepseek-v4-flash`. */
     model?: string;
     /** Session working directory; defaults to the invoking directory. */
     cwd?: string;
