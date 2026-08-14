@@ -99,6 +99,14 @@ declare const dict: {
         readonly zh: "{{server}}（{{count}} 个工具）: {{tools}}";
         readonly en: "{{server}} ({{count}} tools): {{tools}}";
     };
+    readonly 'child-stderr-line': {
+        readonly zh: "子进程 stderr: {{line}}";
+        readonly en: "Subprocess stderr: {{line}}";
+    };
+    readonly 'child-stderr-line-repeat': {
+        readonly zh: "子进程 stderr: {{line}}（重复 {{count}} 次）";
+        readonly en: "Subprocess stderr: {{line}} (repeated {{count}}×)";
+    };
     readonly 'export-title': {
         readonly zh: "# dsh-cc 会话导出";
         readonly en: "# dsh-cc session export";

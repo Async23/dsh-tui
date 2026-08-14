@@ -7,6 +7,8 @@ import * as toolAskUser from '@deepseek-ai/dsh-tool-ask-user'
 import type { Context } from '@deepseek-ai/cordis'
 import { Config } from './index.js'
 import { createChannel } from './channel.js'
+import { createChildStderrReporter, installChildStderrGuard } from './childStderr.js'
+import { logForDebugging } from './utils/debug.js'
 import { QuestionStore } from './questions.js'
 import { registerPackagedSkills } from './packaged-skills.js'
 import { readActivityFrames } from './activityPrefs.js'
@@ -88,6 +90,30 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   ctx.effect(() => () => questionStore.rejectAll())
 
+  // Child-process stderr guard (issue #17): MCP servers spawned with an
+  // inherited stderr (the MCP SDK's stdio default) write straight to the
+  // terminal device from the child process, bypassing the renderer's own
+  // stderr patch and corrupting the alt-screen. Take over those spawns and
+  // surface their stderr as deduplicated notifications instead. Installed
+  // before agent resolution so servers spawned during startup are covered;
+  // notices posted before the channel exists are buffered and flushed then.
+  const stderrBacklog: Array<[string, { color?: 'error' | 'warning' | 'success'; timeoutMs?: number }?]> = []
+  let notifyStderr: ((text: string, options?: { color?: 'error' | 'warning' | 'success'; timeoutMs?: number }) => void) | undefined
+  const stderrReporter = createChildStderrReporter((text, options) => {
+    if (notifyStderr !== undefined) notifyStderr(text, options)
+    else stderrBacklog.push([text, options])
+  })
+  ctx.effect(() => {
+    const restoreSpawn = installChildStderrGuard(line => {
+      logForDebugging(`[child-stderr] ${line}`)
+      stderrReporter.push(line)
+    })
+    return () => {
+      restoreSpawn()
+      stderrReporter.dispose()
+    }
+  })
+
   // Config-only route: resolveAgent applies the persisted `/model`
   // preference on CREATE only — a resumed session keeps the route its own
   // log records (last request/header), matching the preset rule.
@@ -137,6 +163,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     agentPreset,
     handle,
   })
+  // Attach the stderr reporter to the live channel and flush anything a
+  // startup-spawned server produced while the channel didn't exist yet.
+  notifyStderr = (text, options) => channel.notify(text, options)
+  for (const [text, options] of stderrBacklog.splice(0)) {
+    notifyStderr(text, options)
+  }
   // Single exit funnel: `/exit` and double Ctrl+C land here, and so does
   // the unmount triggered by a cordis context teardown — but the two must
   // not share a fate (issue #12). The DSH launcher's boot-time recompose
