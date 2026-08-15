@@ -297,6 +297,8 @@ const dict = {
   'cmd-desc-compact': { zh: '压缩会话历史' },
   'cmd-desc-resume': { zh: '恢复历史会话' },
   'cmd-desc-rename': { zh: '重命名当前会话' },
+  'cmd-desc-quit': { zh: '退出 dsh-tui' },
+  'cmd-desc-q': { zh: '退出 dsh-tui' },
   'cmd-desc-rewind': { zh: '回退会话到历史消息' },
   'cmd-desc-export': { zh: '导出会话为 Markdown 文件' },
   // Session / environment

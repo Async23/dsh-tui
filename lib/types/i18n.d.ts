@@ -918,6 +918,12 @@ declare const dict: {
     readonly 'cmd-desc-rename': {
         readonly zh: "重命名当前会话";
     };
+    readonly 'cmd-desc-quit': {
+        readonly zh: "退出 dsh-tui";
+    };
+    readonly 'cmd-desc-q': {
+        readonly zh: "退出 dsh-tui";
+    };
     readonly 'cmd-desc-rewind': {
         readonly zh: "回退会话到历史消息";
     };
