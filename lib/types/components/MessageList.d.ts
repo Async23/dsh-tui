@@ -2,6 +2,7 @@ import React from 'react';
 import { type ScrollBoxHandle } from '../ui.js';
 import type { ChatRow } from '../channel.js';
 import type { DOMElement } from '../ink/dom.js';
+import type { WhaleStyle } from './Whale.js';
 export declare function MessageList({ rows, expanded, expandedRows, selectedId, onToggleRow, model, showAll, onToggleAll, onLoadOlder, thinkingVisible, registerRowRef, scrollHandle, forceMountRowId, newSinceRowId, onUnseenCount, }: {
     rows: readonly ChatRow[];
     expanded: boolean;
@@ -33,9 +34,11 @@ export declare function MessageList({ rows, expanded, expandedRows, selectedId, 
  * welcome line. It scrolls away with the transcript once the conversation
  * fills the viewport (Claude Code shows its ✦ logo in the same slot).
  */
-export declare function LogoHeader({ model, effort, cwd, }: {
+export declare function LogoHeader({ model, effort, cwd, whaleStyle, }: {
     model: string;
     effort?: string | undefined;
     cwd: string;
+    /** Startup whale artwork (`whale` config); classic whale when absent. */
+    whaleStyle?: WhaleStyle;
 }): React.ReactNode;
 //# sourceMappingURL=MessageList.d.ts.map
