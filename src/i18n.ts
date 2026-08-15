@@ -353,6 +353,16 @@ const dict = {
   'lang-switched': { zh: '语言已切换：{{lang}}（已保存）', en: 'Language switched: {{lang}} (saved)' },
   'lang-unknown': { zh: '未知语言「{{lang}}」· /lang 查看全部（en / zh）', en: 'Unknown language "{{lang}}" · /lang to view all (en / zh)' },
   'lang-switch-failed': { zh: '语言「{{lang}}」切换失败（无法写入 ~/.dsh-cc/lang.json）', en: 'Language "{{lang}}" switch failed (cannot write ~/.dsh-cc/lang.json)' },
+
+  // ── components/TraceView.tsx (/trace, issue #80) ─────────────────────
+  'trace-title': { zh: '轨迹', en: 'Trace' },
+  'trace-subtitle': { zh: '会话事件时间线 · 过滤：{{filter}} · {{count}} 条', en: 'Session event timeline · filter: {{filter}} · {{count}} entries' },
+  'trace-empty': { zh: '暂无轨迹事件', en: 'No trace events yet' },
+  'trace-filter-all': { zh: '全部', en: 'all' },
+  'trace-filter-tool': { zh: '工具', en: 'tools' },
+  'trace-filter-thinking': { zh: '思考', en: 'thinking' },
+  'trace-filter-message': { zh: '消息', en: 'messages' },
+  'trace-filter-progress': { zh: '进度', en: 'progress' },
 } as const
 
 export type I18nKey = keyof typeof dict

@@ -443,6 +443,14 @@ export interface Channel {
   /** Subagent rows for `/agents` (DSH subagent service; empty message when
    *  the service is absent). */
   listSubagents(): Promise<string[]>
+  /**
+   * The live agent's session event log (immutable snapshot, replaced on
+   * every append — dsh-session caches the frozen array) — the `/trace`
+   * trajectory view's data source. Screens already re-render on `version`
+   * bumps, so a view reading this per render follows live events in real
+   * time; agent swaps (/resume /rewind /new) are reflected immediately.
+   */
+  traceEvents(): readonly SessionEvent[]
 }
 
 /** @internal */
@@ -585,6 +593,8 @@ export interface ChannelState {
   doctorInfo(): string[]
   /** Subagent rows (CC's /agents). */
   listSubagents(): Promise<string[]>
+  /** Live session event log (see the public Channel type, `/trace`). */
+  traceEvents(): readonly SessionEvent[]
 }
 
 const ARGS_PREVIEW_LIMIT = 160
@@ -2164,6 +2174,11 @@ export function createChannel(
       } catch (error) {
         return [t('subagent-query-failed', { err: error instanceof Error ? error.message : String(error) })]
       }
+    },
+    traceEvents() {
+      // Immutable per-append snapshot (dsh-session caches the frozen array);
+      // reads follow agent swaps (/resume /rewind /new) automatically.
+      return agent.session.events
     },
   }
 

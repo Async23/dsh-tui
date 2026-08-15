@@ -34,6 +34,15 @@ import { FRAME_PRESETS, PRESET_NAMES } from '../components/activityFrames.js'
 import { ThinkingToggle } from '../components/ThinkingToggle.js'
 import { HistorySearchDialog } from '../components/HistorySearchDialog.js'
 import { RewindPicker } from '../components/RewindPicker.js'
+import { TraceView, TRACE_WINDOW } from '../components/TraceView.js'
+import {
+  extendTrace,
+  filterTraceEntries,
+  TRACE_FILTERS,
+  type TraceBuild,
+  type TraceEntry,
+  type TraceFilter,
+} from '../trace.js'
 import { LoadingState } from '../components/design-system/LoadingState.js'
 import { Pane } from '../components/design-system/Pane.js'
 import { loadHistory, type HistoryEntry } from '../history.js'
@@ -54,6 +63,9 @@ const SELECTABLE_KINDS = new Set<ChatRow['kind']>([
 /** Shared empty list for mode-gated derived rows (stable reference, so
  *  downstream consumers never see a changing prop when the mode is off). */
 const NO_ROWS: readonly ChatRow[] = []
+
+/** Shared empty list for the closed `/trace` view (see NO_ROWS). */
+const NO_TRACE_ENTRIES: readonly TraceEntry[] = []
 
 /** `max` → `Max` (effort levels arrive lower-case from the adapter). */
 function capitalize(text: string): string {
@@ -205,6 +217,14 @@ export function Chat({
   const [rewindOpen, setRewindOpen] = React.useState(false)
   const [rewindIndex, setRewindIndex] = React.useState(0)
   const [rewindConfirm, setRewindConfirm] = React.useState<ChatRow | null>(null)
+  /** `/trace` trajectory view (issue #80): open state + type filter + cursor.
+   *  `traceFollowRef` pins the cursor to the newest entry while the view
+   *  follows a running session; any upward scroll unpins it. */
+  const [traceOpen, setTraceOpen] = React.useState(false)
+  const [traceFilter, setTraceFilter] = React.useState<TraceFilter>('all')
+  const [traceCursor, setTraceCursor] = React.useState(0)
+  const traceFollowRef = React.useRef(true)
+  const traceBuildRef = React.useRef<TraceBuild | null>(null)
   /** Startup context panel: expanded by header click or Ctrl+T. */
   const [loadedContextOpen, setLoadedContextOpen] = React.useState(false)
   /** `/` transcript search (less-style incsearch, ported from CC's REPL). */
@@ -483,6 +503,17 @@ export function Chat({
         return true
       case 'compact':
         channel.compact()
+        return true
+      case 'trace':
+        // Open the trajectory view (issue #80): the timeline reads the live
+        // session event log via channel.traceEvents() and follows new events
+        // in real time (every session event bumps the channel version, which
+        // re-renders this screen). Opens pinned to the newest entry.
+        setHelpOpen(false)
+        traceFollowRef.current = true
+        setTraceFilter('all')
+        setTraceCursor(0)
+        setTraceOpen(true)
         return true
       case 'help':
         setHelpOpen(true)
@@ -800,6 +831,30 @@ export function Chat({
       channel.notify('Rewound — edit and press Enter to resend')
     }
   }
+
+  // `/trace` timeline: extend the incremental build with the session's
+  // current event snapshot, then apply the /thinking gate and the type
+  // filter. Computed per render while open (channel events bump `version`);
+  // extendTrace only consumes the appended tail, so a long session costs
+  // O(new events), never O(log), per frame.
+  if (traceOpen) {
+    traceBuildRef.current = extendTrace(traceBuildRef.current, channel.traceEvents())
+  }
+  const traceEntries: readonly TraceEntry[] = traceOpen && traceBuildRef.current !== null
+    ? filterTraceEntries(
+      thinkingVisible
+        ? traceBuildRef.current.entries
+        : traceBuildRef.current.entries.filter(entry => entry.kind !== 'thinking'),
+      traceFilter,
+    )
+    : NO_TRACE_ENTRIES
+  /** Effective cursor: pinned to the newest entry while following, clamped
+   *  against the (possibly filtered) list otherwise. */
+  const traceCursorClamped = traceEntries.length === 0
+    ? 0
+    : traceFollowRef.current
+      ? traceEntries.length - 1
+      : Math.min(traceCursor, traceEntries.length - 1)
 
   // Row seeking under layout virtualization: a mounted row seeks directly;
   // an unmounted one is force-mounted first, then sought by the completion
@@ -1163,6 +1218,45 @@ export function Chat({
       }
       return
     }
+    if (traceOpen) {
+      // Trajectory view (issue #80): read-only timeline navigation. ↑/↓ and
+      // PgUp/PgDn move the cursor (any upward move unpins tail-following,
+      // landing back on the newest entry re-pins it); g/G jump top/bottom;
+      // `f` cycles the type filter (all → tool → thinking → message →
+      // progress); Esc/q closes back to the conversation.
+      const last = traceEntries.length - 1
+      const letter = input !== '' && !key.ctrl && !key.meta
+      if (key.escape || (letter && input === 'q')) {
+        setTraceOpen(false)
+      } else if (key.upArrow) {
+        traceFollowRef.current = false
+        setTraceCursor(Math.max(0, traceCursorClamped - 1))
+      } else if (key.downArrow) {
+        const next = Math.min(last, traceCursorClamped + 1)
+        setTraceCursor(next)
+        traceFollowRef.current = next >= last
+      } else if (key.pageUp) {
+        traceFollowRef.current = false
+        setTraceCursor(Math.max(0, traceCursorClamped - TRACE_WINDOW))
+      } else if (key.pageDown) {
+        const next = Math.min(last, traceCursorClamped + TRACE_WINDOW)
+        setTraceCursor(next)
+        traceFollowRef.current = next >= last
+      } else if (key.home || (letter && input === 'g')) {
+        traceFollowRef.current = false
+        setTraceCursor(0)
+      } else if (key.end || (letter && input === 'G')) {
+        traceFollowRef.current = true
+        setTraceCursor(Math.max(0, last))
+      } else if (letter && input === 'f') {
+        const index = TRACE_FILTERS.indexOf(traceFilter)
+        setTraceFilter(TRACE_FILTERS[(index + 1) % TRACE_FILTERS.length] ?? 'all')
+        // The filtered list re-anchors to the newest entry.
+        traceFollowRef.current = true
+        setTraceCursor(0)
+      }
+      return
+    }
     if (isMod(key) && input === 't') {
       // Toggle the startup loaded-context panel (keyboard only — the
       // ported ink core handles no mouse clicks).
@@ -1249,7 +1343,8 @@ export function Chat({
   /** Prompt input is inert while a modal dialog owns the keyboard. */
   const promptSelectionActive =
     selectionActive || modelPickerOpen || resumePickerOpen || activityPickerOpen ||
-    presetPickerOpen || themePickerOpen || thinkingOpen || historyOpen || rewindOpen || searchOpen
+    presetPickerOpen || themePickerOpen || thinkingOpen || historyOpen || rewindOpen || searchOpen ||
+    traceOpen
 
   return (
     <Box flexDirection="column" flexGrow={1} width="100%">
@@ -1409,6 +1504,15 @@ export function Chat({
               rows={rewindRows}
               focusIndex={rewindIndex}
               confirmRow={rewindConfirm}
+            />
+          </Box>
+        )}
+        {traceOpen && (
+          <Box flexDirection="column" marginTop={1}>
+            <TraceView
+              entries={traceEntries}
+              cursor={traceCursorClamped}
+              filter={traceFilter}
             />
           </Box>
         )}

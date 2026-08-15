@@ -146,7 +146,7 @@ zh; unmapped registry commands fall back to the registry's own text.
 
 | Group | Commands |
 | --- | --- |
-| Sessions | `/new`, `/resume`, `/clear`, `/compact`, `/export` |
+| Sessions | `/new`, `/resume`, `/clear`, `/compact`, `/export`, `/trace` |
 | Status | `/status`, `/cost`, `/config`, `/doctor`, `/init`, `/agents` |
 | Model and display | `/model`, `/thinking`, `/tokens`, `/activity`, `/preset`, `/theme`, `/lang` |
 | Account and policy | `/login`, `/logout`, `/permissions`, `/add-dir`, `/hooks`, `/mcp`, `/memory` |

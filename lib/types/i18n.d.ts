@@ -1062,6 +1062,38 @@ declare const dict: {
         readonly zh: "语言「{{lang}}」切换失败（无法写入 ~/.dsh-cc/lang.json）";
         readonly en: "Language \"{{lang}}\" switch failed (cannot write ~/.dsh-cc/lang.json)";
     };
+    readonly 'trace-title': {
+        readonly zh: "轨迹";
+        readonly en: "Trace";
+    };
+    readonly 'trace-subtitle': {
+        readonly zh: "会话事件时间线 · 过滤：{{filter}} · {{count}} 条";
+        readonly en: "Session event timeline · filter: {{filter}} · {{count}} entries";
+    };
+    readonly 'trace-empty': {
+        readonly zh: "暂无轨迹事件";
+        readonly en: "No trace events yet";
+    };
+    readonly 'trace-filter-all': {
+        readonly zh: "全部";
+        readonly en: "all";
+    };
+    readonly 'trace-filter-tool': {
+        readonly zh: "工具";
+        readonly en: "tools";
+    };
+    readonly 'trace-filter-thinking': {
+        readonly zh: "思考";
+        readonly en: "thinking";
+    };
+    readonly 'trace-filter-message': {
+        readonly zh: "消息";
+        readonly en: "messages";
+    };
+    readonly 'trace-filter-progress': {
+        readonly zh: "进度";
+        readonly en: "progress";
+    };
 };
 export type I18nKey = keyof typeof dict;
 export type I18nParams = Record<string, string | number>;

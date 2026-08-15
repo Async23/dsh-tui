@@ -160,7 +160,7 @@ transcript。
 
 | 分组 | 命令 |
 | --- | --- |
-| 会话 | `/new`、`/resume`、`/clear`、`/compact`、`/export` |
+| 会话 | `/new`、`/resume`、`/clear`、`/compact`、`/export`、`/trace` |
 | 状态 | `/status`、`/cost`、`/config`、`/doctor`、`/init`、`/agents` |
 | 模型与显示 | `/model`、`/thinking`、`/tokens`、`/activity`、`/preset`、`/theme`、`/lang` |
 | 账号与策略 | `/login`、`/logout`、`/permissions`、`/add-dir`、`/hooks`、`/mcp`、`/memory` |
