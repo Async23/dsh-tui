@@ -755,6 +755,14 @@ declare const dict: {
         readonly zh: "剪贴板为空";
         readonly en: "Clipboard is empty";
     };
+    readonly 'input-editor-unavailable': {
+        readonly zh: "未找到可用编辑器，请设置 $EDITOR（或 $VISUAL）环境变量";
+        readonly en: "No editor available — set the $EDITOR (or $VISUAL) environment variable";
+    };
+    readonly 'input-editor-failed': {
+        readonly zh: "外部编辑器失败：{{name}}";
+        readonly en: "External editor failed: {{name}}";
+    };
     readonly 'input-clipboard-read-failed': {
         readonly zh: "读取剪贴板失败";
         readonly en: "Failed to read the clipboard";
