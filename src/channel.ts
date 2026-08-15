@@ -17,6 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { isAbsolute, join } from 'node:path'
 import { LOCAL_COMMANDS, type LocalCommand } from './commands.js'
 import { clearResumeTarget, readLastUsed, touchSession, type SessionRecord, writeResumeTarget } from './sessionHistory.js'
+import { prepareSessionForResume } from './compat/index.js'
 import { writeActivityFrames } from './activityPrefs.js'
 import { readEffortPref, writeEffortPref } from './effortPrefs.js'
 import { readModelPref, writeModelPref } from './modelPrefs.js'
@@ -88,7 +89,7 @@ export type ToolResultView =
     }
   | { readonly card: 'search'; readonly shape: 'paths'; readonly title?: string; readonly paths: readonly string[]; readonly truncated: boolean; readonly total: number }
 
-/** The dsh-tools registry seam cc-tui reads presentations through. The
+/** The dsh-tools registry seam dsh-tui reads presentations through. The
  *  registry lives on the host plane; `get` takes the live agent as the
  *  scope so a preset's own tool definitions resolve (dsh-host-apiproxy's
  *  presenter pattern). */
@@ -147,7 +148,7 @@ export interface TokenUsage {
 /**
  * Latest `activity/status` snapshot (the log-only event appended by
  * `@deepseek-ai/dsh-working-activity` for any UI consumer): the model's
- * live working line — thinking copy, running tool, turn summary. cc-tui
+ * live working line — thinking copy, running tool, turn summary. dsh-tui
  * renders it on the status line; nothing here requires the plugin (absent
  * events simply leave the slot empty).
  */
@@ -419,7 +420,7 @@ export interface Channel {
   listFiles(): Promise<readonly string[]>
   /** Recent sessions recorded by the DSH persistence backend (for `/resume`). */
   listSessions(): Promise<readonly SessionRecord[]>
-  /** Mark a session for `dsh-cc --resume` on the next launch. */
+  /** Mark a session for `dsh-tui --resume` on the next launch. */
   setResumeTarget(sessionId: string): void
   /** Manually compact the session history (CC's /compact); no-op notify when the leaf lacks a compaction service. */
   compact(): void
@@ -428,7 +429,7 @@ export interface Channel {
   pushLocal(title: string, lines: readonly string[]): void
   /** MCP server/tool status for /mcp: one line per server, or setup guidance. */
   mcpStatus(): string[]
-  /** Write the conversation transcript to `dsh-cc-export-<ts>.md` in the
+  /** Write the conversation transcript to `dsh-tui-export-<ts>.md` in the
    *  session cwd; returns the written path, or null on failure. */
   exportSession(): string | null
   /** Create `AGENTS.md` in the session cwd (DSH workspace-context file);
@@ -1384,6 +1385,9 @@ export function createChannel(
         model: options.configuredModel,
       })
       try {
+        // Compat boundary: mark third-party event types in the target log
+        // ignorable before the harness seed-validates it (src/compat/).
+        await prepareSessionForResume(sessionId)
         handle = await agents.resume({
           resumeSessionId: SessionId(sessionId),
           agentOptions: { provider: resumeRoute?.provider, model: resumeRoute?.model },
@@ -1869,7 +1873,7 @@ export function createChannel(
         const local = headers.filter(header =>
           (header.cwd ?? '').replace(/\/+$/, '') === cwd,
         )
-        // MRU ordering: DSH headers carry only createdAt, so cc-tui keeps its
+        // MRU ordering: DSH headers carry only createdAt, so dsh-tui keeps its
         // own last-used timestamps (touchSession on resume/submit/new) and
         // falls back to createdAt for sessions never touched in this install.
         const lastUsed = readLastUsed()
@@ -1899,7 +1903,7 @@ export function createChannel(
                 // Launch artifact — a session with no user message holds no
                 // conversation to resume, so drop it from the picker (its
                 // createdAt-only updatedAt would otherwise pin it near the
-                // top forever, one per dsh-cc launch).
+                // top forever, one per dsh-tui launch).
                 empty.add(record.id)
                 return
               }
@@ -2067,7 +2071,7 @@ export function createChannel(
             break
         }
       }
-      const fileName = `dsh-cc-export-${Date.now()}.md`
+      const fileName = `dsh-tui-export-${Date.now()}.md`
       try {
         const target = join(state.cwd, fileName)
         writeFileSync(target, parts.join('\n'), 'utf8')
@@ -2110,7 +2114,7 @@ export function createChannel(
       const userHome = process.env.USERPROFILE ?? homedir()
       const configCandidates = [
         join(userHome, '.dsh-cc/cordis.yml'),
-        join(state.cwd, 'examples/cc-tui-agent/cordis.yml'),
+        join(userHome, '.dsh/profiles/dsh-tui/cordis.patch.yml'),
       ]
       for (const candidate of configCandidates) {
         lines.push(`${t('doctor-config', { candidate, state: existsSync(candidate) ? '✓' : t('doctor-config-missing') })}`)

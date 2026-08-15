@@ -123,8 +123,8 @@ answerer（`approval/request` waterfall），仅允许一次/拒绝两种决定�
 | 目的 | 方式 |
 | --- | --- |
 | 环境与 profile | TUI 内运行 `/doctor`、`/config`、`/permissions` |
-| stderr 调试 | `CC_TUI_DEBUG=1 dsh --profile cc-tui` |
-| 原始 ANSI 帧 | `DSH_CC_RENDER_LOG=/path/to/render.log dsh --profile cc-tui` |
+| stderr 调试 | `CC_TUI_DEBUG=1 dsh --profile dsh-tui` |
+| 原始 ANSI 帧 | `DSH_CC_RENDER_LOG=/path/to/render.log dsh --profile dsh-tui` |
 | 主题回归 | `node --import tsx/esm scripts/verify-themes.mjs` |
 
 `DSH_CC_RENDER_LOG` 和会话导出可能包含敏感内容，分享前必须脱敏。

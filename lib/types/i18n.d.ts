@@ -1,5 +1,5 @@
 /**
- * cc-tui localization — UI strings for Chinese (`zh`, the default) and
+ * dsh-tui localization — UI strings for Chinese (`zh`, the default) and
  * English (`en`).
  *
  * Resolution order mirrors the `/theme` mechanism (see themePrefs.ts):
@@ -88,8 +88,8 @@ declare const dict: {
         readonly en: "No MCP servers configured.";
     };
     readonly 'mcp-insert-hint': {
-        readonly zh: "在 profile 补丁层（~/.dsh/profiles/cc-tui/cordis.patch.yml）insert 一行即可，例：";
-        readonly en: "Insert one line in the profile patch layer (~/.dsh/profiles/cc-tui/cordis.patch.yml), e.g.:";
+        readonly zh: "在 profile 补丁层（~/.dsh/profiles/dsh-tui/cordis.patch.yml）insert 一行即可，例：";
+        readonly en: "Insert one line in the profile patch layer (~/.dsh/profiles/dsh-tui/cordis.patch.yml), e.g.:";
     };
     readonly 'mcp-readme-hint': {
         readonly zh: "详见仓库 README 的 MCP 章节。";
@@ -108,8 +108,8 @@ declare const dict: {
         readonly en: "Subprocess stderr: {{line}} (repeated {{count}}×)";
     };
     readonly 'export-title': {
-        readonly zh: "# dsh-cc 会话导出";
-        readonly en: "# dsh-cc session export";
+        readonly zh: "# dsh-tui 会话导出";
+        readonly en: "# dsh-tui session export";
     };
     readonly 'export-time': {
         readonly zh: "- 导出时间: {{time}}";
@@ -468,8 +468,8 @@ declare const dict: {
         readonly en: "User config  {{path}}";
     };
     readonly 'doctor-launch-hint': {
-        readonly zh: "启动方式  dsh-cc.cmd / dsh --config <上述任一配置>";
-        readonly en: "Launch      dsh-cc.cmd / dsh --config <either config above>";
+        readonly zh: "启动方式  dsh-tui.cmd / dsh --profile dsh-tui";
+        readonly en: "Launch      dsh-tui.cmd / dsh --profile dsh-tui";
     };
     readonly 'doctor-route-hint': {
         readonly zh: "模型路由  由 cordis.yml 的 llm-deepseek 段决定（/model 仅提示重启生效）";
@@ -516,16 +516,16 @@ declare const dict: {
         readonly en: "Source: env var → workspace .env (run.ts fallback)";
     };
     readonly 'login-logout-hint': {
-        readonly zh: "DSH 凭证来自环境变量 DEEPSEEK_API_KEY — 删除该环境变量后重启 dsh-cc 即登出";
-        readonly en: "DSH credentials come from the DEEPSEEK_API_KEY env var — remove it and restart dsh-cc to log out";
+        readonly zh: "DSH 凭证来自环境变量 DEEPSEEK_API_KEY — 删除该环境变量后重启 dsh-tui 即登出";
+        readonly en: "DSH credentials come from the DEEPSEEK_API_KEY env var — remove it and restart dsh-tui to log out";
     };
     readonly 'permissions-policy-hint': {
         readonly zh: "DSH 权限策略由 fs-policy / bash-sandbox 配置决定（当前 leaf：workspace 内读写、写入需已读文件）。";
         readonly en: "DSH permission policy is set by fs-policy / bash-sandbox config (current leaf: read/write in workspace, writes need a prior read).";
     };
     readonly 'permissions-approval-hint': {
-        readonly zh: "DSH 的 /permission 预设切换需要 approval 服务 + 审批 UI，dsh-cc 未挂载。";
-        readonly en: "DSH /permission preset switching needs the approval service + approval UI, not mounted in dsh-cc.";
+        readonly zh: "DSH 的 /permission 预设切换需要 approval 服务 + 审批 UI，dsh-tui 未挂载。";
+        readonly en: "DSH /permission preset switching needs the approval service + approval UI, not mounted in dsh-tui.";
     };
     readonly 'permissions-root-hint': {
         readonly zh: "当前文件系统策略以工作目录为根：{{cwd}}";
@@ -552,16 +552,16 @@ declare const dict: {
         readonly en: "Long-term conventions can go into AGENTS.md (workspace context) or skills (~/.dsh/skills).";
     };
     readonly 'update-unavailable': {
-        readonly zh: "当前运行方式不支持自动更新（需经 dsh --profile 启动），请在终端执行 dsh plugin --profile <name> update dsh-cc-tui";
-        readonly en: "Automatic update is unavailable in this launch mode (needs dsh --profile). Run dsh plugin --profile <name> update dsh-cc-tui in a terminal.";
+        readonly zh: "当前运行方式不支持自动更新（需经 dsh --profile 启动），请在终端执行 dsh plugin --profile <name> update @deepseek-harness-tui/dsh-tui";
+        readonly en: "Automatic update is unavailable in this launch mode (needs dsh --profile). Run dsh plugin --profile <name> update @deepseek-harness-tui/dsh-tui in a terminal.";
     };
     readonly 'update-working': {
         readonly zh: "当前回合仍在运行，请等待完成后再更新 TUI。";
         readonly en: "The current turn is still running. Wait for it to finish before updating the TUI.";
     };
     readonly 'update-starting': {
-        readonly zh: "正在更新 dsh-cc-tui，完成后会自动重启并恢复当前会话……";
-        readonly en: "Updating dsh-cc-tui. The TUI will restart and resume this session when finished…";
+        readonly zh: "正在更新 @deepseek-harness-tui/dsh-tui，完成后会自动重启并恢复当前会话……";
+        readonly en: "Updating @deepseek-harness-tui/dsh-tui. The TUI will restart and resume this session when finished…";
     };
     readonly 'update-available': {
         readonly zh: "发现新版本：v{{latest}}（当前 v{{current}}）· 输入 /update 更新 TUI";
@@ -584,8 +584,8 @@ declare const dict: {
         readonly en: "Recommended: Windows Terminal (≥110 columns, monospace, TrueColor).";
     };
     readonly 'terminal-paste-hint': {
-        readonly zh: "Ctrl+V 粘贴文本/文件路径；Ctrl+Shift+V 终端原生粘贴；右键粘贴同样可用。";
-        readonly en: "Ctrl+V pastes text/file paths; Ctrl+Shift+V is native terminal paste; right-click paste also works.";
+        readonly zh: "{{mod}}V 粘贴文本/文件路径；Ctrl+Shift+V 终端原生粘贴；右键粘贴同样可用。";
+        readonly en: "{{mod}}V pastes text/file paths; Ctrl+Shift+V is native terminal paste; right-click paste also works.";
     };
     readonly 'connect-none': {
         readonly zh: "DSH 暂无远程连接机制（CC 的 /connect 对应能力未适配）。";
@@ -891,6 +891,132 @@ declare const dict: {
         readonly zh: "↑/↓ 选择 · 1/2 快选 · 打字输入反馈 · Enter 提交 · Esc 打断评审";
         readonly en: "↑/↓ select · 1/2 quick-pick · type feedback · Enter submit · Esc dismiss";
     };
+    readonly 'cmd-desc-new': {
+        readonly zh: "新开会话";
+    };
+    readonly 'cmd-desc-clear': {
+        readonly zh: "清空当前会话";
+    };
+    readonly 'cmd-desc-compact': {
+        readonly zh: "压缩会话历史";
+    };
+    readonly 'cmd-desc-resume': {
+        readonly zh: "恢复历史会话";
+    };
+    readonly 'cmd-desc-rewind': {
+        readonly zh: "回退会话到历史消息";
+    };
+    readonly 'cmd-desc-export': {
+        readonly zh: "导出会话为 Markdown 文件";
+    };
+    readonly 'cmd-desc-status': {
+        readonly zh: "查看会话状态";
+    };
+    readonly 'cmd-desc-cost': {
+        readonly zh: "查看会话 token 用量";
+    };
+    readonly 'cmd-desc-config': {
+        readonly zh: "查看 dsh-cc 配置来源";
+    };
+    readonly 'cmd-desc-doctor': {
+        readonly zh: "运行环境检查";
+    };
+    readonly 'cmd-desc-init': {
+        readonly zh: "在工作目录创建 AGENTS.md";
+    };
+    readonly 'cmd-desc-agents': {
+        readonly zh: "查看本会话的子代理";
+    };
+    readonly 'cmd-desc-activity': {
+        readonly zh: "切换工作状态指示器预设";
+    };
+    readonly 'cmd-desc-preset': {
+        readonly zh: "切换 Agent 预设（standard/code/minimal/cordis）";
+    };
+    readonly 'cmd-desc-theme': {
+        readonly zh: "切换配色主题（内置或自定义）";
+    };
+    readonly 'cmd-desc-lang': {
+        readonly zh: "切换界面语言（en / zh）";
+    };
+    readonly 'cmd-desc-model': {
+        readonly zh: "查看当前模型";
+    };
+    readonly 'cmd-desc-thinking': {
+        readonly zh: "切换扩展思考显示";
+    };
+    readonly 'cmd-desc-tokens': {
+        readonly zh: "查看会话 token 用量";
+    };
+    readonly 'cmd-desc-login': {
+        readonly zh: "查看 API 凭证状态";
+    };
+    readonly 'cmd-desc-logout': {
+        readonly zh: "清除 API 凭证";
+    };
+    readonly 'cmd-desc-permissions': {
+        readonly zh: "查看权限策略状态";
+    };
+    readonly 'cmd-desc-add-dir': {
+        readonly zh: "查看文件系统策略范围";
+    };
+    readonly 'cmd-desc-hooks': {
+        readonly zh: "查看 hooks 状态";
+    };
+    readonly 'cmd-desc-mcp': {
+        readonly zh: "查看 MCP 状态";
+    };
+    readonly 'cmd-desc-memory': {
+        readonly zh: "查看记忆状态";
+    };
+    readonly 'cmd-desc-update': {
+        readonly zh: "更新 dsh-cc-tui 并重启";
+    };
+    readonly 'cmd-desc-audit': {
+        readonly zh: "对当前项目做全面代码审计";
+    };
+    readonly 'cmd-desc-bug': {
+        readonly zh: "记录一份 bug 报告";
+    };
+    readonly 'cmd-desc-practice': {
+        readonly zh: "与 dsh-cc 进行编程练习";
+    };
+    readonly 'cmd-desc-review': {
+        readonly zh: "对当前项目做全面代码评审";
+    };
+    readonly 'cmd-desc-pr_comments': {
+        readonly zh: "审查拉取请求评论";
+    };
+    readonly 'cmd-desc-release-notes': {
+        readonly zh: "生成发布说明";
+    };
+    readonly 'cmd-desc-vuln-check': {
+        readonly zh: "运行安全漏洞检查";
+    };
+    readonly 'cmd-desc-vim': {
+        readonly zh: "切换 vim 模式";
+    };
+    readonly 'cmd-desc-terminal-setup': {
+        readonly zh: "查看终端配置建议";
+    };
+    readonly 'cmd-desc-connect': {
+        readonly zh: "连接远程机器";
+    };
+    readonly 'cmd-desc-help': {
+        readonly zh: "查看快捷键与命令";
+    };
+    readonly 'cmd-desc-exit': {
+        readonly zh: "退出 dsh-tui";
+    };
+    readonly 'cmd-desc-plan': {
+        readonly zh: "切换计划模式（/plan off 退出）";
+    };
+    readonly 'cmd-desc-goal': {
+        readonly zh: "设置或查看会话目标";
+    };
+    readonly 'cmd-desc-feedback': {
+        readonly zh: "提交使用反馈";
+    };
     readonly 'lang-current': {
         readonly zh: "当前语言  {{lang}}";
         readonly en: "Current language  {{lang}}";
@@ -936,6 +1062,16 @@ export declare function isLang(value: unknown): value is Lang;
  * @param params - Placeholder values.
  */
 export declare function t(key: I18nKey, params?: I18nParams): string;
+/**
+ * Translate a runtime-computed key (e.g. `cmd-desc-${name}`), falling back
+ * to the given text when the key is missing or has no entry in the active
+ * language — unlike {@link t}, which renders the key itself. Used where the
+ * fallback holds the authoritative text (command descriptions: the en copy
+ * lives in `LOCAL_COMMANDS` / the DSH registry, the dict carries zh only).
+ * @param key - Dictionary key, computed at runtime so it is not type-checked.
+ * @param fallback - Text used when no translation exists.
+ */
+export declare function tOr(key: string, fallback: string): string;
 /**
  * Parse a persisted `{ lang }` value; anything else yields undefined.
  * @param text - Raw file contents.

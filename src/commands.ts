@@ -1,16 +1,22 @@
 /**
- * Local slash commands for the dsh-cc TUI. Claude Code's command system is
- * deeply wired into its engine; cc-tui ships a small built-in set with the
+ * Local slash commands for the dsh-tui TUI. Claude Code's command system is
+ * deeply wired into its engine; dsh-tui ships a small built-in set with the
  * same `/name — description` suggestion chrome, and merges plugin-registered
  * commands (plan/goal/…) from the DSH command registry (`dsh-commands`) —
  * `runCommand` in the Chat screen dispatches either kind, with the registry
  * handler winning for names both sides declare.
  */
 
+import { tOr } from './i18n.js'
+
 export interface LocalCommand {
   /** The command name without the slash, e.g. `clear`. */
   name: string
-  /** One-line description shown in the suggestion overlay. */
+  /**
+   * One-line description shown in the suggestion overlay — the English text
+   * and the fallback for languages without a `cmd-desc-<name>` dict entry
+   * (see {@link localizedDescription}).
+   */
   description: string
   /** Optional bracket tag shown between name and description. */
   tag?: string
@@ -33,7 +39,7 @@ export const LOCAL_COMMANDS: LocalCommand[] = [
   // Session / environment
   { name: 'status', description: 'Show session status' },
   { name: 'cost', description: 'Show session token usage' },
-  { name: 'config', description: 'Show the dsh-cc configuration source' },
+  { name: 'config', description: 'Show the dsh-tui configuration source' },
   { name: 'doctor', description: 'Run environment checks' },
   { name: 'init', description: 'Create AGENTS.md in the working directory' },
   { name: 'agents', description: 'Show subagents of this session' },
@@ -53,11 +59,11 @@ export const LOCAL_COMMANDS: LocalCommand[] = [
   { name: 'hooks', description: 'Show hooks status' },
   { name: 'mcp', description: 'Show MCP status' },
   { name: 'memory', description: 'Show memory status' },
-  { name: 'update', description: 'Update dsh-cc-tui and restart' },
+  { name: 'update', description: 'Update dsh-tui and restart' },
   // Built-in skills (CC's skill commands, driven through DSH skills)
   { name: 'audit', description: 'Run a comprehensive code audit on this project' },
   { name: 'bug', description: 'Capture a bug report' },
-  { name: 'practice', description: 'Practice programming with dsh-cc' },
+  { name: 'practice', description: 'Practice programming with dsh-tui' },
   { name: 'review', description: 'Run a comprehensive code review on this project' },
   { name: 'pr_comments', description: 'Review pull request comments' },
   { name: 'release-notes', description: 'Generate release notes' },
@@ -68,8 +74,20 @@ export const LOCAL_COMMANDS: LocalCommand[] = [
   { name: 'connect', description: 'Connect to a remote machine' },
   // Help / exit
   { name: 'help', description: 'Show shortcuts and commands' },
-  { name: 'exit', description: 'Exit dsh-cc' },
+  { name: 'exit', description: 'Exit dsh-tui' },
 ]
+
+/**
+ * Resolve a command's description in the active UI language. The en text in
+ * `LOCAL_COMMANDS` (and the registry's own text for external commands) is
+ * the fallback; zh translations live in the i18n dict under
+ * `cmd-desc-<name>`. Resolved at call time — components call this during
+ * render, so a `/lang` switch repaints descriptions immediately.
+ * @param command - The command whose description to localize.
+ */
+export function localizedDescription(command: LocalCommand): string {
+  return tOr(`cmd-desc-${command.name}`, command.description)
+}
 
 /**
  * Parse a slash-command line into its name and the verbatim input following
