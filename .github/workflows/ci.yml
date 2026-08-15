@@ -72,6 +72,12 @@ jobs:
       # 回复只进 querier，不回显成终端残影。
       - run: node --import tsx/esm scripts/verify-terminal-queries.tsx
 
+      # win32-input-mode 解析回归（issue #147）：Windows Shift+Enter 探针
+      # 字节、AltGr 文本、Ctrl+[ 等价 Escape、spec 字段省略、数字键盘
+      # Uc 优先、代理对与 keyup 交错、Rc 重复展开、conhost 拆散粘贴重组、
+      # Alt+numpad 两轮合成。
+      - run: node --import tsx/esm scripts/verify-win32-input.tsx
+
       # 退出漏斗回归（issue #12）：上下文 teardown 不得走到进程退出。
       - run: node --import tsx/esm scripts/verify-teardown-exit.tsx
 
