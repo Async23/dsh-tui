@@ -18,6 +18,7 @@ import { explicitModelRoute, recordedModelRoute, resolveModelRoute, validateMode
 import type { ModelRoute } from '../modelRoute.js'
 import { readPresetPref } from '../presetPrefs.js'
 import { composePreset, resolvePersistedPreset, runningPresetOf } from './presets.js'
+import { ensureLegacySessionEventTypes } from './compat/index.js'
 import { clearResumeTarget, writeResumeTarget } from '../sessionHistory.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { checkForTuiUpdate, installedTuiVersion, isVersionNewer, resolveDshProfileName, resolveTuiUpdateTarget, updateTuiAndRestart } from '../update.js'
@@ -454,6 +455,10 @@ async function resolveAgent(
       return { agent: existing, agentPreset: runningPresetOf(existing.session) }
     }
     try {
+      // Compat boundary: register vouched-for legacy event types before the
+      // strict read path (issue #153) — same seam as the /resume picker,
+      // here for the launch-time --resume flow. In-process only.
+      ensureLegacySessionEventTypes()
       // The resumed session keeps the preset its log records (last
       // `agent-preset/selected` wins over the creation header), never the
       // caller's current preference.
