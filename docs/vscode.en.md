@@ -102,7 +102,7 @@ code --install-extension dsh-tui-vscode-0.1.0.vsix --force
 - Exports `code -w` as `$VISUAL` when unset, so `Ctrl+X` edits in VS Code
 - Status-bar `dsh-tui` item focuses/starts the session
 - Settings: `dsh-tui-vscode.command`, `extraArgs`, `terminalName`, `lang`,
-  `injectEditor`, `editorCommand` (see the extension README)
+  `injectEditor`, `editorCommand`, `dshHome` (see the extension README)
 
 ### Limitations and next steps
 

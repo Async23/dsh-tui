@@ -93,7 +93,7 @@ code --install-extension dsh-tui-vscode-0.1.0.vsix --force
 - `$VISUAL`/`$EDITOR` 未设置时自动导出 `code -w`，`Ctrl+X` 直接进 VS Code
 - 状态栏 `dsh-tui` 项点击聚焦/启动会话
 - 配置项：`dsh-tui-vscode.command`、`extraArgs`、`terminalName`、`lang`、
-  `injectEditor`、`editorCommand`（详见扩展 README）
+  `injectEditor`、`editorCommand`、`dshHome`（详见扩展 README）
 
 ### 限制与后续
 
