@@ -28,9 +28,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: 切换到图表专用分支（基于最新 main，每次强制重置）
+      - name: 切换到图表专用分支（基于最新 main，同步远端）
         run: |
           git checkout -B bot-star-history origin/main
+          # 首次运行远端无此分支；每次运行重置远端为最新 main（无保护，force 安全）
+          git push --force origin bot-star-history
           git branch --show-current
       - uses: narayann7/star-history-action@v1
         with:
