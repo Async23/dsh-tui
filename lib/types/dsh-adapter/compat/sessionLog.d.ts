@@ -20,13 +20,17 @@ export declare function sessionsRoots(): string[];
  * (`agents.resume` seed validation, `persistence.load`). Idempotent; never
  * throws.
  *
- * Why "every reachable copy": a runtime can load dsh-session more than once
- * (CLI tree vs plugin profile tree, or version overlap during upgrades), and
- * the strict validator consults only ITS copy's Set. Anchors: this module
- * (the dsh-tui tree), the process entry point (the launcher tree the
- * backend hangs off), and the installed dsh-session-persistence package
- * (the tree the validator itself resolves from). A copy that cannot be
- * resolved from an anchor simply is not there.
+ * Why a walk instead of a single import: a runtime can load dsh-session
+ * more than once (CLI tree vs profile tree, version overlap during
+ * upgrades, pnpm peer-context splits), and the strict validator — which
+ * lives in the dsh-session-persistence package — consults only ITS OWN
+ * tree's copy. Registering through one import leaves the other trees'
+ * copies untouched. So from EACH base anchor (this module = the dsh-tui
+ * tree, the process entry point = the launcher/CLI tree) the walk
+ * registers the tree's own dsh-session AND steps one edge further:
+ * resolve the validator package from that same tree, then register the
+ * dsh-session copy the validator's entry resolves. A branch that cannot
+ * be resolved simply is not there; resolved module paths are deduped.
  */
 export declare function ensureLegacySessionEventTypes(): void;
 /**

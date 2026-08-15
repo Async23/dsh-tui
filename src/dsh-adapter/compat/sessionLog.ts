@@ -151,36 +151,52 @@ function decodeEvents(buf: Buffer): Record<string, unknown>[] {
  * (`agents.resume` seed validation, `persistence.load`). Idempotent; never
  * throws.
  *
- * Why "every reachable copy": a runtime can load dsh-session more than once
- * (CLI tree vs plugin profile tree, or version overlap during upgrades), and
- * the strict validator consults only ITS copy's Set. Anchors: this module
- * (the dsh-tui tree), the process entry point (the launcher tree the
- * backend hangs off), and the installed dsh-session-persistence package
- * (the tree the validator itself resolves from). A copy that cannot be
- * resolved from an anchor simply is not there.
+ * Why a walk instead of a single import: a runtime can load dsh-session
+ * more than once (CLI tree vs profile tree, version overlap during
+ * upgrades, pnpm peer-context splits), and the strict validator — which
+ * lives in the dsh-session-persistence package — consults only ITS OWN
+ * tree's copy. Registering through one import leaves the other trees'
+ * copies untouched. So from EACH base anchor (this module = the dsh-tui
+ * tree, the process entry point = the launcher/CLI tree) the walk
+ * registers the tree's own dsh-session AND steps one edge further:
+ * resolve the validator package from that same tree, then register the
+ * dsh-session copy the validator's entry resolves. A branch that cannot
+ * be resolved simply is not there; resolved module paths are deduped.
  */
 export function ensureLegacySessionEventTypes(): void {
-  const anchors = [import.meta.url, process.argv[1]].filter(
+  const roots = [import.meta.url, process.argv[1]].filter(
     (anchor): anchor is string => typeof anchor === 'string' && anchor.length > 0,
   )
-  try {
-    anchors.push(import.meta.resolve('@deepseek-ai/dsh-session-persistence'))
-  } catch {
-    // Backend not installed/resolvable — no validator tree to cover here.
-  }
-  for (const anchor of anchors) {
+  const visitedAnchors = new Set<string>()
+  const registeredCopies = new Set<string>()
+  const walk = (anchor: string): void => {
+    if (visitedAnchors.has(anchor)) return
+    visitedAnchors.add(anchor)
+    let req: ReturnType<typeof createRequire>
     try {
-      const req = createRequire(anchor)
-      const mod = req('@deepseek-ai/dsh-session') as {
-        KNOWN_SESSION_EVENT_TYPES?: Set<string>
-      }
-      for (const type of LEGACY_SESSION_EVENT_TYPES) {
-        mod.KNOWN_SESSION_EVENT_TYPES?.add(type)
+      req = createRequire(anchor)
+    } catch {
+      return
+    }
+    try {
+      const copy = req.resolve('@deepseek-ai/dsh-session')
+      if (!registeredCopies.has(copy)) {
+        registeredCopies.add(copy)
+        const mod = req(copy) as { KNOWN_SESSION_EVENT_TYPES?: Set<string> }
+        for (const type of LEGACY_SESSION_EVENT_TYPES) {
+          mod.KNOWN_SESSION_EVENT_TYPES?.add(type)
+        }
       }
     } catch {
-      // No resolvable dsh-session copy from this anchor — nothing to register into.
+      // No resolvable dsh-session copy from this anchor — nothing here.
+    }
+    try {
+      walk(req.resolve('@deepseek-ai/dsh-session-persistence'))
+    } catch {
+      // Validator package not reachable from this tree — nothing to cover.
     }
   }
+  for (const root of roots) walk(root)
 }
 
 /**
