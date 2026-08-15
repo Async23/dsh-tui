@@ -72,44 +72,59 @@ The xterm.js capabilities cap what is possible:
 
 For behavior identical to a standalone terminal (e.g. complex mouse
 semantics), use an external terminal window (Windows Terminal / kitty /
-WezTerm / iTerm2 / tmux) or wait for a Path B custom rendering solution
-(below).
+WezTerm / iTerm2 / tmux) or the Path B session panel from Option 2 (the
+extension's own webview rendering, below).
 
-## Option 2: the dsh-tui-vscode companion extension
+## Option 2: the dsh-tui-vscode companion extension (Path B)
 
 [`baobaolaodie/dsh-tui-vscode`](https://github.com/baobaolaodie/dsh-tui-vscode)
-opens a dedicated integrated terminal via `createTerminal()` running `dsh-tui`
-and layers light editor integration on top. It does not touch the TUI's
-rendering core — it only **hosts** it, the same architecture as the official
-Claude Code VS Code extension.
+runs dsh-tui inside a **dedicated session panel** — an activity-bar `dsh-tui`
+icon plus an editor-area panel rendering the full TUI with a **real PTY
+(node-pty, ConPTY on Windows) + xterm.js in a webview**, completely
+independent of the integrated terminal. It does not touch the TUI's rendering
+core — it only **hosts** it, shaped like the official Claude Code VS Code
+extension.
 
 ### Install
 
 ```sh
 git clone https://github.com/baobaolaodie/dsh-tui-vscode.git
 cd dsh-tui-vscode
-pnpm install
-pnpm package
-code --install-extension dsh-tui-vscode-0.1.0.vsix --force
+npm install
+npm run package
+code --install-extension dsh-tui-vscode-0.2.0.vsix --force
 ```
 
 ### Commands and editor integration
 
-- `dsh-tui: Start new session / 启动新会话`, `dsh-tui: Resume last session / 恢复上次会话`,
-  `dsh-tui: Focus session terminal / 聚焦会话终端`, `dsh-tui: Terminate session / 终止会话`
-- File paths in terminal output (`C:\...`, `/...`, `~/...`, `./...`, with
+- Activity-bar `dsh-tui` icon → sidebar "会话控制" view (start / resume / focus /
+  kill + status); `dsh-tui: Open panel / 打开会话面板`,
+  `dsh-tui: Start new session / 启动新会话`, `dsh-tui: Resume last session / 恢复上次会话`,
+  `dsh-tui: Terminate session / 终止会话`
+- The session renders in the editor-area panel: alt-screen, mouse, OSC 52
+  clipboard, OSC 8 links, synchronized output — all hosted by the extension;
+  panel resize propagates to the PTY
+- File paths in the output (`C:\...`, `/...`, `~/...`, `./...`, with
   `path:line[:col]`) are clickable and open in the editor
 - Exports `code -w` as `$VISUAL` when unset, so `Ctrl+X` edits in VS Code
-- Status-bar `dsh-tui` item focuses/starts the session
-- Settings: `dsh-tui-vscode.command`, `extraArgs`, `terminalName`, `lang`,
-  `injectEditor`, `editorCommand`, `dshHome` (see the extension README)
+- OSC 11 background queries are answered with the VS Code theme; OSC 0 titles
+  sync to the panel title
+- Closing the panel keeps the session running (reopen reconnects to the live
+  stream); hidden panels keep full rendering
+- Status-bar `dsh-tui` item opens the panel
+- Settings: `dsh-tui-vscode.command`, `extraArgs`, `lang`, `injectEditor`,
+  `editorCommand`, `dshHome` (see the extension README)
 
 ### Limitations and next steps
 
-Path A is bounded by the VS Code integrated terminal, same as Option 1. If
-full custom rendering is ever needed (webview + xterm.js + real PTY — Path B
-of issue #161), the extension repo is the hosting point; dsh-TUI itself keeps
-its "interaction and presentation only" boundary unchanged.
+- Scrollback is not preserved after the panel tab is closed (hidden panels
+  keep it); single-session model.
+- Protocol capabilities are bounded by xterm.js (extended keyboard protocol,
+  DEC 2026, etc.); Path B keeps rendering fully under our control for future
+  enhancements.
+- The vsix contains the node-pty binary for the platform it was built on.
+- dsh-TUI itself keeps its "interaction and presentation only" boundary
+  unchanged.
 
 ## Acceptance baseline
 

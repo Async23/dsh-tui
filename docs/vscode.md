@@ -65,41 +65,49 @@ xterm.js 的能力上限决定：
 | OSC 52 剪贴板 | 首次使用弹出权限提示（VS Code 自身的安全设计） |
 
 需要完全对齐独立终端行为（如复杂鼠标语义）时，请使用独立终端窗口
-（Windows Terminal / kitty / WezTerm / iTerm2 / tmux），或等待路径 B 的
-完整自定义渲染方案（见下文）。
+（Windows Terminal / kitty / WezTerm / iTerm2 / tmux），或使用方式二的
+Path B 会话面板（扩展自己的 webview 渲染，见下文）。
 
-## 方式二：companion 扩展 dsh-tui-vscode
+## 方式二：companion 扩展 dsh-tui-vscode（Path B）
 
 [`baobaolaodie/dsh-tui-vscode`](https://github.com/baobaolaodie/dsh-tui-vscode)
-用 `createTerminal()` 开一个专用集成终端跑 `dsh-tui`，再叠加轻量编辑器集成。
-它不改动 TUI 核心渲染链路，只负责**承载**——与 Claude Code 官方 VS Code
-扩展同构。
+用**真实 PTY（node-pty，Windows 走 ConPTY）+ Webview 内的 xterm.js** 把 dsh-tui
+渲染进 VS Code **独立的会话面板**——活动栏 `dsh-tui` 图标 + 编辑器区面板，
+**彻底脱离底部集成终端**，形态对齐 Claude Code 官方 VS Code 扩展。它不改动
+TUI 核心渲染链路，只负责**承载**。
 
 ### 安装
 
 ```sh
 git clone https://github.com/baobaolaodie/dsh-tui-vscode.git
 cd dsh-tui-vscode
-pnpm install
-pnpm package
-code --install-extension dsh-tui-vscode-0.1.0.vsix --force
+npm install
+npm run package
+code --install-extension dsh-tui-vscode-0.2.0.vsix --force
 ```
 
 ### 命令与编辑器加成
 
-- `dsh-tui: Start new session / 启动新会话`、`dsh-tui: Resume last session / 恢复上次会话`、
-  `dsh-tui: Focus session terminal / 聚焦会话终端`、`dsh-tui: Terminate session / 终止会话`
-- 终端输出里的 `C:\...`、`/...`、`~/...`、`./...` 路径（含 `path:line[:col]`）可点击打开
+- 活动栏 `dsh-tui` 图标 → 侧边栏「会话控制」视图（启动/恢复/聚焦/终止 + 状态）；
+  `dsh-tui: Open panel / 打开会话面板`、`dsh-tui: Start new session / 启动新会话`、
+  `dsh-tui: Resume last session / 恢复上次会话`、`dsh-tui: Terminate session / 终止会话`
+- 会话渲染在编辑器区面板：alt-screen、鼠标、OSC 52 剪贴板、OSC 8 链接、
+  同步输出均由扩展自身承载；面板缩放自动 resize PTY
+- 面板输出里的 `C:\...`、`/...`、`~/...`、`./...` 路径（含 `path:line[:col]`）可点击打开
 - `$VISUAL`/`$EDITOR` 未设置时自动导出 `code -w`，`Ctrl+X` 直接进 VS Code
-- 状态栏 `dsh-tui` 项点击聚焦/启动会话
-- 配置项：`dsh-tui-vscode.command`、`extraArgs`、`terminalName`、`lang`、
-  `injectEditor`、`editorCommand`、`dshHome`（详见扩展 README）
+- OSC 11 背景查询按 VS Code 主题应答（TUI 自动选浅/深色）；OSC 0 标题同步到面板标题
+- 关闭面板不终止会话（重开回到实时流）；隐藏面板完整保留渲染
+- 状态栏 `dsh-tui` 项点击打开面板
+- 配置项：`dsh-tui-vscode.command`、`extraArgs`、`lang`、`injectEditor`、
+  `editorCommand`、`dshHome`（详见扩展 README）
 
 ### 限制与后续
 
-Path A 的能力上限与“方式一”相同（受 VS Code 集成终端约束）。若未来需要
-完整自定义渲染（Webview + xterm.js + 真 PTY，issue #161 的路径 B），扩展
-仓库可作为承载点；dsh-TUI 本体保持“只做交互与呈现”的边界不变。
+- 关闭面板后滚动历史不保留（隐藏面板保留）；单会话模型。
+- 协议能力以 xterm.js 为上限（扩展键盘协议、DEC 2026 等）；Path B 渲染完全
+  自主，后续可在此 webview 上继续增强。
+- vsix 含构建平台的 node-pty 二进制（Windows 构建即 Windows 可用）。
+- dsh-TUI 本体保持“只做交互与呈现”的边界不变。
 
 ## 验收基线
 
