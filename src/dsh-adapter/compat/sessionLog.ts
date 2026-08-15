@@ -3,51 +3,61 @@
  *
  * Title lookup tolerates event types unknown to the current harness. Offline
  * rename and delete support the `/resume` picker when no live Agent owns the
- * selected persisted session. The pre-resume repair marks third-party event
- * types `ignorable` so the strict read path stops rejecting whole sessions
- * (issue #153).
+ * selected persisted session. The resume seam registers vouched-for legacy
+ * event types into every reachable KNOWN_SESSION_EVENT_TYPES copy so the
+ * strict read path stops rejecting whole sessions over them (issue #153).
  *
- * Repair background: plugins like dsh-working-activity (< the publish cut)
- * appended `activity/status` through `session.append`, but rc.6's append
- * exposes no `ignorable` flag and the type is absent from
+ * Registration background: plugins like dsh-working-activity (< the publish
+ * cut) appended `activity/status` through `session.append`, but rc.6's
+ * append exposes no `ignorable` flag and the type is absent from
  * KNOWN_SESSION_EVENT_TYPES — so resume's seed validation rejects the WHOLE
- * session ("unknown to this harness and not marked ignorable"). The event
- * envelope legally accepts `ignorable: true` (seed validator at
- * dsh-session/lib), which tells the read path to skip the event: exactly
- * the right semantics for ephemeral UI frames. New TUI builds derive the
- * working line in-process and never persist it (#143), and the plugin now
- * registers its type into every reachable KNOWN copy (#119) — but neither
- * helps a log written BEFORE those cuts, resumed in a process where the
- * plugin's registration never ran (plugin unmounted, or a bare cordis.yml).
- * The repair covers exactly that residue, and is inherently self-adjusting:
- * the capability probe IS the known-types list, so types the plugin (or a
- * future upstream) registers stop being marked, and already-known events
- * are never touched.
+ * session ("unknown to this harness and not marked ignorable"). Upstream's
+ * catalog header defers a registration surface "until such a consumer
+ * exists"; the working-activity plugin became that consumer at #119 and
+ * registers its type at load. Logs written BEFORE that cut, resumed in a
+ * process where the plugin's registration never ran (plugin unmounted, or
+ * a bare cordis.yml), still hit the rejection — this module is the consumer
+ * for exactly that residue.
+ *
+ * Why registration and NOT rewriting the log to mark events `ignorable`
+ * (the #107 approach, restored then replaced after review): the store is
+ * shared with dsh web (#24) and possibly a second TUI instance (#153), and
+ * a whole-file tmp+rename swap (a) loses frames an already-open appender
+ * lands on the replaced inode, (b) drops the backend's 0600 artifact mode,
+ * (c) re-encodes frames without the writer's checksum flag, and (d) dies on
+ * torn tails the backend itself can recover. Registration touches nothing
+ * on disk and degrades to exactly the pre-patch behavior when no copy
+ * resolves.
+ *
+ * Whitelist discipline: ONLY `activity/status` — the type the plugin
+ * provably wrote as ephemeral UI frames. Anything else unknown stays
+ * unknown: upstream's fail-closed ("likely written by a newer harness") is
+ * a feature — silently skipping a REQUIRED future event would reconstruct
+ * a wrong session. Retires the day upstream's shared catalog adopts the
+ * type or ships a real registration API (the add() calls become no-ops).
  *
  * @module @deepseek-harness-tui/dsh-tui/compat/sessionLog
  */
-import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
-import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import {
   appendFileSync,
   existsSync,
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
   rmSync,
-  statSync,
-  writeFileSync,
 } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 import { homeDir } from '../../utils/paths.js'
 
-/** Repair outcomes, surfaced for regression assertions and debug logging. */
-export type ResumeRepairOutcome =
-  | 'repaired' // at least one unknown-type event was marked ignorable
-  | 'clean' // log read fine, nothing unknown to mark
-  | 'unavailable' // no log file, decode/parse anomaly, or a concurrent write — left untouched
+/**
+ * Legacy third-party session-event types the TUI vouches for as ephemeral
+ * UI frames — safe for the strict read path to accept and skip. Exported
+ * for the regression verifier; grow it only with proof the type was always
+ * inert (never load-bearing for session reconstruction).
+ */
+export const LEGACY_SESSION_EVENT_TYPES: readonly string[] = ['activity/status']
 
 /** Zstd frame magic number, little-endian (0xFD2FB528). */
 const ZSTD_MAGIC = 0xfd2fb528
@@ -106,33 +116,23 @@ function findSessionLogFile(sessionId: string): string | undefined {
   return undefined
 }
 
-/** One decoded zstd frame: its original byte span plus parsed envelopes. */
-interface DecodedFrame {
-  /** Original compressed bytes — reused verbatim when nothing inside changed. */
-  readonly raw: Buffer
-  /** Parsed event envelopes of this frame, in order. */
-  readonly events: Record<string, unknown>[]
-}
-
 /**
- * Decode a (possibly multi-frame) zstd jsonl log, keeping frames separate.
- * Frames are split by magic scan; any frame failing to decode or any line
- * failing to parse throws, so callers abort instead of rewriting a log they
- * did not fully understand.
+ * Decode a (possibly multi-frame) zstd jsonl log. Frames are split by magic
+ * scan; any frame failing to decode or any line failing to parse throws, so
+ * callers abort instead of acting on a log they did not fully understand.
  * @param buf - Raw file bytes.
- * @returns Per-frame byte spans and parsed event envelopes, in log order.
+ * @returns Parsed event envelopes, in log order.
  */
-function decodeFrames(buf: Buffer): DecodedFrame[] {
+function decodeEvents(buf: Buffer): Record<string, unknown>[] {
   const offsets: number[] = []
   for (let i = 0; i + 4 <= buf.length; i++) {
     if (buf.readUInt32LE(i) === ZSTD_MAGIC) offsets.push(i)
   }
   if (offsets.length === 0) throw new Error('no zstd frame found')
-  return offsets.map((start, i) => {
+  return offsets.flatMap((start, i) => {
     const end = i + 1 < offsets.length ? offsets[i + 1]! : buf.length
-    const raw = buf.subarray(start, end)
-    const text = zstdDecompressSync(raw).toString('utf8')
-    const events = text
+    const text = zstdDecompressSync(buf.subarray(start, end)).toString('utf8')
+    return text
       .split('\n')
       .filter((line) => line.length > 0)
       .map((line) => {
@@ -142,91 +142,45 @@ function decodeFrames(buf: Buffer): DecodedFrame[] {
         }
         return parsed as Record<string, unknown>
       })
-    return { raw, events }
   })
 }
 
 /**
- * Repair one session's persisted log ahead of `agents.resume`: mark every
- * event whose type is absent from KNOWN_SESSION_EVENT_TYPES as
- * `ignorable: true` (envelope-legal, the read path skips it). Never throws.
+ * Register every {@link LEGACY_SESSION_EVENT_TYPES} type as known in EVERY
+ * reachable KNOWN_SESSION_EVENT_TYPES copy, ahead of the strict read path
+ * (`agents.resume` seed validation, `persistence.load`). Idempotent; never
+ * throws.
  *
- * Frame layout is load-bearing: the backend asserts frame 0 holds EXACTLY
- * the header line (listings read only that frame), so the repair re-encodes
- * each frame with its original line set — frame boundaries are preserved
- * 1:1, and any frame whose lines were untouched is copied verbatim.
- *
- * This store is shared with dsh web (#24) and possibly a second TUI
- * instance (#153): the rewrite below REPLACES the whole file, so a frame
- * another writer lands between our read and our rename would be silently
- * dropped. The tmp file is written first and the source is re-stat'ed right
- * before the rename; any mtime/size change aborts the swap (tmp removed).
- * The only unguarded window left is the rename itself — a missed repair
- * degrades to the pre-patch failure (resume rejected), never to a shorter
- * log. Any decode/parse anomaly likewise aborts with the file untouched.
- * @param sessionId - Session about to be resumed.
- * @returns The repair outcome; 'unavailable' leaves the file untouched.
+ * Why "every reachable copy": a runtime can load dsh-session more than once
+ * (CLI tree vs plugin profile tree, or version overlap during upgrades), and
+ * the strict validator consults only ITS copy's Set. Anchors: this module
+ * (the dsh-tui tree), the process entry point (the launcher tree the
+ * backend hangs off), and the installed dsh-session-persistence package
+ * (the tree the validator itself resolves from). A copy that cannot be
+ * resolved from an anchor simply is not there.
  */
-export function repairSessionLogForResume(sessionId: string): ResumeRepairOutcome {
+export function ensureLegacySessionEventTypes(): void {
+  const anchors = [import.meta.url, process.argv[1]].filter(
+    (anchor): anchor is string => typeof anchor === 'string' && anchor.length > 0,
+  )
   try {
-    const file = findSessionLogFile(sessionId)
-    if (file === undefined) return 'unavailable'
-    const before = statSync(file)
-    const frames = decodeFrames(readFileSync(file))
-    // Mark unknown types in place, tracking which frames actually changed:
-    // untouched frames are copied back verbatim, so the header frame keeps
-    // its exact original bytes (and the one-header-line invariant with it).
-    const dirty = new Set<number>()
-    frames.forEach((frame, index) => {
-      for (const event of frame.events) {
-        const type = event['type']
-        // Only real log entries carry a numeric seq — the seq-less header row
-        // is parsed by a separate path that must not see an extra field.
-        if (
-          typeof type === 'string' &&
-          typeof event['seq'] === 'number' &&
-          !KNOWN_SESSION_EVENT_TYPES.has(type) &&
-          event['ignorable'] === undefined
-        ) {
-          event['ignorable'] = true
-          dirty.add(index)
-        }
-      }
-    })
-    if (dirty.size === 0) return 'clean'
-    const parts = frames.map((frame, index) => {
-      if (!dirty.has(index)) return frame.raw
-      const payload = frame.events.map((event) => JSON.stringify(event)).join('\n') + '\n'
-      return zstdCompressSync(Buffer.from(payload, 'utf8'))
-    })
-    const tmp = `${file}.compat-${randomUUID()}.tmp`
-    writeFileSync(tmp, Buffer.concat(parts))
-    try {
-      const after = statSync(file)
-      if (after.mtimeMs !== before.mtimeMs || after.size !== before.size) {
-        rmSync(tmp, { force: true })
-        return 'unavailable'
-      }
-      renameSync(tmp, file)
-      return 'repaired'
-    } catch (error) {
-      rmSync(tmp, { force: true })
-      throw error
-    }
+    anchors.push(import.meta.resolve('@deepseek-ai/dsh-session-persistence'))
   } catch {
-    return 'unavailable'
+    // Backend not installed/resolvable — no validator tree to cover here.
   }
-}
-
-/**
- * Compat entry for the resume path: repair the target session's log, then
- * let resume proceed regardless of outcome. Never throws, never blocks on
- * anything but one small file — a repair miss degrades to the exact
- * pre-patch behavior (resume may still succeed or fail as before).
- * @param sessionId - Session about to be resumed.
- */
-export async function prepareSessionForResume(sessionId: string): Promise<void> {
-  repairSessionLogForResume(sessionId)
+  for (const anchor of anchors) {
+    try {
+      const req = createRequire(anchor)
+      const mod = req('@deepseek-ai/dsh-session') as {
+        KNOWN_SESSION_EVENT_TYPES?: Set<string>
+      }
+      for (const type of LEGACY_SESSION_EVENT_TYPES) {
+        mod.KNOWN_SESSION_EVENT_TYPES?.add(type)
+      }
+    } catch {
+      // No resolvable dsh-session copy from this anchor — nothing to register into.
+    }
+  }
 }
 
 /**
@@ -250,22 +204,20 @@ export function readSessionTitleFromLog(
   try {
     const file = findSessionLogFile(sessionId)
     if (file === undefined) return undefined
-    const frames = decodeFrames(readFileSync(file))
+    const events = decodeEvents(readFileSync(file))
     let titled: string | undefined
     let firstUser: string | undefined
     let hasUserMessage = false
-    for (const frame of frames) {
-      for (const event of frame.events) {
-        if (event['type'] === 'session/title') {
-          const title = (event['data'] as { title?: unknown } | undefined)?.['title']
-          if (typeof title === 'string' && title.trim().length > 0) titled = title
-        } else if (event['type'] === 'user/message') {
-          hasUserMessage = true
-          if (firstUser === undefined) {
-            firstUser = firstTextOfContent(
-              (event['data'] as { content?: unknown } | undefined)?.['content'],
-            )
-          }
+    for (const event of events) {
+      if (event['type'] === 'session/title') {
+        const title = (event['data'] as { title?: unknown } | undefined)?.['title']
+        if (typeof title === 'string' && title.trim().length > 0) titled = title
+      } else if (event['type'] === 'user/message') {
+        hasUserMessage = true
+        if (firstUser === undefined) {
+          firstUser = firstTextOfContent(
+            (event['data'] as { content?: unknown } | undefined)?.['content'],
+          )
         }
       }
     }
@@ -322,14 +274,11 @@ export function appendSessionTitle(sessionId: string, title: string): 'appended'
   try {
     const file = findSessionLogFile(sessionId)
     if (file === undefined) return 'unavailable'
-    const original = readFileSync(file)
-    const frames = decodeFrames(original)
+    const events = decodeEvents(readFileSync(file))
     let maxSeq = -1
-    for (const frame of frames) {
-      for (const event of frame.events) {
-        const seq = event['seq']
-        if (typeof seq === 'number' && seq > maxSeq) maxSeq = seq
-      }
+    for (const event of events) {
+      const seq = event['seq']
+      if (typeof seq === 'number' && seq > maxSeq) maxSeq = seq
     }
     // Same envelope shape as a manual /rename append ({ title } only); the
     // seed validator asks only for type/seq/time/data on non-message types.

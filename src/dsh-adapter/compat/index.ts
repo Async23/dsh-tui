@@ -12,17 +12,17 @@
  * Current residents:
  *  - sessionLog: tolerant title reads plus offline rename/delete helpers for
  *    persisted sessions that are not currently owned by a live Agent, and
- *    the pre-resume repair marking third-party session-event types
- *    `ignorable` — retiring the day `session.append` exposes `ignorable`
- *    or the types enter KNOWN_SESSION_EVENT_TYPES upstream (issue #153).
+ *    the resume-seam registration of vouched-for legacy event types into
+ *    every reachable KNOWN_SESSION_EVENT_TYPES copy — retiring the day
+ *    upstream's shared catalog adopts the types or ships a real
+ *    registration API (issue #153).
  * @module @deepseek-harness-tui/dsh-tui/compat
  */
 export {
   appendSessionTitle,
   deleteSessionLog,
-  prepareSessionForResume,
+  ensureLegacySessionEventTypes,
+  LEGACY_SESSION_EVENT_TYPES,
   readSessionTitleFromLog,
-  repairSessionLogForResume,
   sessionsRoots,
 } from './sessionLog.js'
-export type { ResumeRepairOutcome } from './sessionLog.js'

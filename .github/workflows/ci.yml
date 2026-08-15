@@ -111,10 +111,11 @@ jobs:
       # 不能让标题退化成目录名），/rename 的最后一条 session/title 优先。
       - run: node scripts/verify-session-titles.mjs
 
-      # resume 前日志修复回归（issue #153）：未知第三方事件类型补
-      # ignorable:true（严格读路径不再整会话拒读）、已知类型绝不动、
-      # frame 0 逐字节保留、二次修复空转、缺失会话报 unavailable。
-      - run: node scripts/verify-resume-repair.mjs
+      # resume 遗留事件注册回归（issue #153）：真实存储栈 e2e——注册前
+      # load() 抛 SessionFormatUnsupportedError（原样复现 issue）、注册后
+      # 放行；日志字节与 0600 权限绝不被改写；非白名单未知类型保持拒读
+      #（上游 fail-closed 新格式保护不破）。
+      - run: node scripts/verify-resume-legacy-events.mjs
 
       # 会话 cwd 回归（issue #96）：启动目录向上解析 git 仓库根（普通克隆
       # 与 .git 文件 worktree 均覆盖、dotfiles ~/.git 守卫），/resume 过滤

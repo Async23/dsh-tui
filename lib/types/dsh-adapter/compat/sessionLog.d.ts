@@ -1,5 +1,10 @@
-/** Repair outcomes, surfaced for regression assertions and debug logging. */
-export type ResumeRepairOutcome = 'repaired' | 'clean' | 'unavailable';
+/**
+ * Legacy third-party session-event types the TUI vouches for as ephemeral
+ * UI frames — safe for the strict read path to accept and skip. Exported
+ * for the regression verifier; grow it only with proof the type was always
+ * inert (never load-bearing for session reconstruction).
+ */
+export declare const LEGACY_SESSION_EVENT_TYPES: readonly string[];
 /**
  * Session-log storage roots, in priority order, mirroring the persistence
  * backend's `root` resolution: cordis.patch.yml sets `DSH_TUI_SESSION_ROOT ?? dshHomePath(
@@ -10,35 +15,20 @@ export type ResumeRepairOutcome = 'repaired' | 'clean' | 'unavailable';
  */
 export declare function sessionsRoots(): string[];
 /**
- * Repair one session's persisted log ahead of `agents.resume`: mark every
- * event whose type is absent from KNOWN_SESSION_EVENT_TYPES as
- * `ignorable: true` (envelope-legal, the read path skips it). Never throws.
+ * Register every {@link LEGACY_SESSION_EVENT_TYPES} type as known in EVERY
+ * reachable KNOWN_SESSION_EVENT_TYPES copy, ahead of the strict read path
+ * (`agents.resume` seed validation, `persistence.load`). Idempotent; never
+ * throws.
  *
- * Frame layout is load-bearing: the backend asserts frame 0 holds EXACTLY
- * the header line (listings read only that frame), so the repair re-encodes
- * each frame with its original line set — frame boundaries are preserved
- * 1:1, and any frame whose lines were untouched is copied verbatim.
- *
- * This store is shared with dsh web (#24) and possibly a second TUI
- * instance (#153): the rewrite below REPLACES the whole file, so a frame
- * another writer lands between our read and our rename would be silently
- * dropped. The tmp file is written first and the source is re-stat'ed right
- * before the rename; any mtime/size change aborts the swap (tmp removed).
- * The only unguarded window left is the rename itself — a missed repair
- * degrades to the pre-patch failure (resume rejected), never to a shorter
- * log. Any decode/parse anomaly likewise aborts with the file untouched.
- * @param sessionId - Session about to be resumed.
- * @returns The repair outcome; 'unavailable' leaves the file untouched.
+ * Why "every reachable copy": a runtime can load dsh-session more than once
+ * (CLI tree vs plugin profile tree, or version overlap during upgrades), and
+ * the strict validator consults only ITS copy's Set. Anchors: this module
+ * (the dsh-tui tree), the process entry point (the launcher tree the
+ * backend hangs off), and the installed dsh-session-persistence package
+ * (the tree the validator itself resolves from). A copy that cannot be
+ * resolved from an anchor simply is not there.
  */
-export declare function repairSessionLogForResume(sessionId: string): ResumeRepairOutcome;
-/**
- * Compat entry for the resume path: repair the target session's log, then
- * let resume proceed regardless of outcome. Never throws, never blocks on
- * anything but one small file — a repair miss degrades to the exact
- * pre-patch behavior (resume may still succeed or fail as before).
- * @param sessionId - Session about to be resumed.
- */
-export declare function prepareSessionForResume(sessionId: string): Promise<void>;
+export declare function ensureLegacySessionEventTypes(): void;
 /**
  * Read a session's display title from its persisted log, tolerantly.
  *

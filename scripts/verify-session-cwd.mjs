@@ -142,10 +142,20 @@ try {
   else process.env.USERPROFILE = savedUserProfile2
   rmSync(homeBoundary, { recursive: true, force: true })
 }
-// Windows drive roots normalize to 'c:' — a container, not a workspace.
+// Windows roots normalize to container forms — none is a workspace.
 check('drive root hides every session on the drive', !sessionCwdMatches('C:\\', 'C:/repo', true))
 check('drive root exact match still passes', sessionCwdMatches('C:\\', 'c:\\', true))
 check('drive-root-recorded session hidden inside a repo', !sessionCwdMatches('C:/repo', 'C:\\', true))
+// UNC share roots (\\server\share → //server/share) and extended-length
+// roots (\\?\C:\ → //?/C:, \\?\UNC\… → //?/UNC/server/share) are containers
+// too (issue #153 review): descendants must stay hidden, exact passes.
+check('UNC share root hides share sessions', !sessionCwdMatches('\\\\server\\share', '//server/share/repo', true))
+check('UNC share root exact match passes', sessionCwdMatches('\\\\server\\share\\', '//server/share', true))
+check('UNC-recorded session hidden inside a share repo', !sessionCwdMatches('//server/share/repo', '\\\\server\\share', true))
+check('extended drive root hides descendants', !sessionCwdMatches('\\\\?\\C:\\', '//?/C:/repo', true))
+check('extended drive root exact match passes', sessionCwdMatches('\\\\?\\C:\\', '//?/c:', true))
+check('extended UNC root hides descendants', !sessionCwdMatches('\\\\?\\UNC\\server\\share', '//?/UNC/server/share/repo', true))
+check('deeper UNC path keeps the descendant rule', sessionCwdMatches('\\\\server\\share\\repo', '//server/share/repo/pkg', true))
 
 // --- dotfiles guard (review leftover) --------------------------------------
 // A dotfiles repo at $HOME (~/.git) must not make the whole home directory

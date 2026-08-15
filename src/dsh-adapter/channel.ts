@@ -24,7 +24,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { extname, isAbsolute, join } from 'node:path'
 import { completeCommands, LOCAL_COMMANDS, type CommandCompletion, type CommandCompletionNode, type LocalCommand } from '../commands.js'
 import { clearResumeTarget, forgetSession, readLastUsed, readResumeTarget, touchSession, type SessionRecord, writeResumeTarget } from '../sessionHistory.js'
-import { appendSessionTitle, deleteSessionLog, prepareSessionForResume, readSessionTitleFromLog, sessionsRoots } from './compat/index.js'
+import { appendSessionTitle, deleteSessionLog, ensureLegacySessionEventTypes, readSessionTitleFromLog, sessionsRoots } from './compat/index.js'
 import { writeActivityFrames } from '../activityPrefs.js'
 import { readEffortPref, writeEffortPref } from '../effortPrefs.js'
 import { readModelPref, writeModelPref } from '../modelPrefs.js'
@@ -1734,12 +1734,13 @@ export function createChannel(
         return false
       }
       let handle: AgentHandle
-      // Compat boundary: mark unknown third-party event types in the target
-      // log ignorable before ANY strict read path (preset lookup below, then
-      // the harness seed validation) loads it — covers logs written while
-      // working-activity still published activity/status, resumed in a
-      // process without the plugin's type registration (issue #153).
-      await prepareSessionForResume(sessionId)
+      // Compat boundary: register vouched-for legacy event types (e.g.
+      // activity/status from pre-#143 logs) in every reachable dsh-session
+      // copy before ANY strict read path (preset lookup below, then the
+      // harness seed validation) loads the target — the plugin's #119
+      // registration never ran in processes where it is unmounted (issue
+      // #153). In-process only: the shared log is never rewritten.
+      ensureLegacySessionEventTypes()
       // The target session's own preset (from its persisted log) — never the
       // current preference: a resume re-enters the composition its history
       // was produced under. Same rule for the route: only an explicit
@@ -3806,9 +3807,11 @@ function normalizeCwd(path: string, caseInsensitive: boolean): string {
  * scripts/verify-session-cwd.mjs.
  *
  * Boundary rule (issue #153): container directories are nobody's workspace.
- * $HOME and Windows drive roots (`C:`) are ancestors of unrelated projects,
- * so the descendant rules below would list every session on the machine
- * from `~` (and every session on the drive from `C:\`). At these
+ * $HOME and the Windows root forms — plain drive roots (`C:`), UNC share
+ * roots (`//server/share`), and extended-length roots (`//?/C:`,
+ * `//?/UNC/server/share`) — are ancestors of unrelated projects, so the
+ * descendant rules below would list every session on the machine from `~`
+ * (and every session on the drive/share from those roots). At these
  * boundaries, in either direction, only an exact match passes.
  */
 export function sessionCwdMatches(
@@ -3820,8 +3823,14 @@ export function sessionCwdMatches(
   const recorded = normalizeCwd(headerCwd, caseInsensitive)
   if (recorded === '' || cwd === '') return false
   const home = normalizeCwd(homeDir(), caseInsensitive)
+  // Paths below arrive backslash-normalized (`\\server\share` →
+  // `//server/share`, `\\?\C:\` → `//?/C:`), trailing slashes stripped.
   const isContainer = (path: string): boolean =>
-    (home !== '' && path === home) || /^[a-z]:$/i.test(path)
+    (home !== '' && path === home) ||
+    /^[a-z]:$/i.test(path) || // drive root: C:
+    /^\/\/[^/]+\/[^/]+$/.test(path) || // UNC share root: //server/share
+    /^\/\/\?\/[a-z]:$/i.test(path) || // extended drive root: //?/C:
+    /^\/\/\?\/unc\/[^/]+\/[^/]+$/i.test(path) // extended UNC root: //?/UNC/server/share
   if (isContainer(cwd) || isContainer(recorded)) return recorded === cwd
   return (
     recorded === cwd ||
