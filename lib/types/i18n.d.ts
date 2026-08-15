@@ -855,6 +855,42 @@ declare const dict: {
         readonly zh: "直接输入…";
         readonly en: "Type directly…";
     };
+    readonly 'approval-waiting': {
+        readonly zh: " ⏳ 等待审批 · {{tool}} ";
+        readonly en: " Awaiting approval · {{tool}} ";
+    };
+    readonly 'approval-proceed': {
+        readonly zh: "要允许这次操作吗？";
+        readonly en: "Do you want to proceed?";
+    };
+    readonly 'approval-yes': {
+        readonly zh: "允许（仅本次）";
+        readonly en: "Yes, allow once";
+    };
+    readonly 'approval-no': {
+        readonly zh: "拒绝";
+        readonly en: "No";
+    };
+    readonly 'approval-hint': {
+        readonly zh: "↑/↓ 选择 · Enter 确认 · Esc 拒绝";
+        readonly en: "↑/↓ select · Enter confirm · Esc reject";
+    };
+    readonly 'plan-review-fallback-header': {
+        readonly zh: "计划评审";
+        readonly en: "Plan review";
+    };
+    readonly 'plan-review-feedback-placeholder': {
+        readonly zh: "输入反馈，告诉模型要改什么…";
+        readonly en: "Tell the model what to change…";
+    };
+    readonly 'plan-review-approve-needs-empty': {
+        readonly zh: "请先清空反馈再批准（或在输入行回车提交反馈）";
+        readonly en: "Clear the feedback to approve (or press Enter on the input row to send it)";
+    };
+    readonly 'plan-review-hint': {
+        readonly zh: "↑/↓ 选择 · 1/2 快选 · 打字输入反馈 · Enter 提交 · Esc 打断评审";
+        readonly en: "↑/↓ select · 1/2 quick-pick · type feedback · Enter submit · Esc dismiss";
+    };
     readonly 'cmd-desc-new': {
         readonly zh: "新开会话";
     };
@@ -970,7 +1006,7 @@ declare const dict: {
         readonly zh: "查看快捷键与命令";
     };
     readonly 'cmd-desc-exit': {
-        readonly zh: "退出 dsh-cc";
+        readonly zh: "退出 dsh-tui";
     };
     readonly 'cmd-desc-plan': {
         readonly zh: "切换计划模式（/plan off 退出）";

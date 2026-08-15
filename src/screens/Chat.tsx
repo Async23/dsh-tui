@@ -7,7 +7,9 @@ import { formatTokens } from '../cc/format.js'
 import type { LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import type { Channel, ChatRow, PresetOption } from '../channel.js'
 import type { QuestionStore } from '../questions.js'
+import { ApprovalStore } from '../approvals.js'
 import { AskUserQuestionPanel } from '../components/questions/AskUserQuestionPanel.js'
+import { ApprovalPanel } from '../components/approvals/ApprovalPanel.js'
 import type { DOMElement } from '../ink/dom.js'
 import { useSearchHighlight } from '../ink/hooks/use-search-highlight.js'
 import { useTerminalTitle } from '../ink/hooks/use-terminal-title.js'
@@ -103,14 +105,29 @@ function searchableText(row: ChatRow): string {
  * interrupts the running turn, or (when idle) asks for a second Ctrl+C to
  * exit; Enter while scrolled up jumps back to the bottom.
  */
+
+/**
+ * Shared inert approval store for hosts that render Chat without an
+ * approval seam (headless verify scripts). Never parked into, so its
+ * snapshot stays null and the approval panel never mounts.
+ */
+let fallbackApprovalStore: ApprovalStore | undefined
+
 export function Chat({
   channel,
   questionStore,
+  approvalStore,
   onExit,
   onUpdate,
 }: {
   channel: Channel
   questionStore: QuestionStore
+  /**
+   * The approval seam's UI store. Optional: hosts without an approval
+   * channel (headless scripts, older embeds) render Chat without it and
+   * simply never see an approval panel — the question panel keeps its seat.
+   */
+  approvalStore?: ApprovalStore
   onExit: () => void
   /** Update the installed package and restart the current TUI process. */
   onUpdate?: () => void
@@ -124,6 +141,15 @@ export function Chat({
   const questionSnapshot = React.useSyncExternalStore(
     listener => questionStore.subscribe(listener),
     () => questionStore.getSnapshot(),
+  )
+  // The pending tool-approval ask (DSH approval seam): the permission layer
+  // parks here until the panel decides; shown with priority over a pending
+  // questionnaire since it gates a tool about to run. Hosts that pass no
+  // approvalStore share one inert instance that never holds an ask.
+  const approvals = approvalStore ?? (fallbackApprovalStore ??= new ApprovalStore())
+  const approvalSnapshot = React.useSyncExternalStore(
+    listener => approvals.subscribe(listener),
+    () => approvals.getSnapshot(),
   )
   // When a questionnaire batch completes, fold a Q&A summary into the
   // transcript (the tool card itself is hidden from the message list).
@@ -847,10 +873,10 @@ export function Chat({
   }, [])
 
   useInput((input, key, event) => {
-    // The questionnaire owns the keyboard while a question is pending (the
-    // panel's own useInput handles ↑/↓/Space/Tab/Enter/Esc; the prompt
-    // input is unmounted, so nothing else should see these keys).
-    if (questionSnapshot !== null) return
+    // The questionnaire / approval panel owns the keyboard while one is
+    // pending (the panel's own useInput handles ↑/↓/Space/Tab/Enter/Esc;
+    // the prompt input is unmounted, so nothing else should see these keys).
+    if (questionSnapshot !== null || approvalSnapshot !== null) return
     // Mouse wheel scrolls the transcript — in fullscreen there is no
     // terminal scrollback (alt-screen), so this is the only way back.
     // Imperative scrollBy: no React re-render per notch (CC semantics).
@@ -1372,7 +1398,13 @@ export function Chat({
         )}
         {searchOpen && <TranscriptSearchBar query={searchQuery} cursorOffset={searchCursor} count={searchCount} current={searchCurrent} />}
         <GoalTodoPanel channel={channel} />
-        {questionSnapshot !== null && (
+        {approvalSnapshot !== null ? (
+          <ApprovalPanel
+            key={approvalSnapshot.key}
+            approval={approvalSnapshot}
+            onDecide={outcome => approvals.decide(outcome)}
+          />
+        ) : questionSnapshot !== null ? (
           <AskUserQuestionPanel
             key={questionSnapshot.key}
             question={questionSnapshot.question}
@@ -1382,8 +1414,7 @@ export function Chat({
             onAnswer={selection => questionStore.answerCurrent(selection)}
             onCancel={() => questionStore.cancelCurrent()}
           />
-        )}
-        {questionSnapshot === null && (
+        ) : (
           <PromptInput
             channel={channel}
             helpOpen={helpOpen}

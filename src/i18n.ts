@@ -269,6 +269,19 @@ const dict = {
   'question-attached-label': { zh: '（附加：{{label}}）', en: '(attached: {{label}})' },
   'question-direct-input': { zh: '直接输入…', en: 'Type directly…' },
 
+  // ── components/approvals/ApprovalPanel.tsx ──────────────────────────
+  'approval-waiting': { zh: ' ⏳ 等待审批 · {{tool}} ', en: ' Awaiting approval · {{tool}} ' },
+  'approval-proceed': { zh: '要允许这次操作吗？', en: 'Do you want to proceed?' },
+  'approval-yes': { zh: '允许（仅本次）', en: 'Yes, allow once' },
+  'approval-no': { zh: '拒绝', en: 'No' },
+  'approval-hint': { zh: '↑/↓ 选择 · Enter 确认 · Esc 拒绝', en: '↑/↓ select · Enter confirm · Esc reject' },
+
+  // ── components/questions/PlanReviewPanel.tsx ────────────────────────
+  'plan-review-fallback-header': { zh: '计划评审', en: 'Plan review' },
+  'plan-review-feedback-placeholder': { zh: '输入反馈，告诉模型要改什么…', en: 'Tell the model what to change…' },
+  'plan-review-approve-needs-empty': { zh: '请先清空反馈再批准（或在输入行回车提交反馈）', en: 'Clear the feedback to approve (or press Enter on the input row to send it)' },
+  'plan-review-hint': { zh: '↑/↓ 选择 · 1/2 快选 · 打字输入反馈 · Enter 提交 · Esc 打断评审', en: '↑/↓ select · 1/2 quick-pick · type feedback · Enter submit · Esc dismiss' },
+
   // ── commands.ts — slash-command descriptions ─────────────────────────
   // zh-only on purpose: the English text stays in `LOCAL_COMMANDS` (and in
   // the DSH registry for external commands) as the single source of truth,
@@ -320,7 +333,7 @@ const dict = {
   'cmd-desc-connect': { zh: '连接远程机器' },
   // Help / exit
   'cmd-desc-help': { zh: '查看快捷键与命令' },
-  'cmd-desc-exit': { zh: '退出 dsh-cc' },
+  'cmd-desc-exit': { zh: '退出 dsh-tui' },
   // Registry-injected (external) commands — zh only; en falls back to the
   // registry's own description, and unlisted externals always fall back.
   'cmd-desc-plan': { zh: '切换计划模式（/plan off 退出）' },
