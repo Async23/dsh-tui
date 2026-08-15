@@ -27,7 +27,7 @@ import { Chat } from '../screens/Chat.js'
 import { attachSessionToWorkspace } from './workspace.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
 import instances from '../ink/instances.js'
-import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS } from '../ink/termio/csi.js'
+import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from '../ink/termio/csi.js'
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, EXIT_ALT_SCREEN, SHOW_CURSOR } from '../ink/termio/dec.js'
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMultiplexer } from '../ink/termio/osc.js'
 
@@ -609,6 +609,7 @@ async function finishExit(
       DISABLE_MOUSE_TRACKING,
       DISABLE_MODIFY_OTHER_KEYS,
       DISABLE_KITTY_KEYBOARD,
+      DISABLE_WIN32_INPUT_MODE,
       DFE,
       DBP,
       SHOW_CURSOR,
