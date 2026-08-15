@@ -7,6 +7,7 @@
 | 项目 | 链接 | 说明 |
 | --- | --- | --- |
 | **dshfind** | <https://dshfind.com> | DeepSeek Harness 的中文学习与分享社区 |
+| **dsh-tui-vscode** | <https://github.com/baobaolaodie/dsh-tui-vscode> | dsh-TUI 的 VS Code companion 扩展（Path A MVP） |
 | **deepseek-harness-ux** | <https://github.com/ayuanwong/deepseek-harness-ux> | 让你的 DeepSeek Harness 工作过程一目了然！ |
 | **dsh-tianshu-tui** | <https://github.com/huiliyi37/dsh-tianshu-tui> | Tianshu 风格的 dsh-tui |
 | **dsh-data-agent** | <https://github.com/omdsh-dev/dsh-data-agent> | 让 AI 帮你连数据库 |
