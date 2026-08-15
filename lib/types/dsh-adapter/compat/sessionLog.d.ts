@@ -1,3 +1,5 @@
+/** Repair outcomes, surfaced for regression assertions and debug logging. */
+export type ResumeRepairOutcome = 'repaired' | 'clean' | 'unavailable';
 /**
  * Session-log storage roots, in priority order, mirroring the persistence
  * backend's `root` resolution: cordis.patch.yml sets `DSH_TUI_SESSION_ROOT ?? dshHomePath(
@@ -7,6 +9,36 @@
  * explicit DSH_TUI_SESSION_ROOT always outranks the defaults.
  */
 export declare function sessionsRoots(): string[];
+/**
+ * Repair one session's persisted log ahead of `agents.resume`: mark every
+ * event whose type is absent from KNOWN_SESSION_EVENT_TYPES as
+ * `ignorable: true` (envelope-legal, the read path skips it). Never throws.
+ *
+ * Frame layout is load-bearing: the backend asserts frame 0 holds EXACTLY
+ * the header line (listings read only that frame), so the repair re-encodes
+ * each frame with its original line set — frame boundaries are preserved
+ * 1:1, and any frame whose lines were untouched is copied verbatim.
+ *
+ * This store is shared with dsh web (#24) and possibly a second TUI
+ * instance (#153): the rewrite below REPLACES the whole file, so a frame
+ * another writer lands between our read and our rename would be silently
+ * dropped. The tmp file is written first and the source is re-stat'ed right
+ * before the rename; any mtime/size change aborts the swap (tmp removed).
+ * The only unguarded window left is the rename itself — a missed repair
+ * degrades to the pre-patch failure (resume rejected), never to a shorter
+ * log. Any decode/parse anomaly likewise aborts with the file untouched.
+ * @param sessionId - Session about to be resumed.
+ * @returns The repair outcome; 'unavailable' leaves the file untouched.
+ */
+export declare function repairSessionLogForResume(sessionId: string): ResumeRepairOutcome;
+/**
+ * Compat entry for the resume path: repair the target session's log, then
+ * let resume proceed regardless of outcome. Never throws, never blocks on
+ * anything but one small file — a repair miss degrades to the exact
+ * pre-patch behavior (resume may still succeed or fail as before).
+ * @param sessionId - Session about to be resumed.
+ */
+export declare function prepareSessionForResume(sessionId: string): Promise<void>;
 /**
  * Read a session's display title from its persisted log, tolerantly.
  *

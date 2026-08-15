@@ -3,21 +3,51 @@
  *
  * Title lookup tolerates event types unknown to the current harness. Offline
  * rename and delete support the `/resume` picker when no live Agent owns the
- * selected persisted session.
+ * selected persisted session. The pre-resume repair marks third-party event
+ * types `ignorable` so the strict read path stops rejecting whole sessions
+ * (issue #153).
+ *
+ * Repair background: plugins like dsh-working-activity (< the publish cut)
+ * appended `activity/status` through `session.append`, but rc.6's append
+ * exposes no `ignorable` flag and the type is absent from
+ * KNOWN_SESSION_EVENT_TYPES — so resume's seed validation rejects the WHOLE
+ * session ("unknown to this harness and not marked ignorable"). The event
+ * envelope legally accepts `ignorable: true` (seed validator at
+ * dsh-session/lib), which tells the read path to skip the event: exactly
+ * the right semantics for ephemeral UI frames. New TUI builds derive the
+ * working line in-process and never persist it (#143), and the plugin now
+ * registers its type into every reachable KNOWN copy (#119) — but neither
+ * helps a log written BEFORE those cuts, resumed in a process where the
+ * plugin's registration never ran (plugin unmounted, or a bare cordis.yml).
+ * The repair covers exactly that residue, and is inherently self-adjusting:
+ * the capability probe IS the known-types list, so types the plugin (or a
+ * future upstream) registers stop being marked, and already-known events
+ * are never touched.
  *
  * @module @deepseek-harness-tui/dsh-tui/compat/sessionLog
  */
+import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
+import { randomUUID } from 'node:crypto'
 import {
   appendFileSync,
   existsSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
+  statSync,
+  writeFileSync,
 } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 import { homeDir } from '../../utils/paths.js'
+
+/** Repair outcomes, surfaced for regression assertions and debug logging. */
+export type ResumeRepairOutcome =
+  | 'repaired' // at least one unknown-type event was marked ignorable
+  | 'clean' // log read fine, nothing unknown to mark
+  | 'unavailable' // no log file, decode/parse anomaly, or a concurrent write — left untouched
 
 /** Zstd frame magic number, little-endian (0xFD2FB528). */
 const ZSTD_MAGIC = 0xfd2fb528
@@ -114,6 +144,89 @@ function decodeFrames(buf: Buffer): DecodedFrame[] {
       })
     return { raw, events }
   })
+}
+
+/**
+ * Repair one session's persisted log ahead of `agents.resume`: mark every
+ * event whose type is absent from KNOWN_SESSION_EVENT_TYPES as
+ * `ignorable: true` (envelope-legal, the read path skips it). Never throws.
+ *
+ * Frame layout is load-bearing: the backend asserts frame 0 holds EXACTLY
+ * the header line (listings read only that frame), so the repair re-encodes
+ * each frame with its original line set — frame boundaries are preserved
+ * 1:1, and any frame whose lines were untouched is copied verbatim.
+ *
+ * This store is shared with dsh web (#24) and possibly a second TUI
+ * instance (#153): the rewrite below REPLACES the whole file, so a frame
+ * another writer lands between our read and our rename would be silently
+ * dropped. The tmp file is written first and the source is re-stat'ed right
+ * before the rename; any mtime/size change aborts the swap (tmp removed).
+ * The only unguarded window left is the rename itself — a missed repair
+ * degrades to the pre-patch failure (resume rejected), never to a shorter
+ * log. Any decode/parse anomaly likewise aborts with the file untouched.
+ * @param sessionId - Session about to be resumed.
+ * @returns The repair outcome; 'unavailable' leaves the file untouched.
+ */
+export function repairSessionLogForResume(sessionId: string): ResumeRepairOutcome {
+  try {
+    const file = findSessionLogFile(sessionId)
+    if (file === undefined) return 'unavailable'
+    const before = statSync(file)
+    const frames = decodeFrames(readFileSync(file))
+    // Mark unknown types in place, tracking which frames actually changed:
+    // untouched frames are copied back verbatim, so the header frame keeps
+    // its exact original bytes (and the one-header-line invariant with it).
+    const dirty = new Set<number>()
+    frames.forEach((frame, index) => {
+      for (const event of frame.events) {
+        const type = event['type']
+        // Only real log entries carry a numeric seq — the seq-less header row
+        // is parsed by a separate path that must not see an extra field.
+        if (
+          typeof type === 'string' &&
+          typeof event['seq'] === 'number' &&
+          !KNOWN_SESSION_EVENT_TYPES.has(type) &&
+          event['ignorable'] === undefined
+        ) {
+          event['ignorable'] = true
+          dirty.add(index)
+        }
+      }
+    })
+    if (dirty.size === 0) return 'clean'
+    const parts = frames.map((frame, index) => {
+      if (!dirty.has(index)) return frame.raw
+      const payload = frame.events.map((event) => JSON.stringify(event)).join('\n') + '\n'
+      return zstdCompressSync(Buffer.from(payload, 'utf8'))
+    })
+    const tmp = `${file}.compat-${randomUUID()}.tmp`
+    writeFileSync(tmp, Buffer.concat(parts))
+    try {
+      const after = statSync(file)
+      if (after.mtimeMs !== before.mtimeMs || after.size !== before.size) {
+        rmSync(tmp, { force: true })
+        return 'unavailable'
+      }
+      renameSync(tmp, file)
+      return 'repaired'
+    } catch (error) {
+      rmSync(tmp, { force: true })
+      throw error
+    }
+  } catch {
+    return 'unavailable'
+  }
+}
+
+/**
+ * Compat entry for the resume path: repair the target session's log, then
+ * let resume proceed regardless of outcome. Never throws, never blocks on
+ * anything but one small file — a repair miss degrades to the exact
+ * pre-patch behavior (resume may still succeed or fail as before).
+ * @param sessionId - Session about to be resumed.
+ */
+export async function prepareSessionForResume(sessionId: string): Promise<void> {
+  repairSessionLogForResume(sessionId)
 }
 
 /**

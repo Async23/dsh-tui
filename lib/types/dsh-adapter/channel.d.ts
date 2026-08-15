@@ -748,6 +748,12 @@ export declare function createChannel(ctx: Context, initialAgent: Agent, options
  * `c:\repo`). `caseInsensitive` is a parameter (not a platform read) so the
  * verifier can exercise both modes on any host. Exported for
  * scripts/verify-session-cwd.mjs.
+ *
+ * Boundary rule (issue #153): container directories are nobody's workspace.
+ * $HOME and Windows drive roots (`C:`) are ancestors of unrelated projects,
+ * so the descendant rules below would list every session on the machine
+ * from `~` (and every session on the drive from `C:\`). At these
+ * boundaries, in either direction, only an exact match passes.
  */
 export declare function sessionCwdMatches(stateCwd: string, headerCwd: string, caseInsensitive?: boolean): boolean;
 /** The fs-service surface `@`-mention expansion consumes (dsh-fs-local). */
