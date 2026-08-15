@@ -30,7 +30,7 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { writeFileSync, m
   import('node:path'),
   import('../src/ui.js'),
   import('../src/screens/Chat.js'),
-  import('../src/questions.js'),
+  import('../src/dsh-adapter/questions.js'),
 ])
 
 const COLS = 100

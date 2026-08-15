@@ -1,7 +1,7 @@
 import React from 'react'
 import { t } from '../i18n.js'
 import { Box, Text } from '../ui.js'
-import type { LlmModelInfo } from '@deepseek-ai/dsh-llm'
+import type { LlmModelInfo } from '../dsh-adapter/types.js'
 import { Pane } from './design-system/Pane.js'
 import { ListItem } from './design-system/ListItem.js'
 import { HintLine } from './design-system/HintLine.js'

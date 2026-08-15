@@ -1,7 +1,7 @@
 import React from 'react'
 import { t } from '../i18n.js'
 import { Box, Text } from '../ui.js'
-import type { ChatRow } from '../channel.js'
+import type { ChatRow } from '../dsh-adapter/channel.js'
 import { Pane } from './design-system/Pane.js'
 import { ListItem } from './design-system/ListItem.js'
 import { HintLine } from './design-system/HintLine.js'
