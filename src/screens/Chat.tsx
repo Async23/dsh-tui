@@ -6,7 +6,7 @@ import { formatTokens } from '../cc/format.js'
 import type { LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import type { Channel, ChatRow, PresetOption } from '../channel.js'
 import type { QuestionStore } from '../questions.js'
-import type { ApprovalStore } from '../approvals.js'
+import { ApprovalStore } from '../approvals.js'
 import { AskUserQuestionPanel } from '../components/questions/AskUserQuestionPanel.js'
 import { ApprovalPanel } from '../components/approvals/ApprovalPanel.js'
 import type { DOMElement } from '../ink/dom.js'
@@ -104,6 +104,14 @@ function searchableText(row: ChatRow): string {
  * interrupts the running turn, or (when idle) asks for a second Ctrl+C to
  * exit; Enter while scrolled up jumps back to the bottom.
  */
+
+/**
+ * Shared inert approval store for hosts that render Chat without an
+ * approval seam (headless verify scripts). Never parked into, so its
+ * snapshot stays null and the approval panel never mounts.
+ */
+let fallbackApprovalStore: ApprovalStore | undefined
+
 export function Chat({
   channel,
   questionStore,
@@ -113,7 +121,12 @@ export function Chat({
 }: {
   channel: Channel
   questionStore: QuestionStore
-  approvalStore: ApprovalStore
+  /**
+   * The approval seam's UI store. Optional: hosts without an approval
+   * channel (headless scripts, older embeds) render Chat without it and
+   * simply never see an approval panel — the question panel keeps its seat.
+   */
+  approvalStore?: ApprovalStore
   onExit: () => void
   /** Update the installed package and restart the current TUI process. */
   onUpdate?: () => void
@@ -130,10 +143,12 @@ export function Chat({
   )
   // The pending tool-approval ask (DSH approval seam): the permission layer
   // parks here until the panel decides; shown with priority over a pending
-  // questionnaire since it gates a tool about to run.
+  // questionnaire since it gates a tool about to run. Hosts that pass no
+  // approvalStore share one inert instance that never holds an ask.
+  const approvals = approvalStore ?? (fallbackApprovalStore ??= new ApprovalStore())
   const approvalSnapshot = React.useSyncExternalStore(
-    listener => approvalStore.subscribe(listener),
-    () => approvalStore.getSnapshot(),
+    listener => approvals.subscribe(listener),
+    () => approvals.getSnapshot(),
   )
   // When a questionnaire batch completes, fold a Q&A summary into the
   // transcript (the tool card itself is hidden from the message list).
@@ -1386,7 +1401,7 @@ export function Chat({
           <ApprovalPanel
             key={approvalSnapshot.key}
             approval={approvalSnapshot}
-            onDecide={outcome => approvalStore.decide(outcome)}
+            onDecide={outcome => approvals.decide(outcome)}
           />
         ) : questionSnapshot !== null ? (
           <AskUserQuestionPanel
