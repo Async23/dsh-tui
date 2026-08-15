@@ -95,6 +95,10 @@ jobs:
       # 斜杠命令描述 i18n 回归（issue #41）：/ 菜单与 ? 帮助菜单描述随
       # /lang 中英切换，外部命令查不到映射回退注册表原文，窄终端中文不劈字。
       - run: node --import tsx/esm scripts/verify-i18n-command-descriptions.tsx
+      # /effort 滑杆 + 模式指示全应用回归（真实 Chat 渲染）：滑杆开/
+      # ←/→ 实时生效/Esc 关闭、状态栏 effort 段与模式段、三次 backtab
+      # 完整循环。
+      - run: node scripts/verify-effort-slider-ui.mjs
 
       # /trace 轨迹视图回归（issue #80）：事件装配配对耗时 + 组件渲染/滚动。
       - run: node --import tsx/esm scripts/repro-trace.tsx
