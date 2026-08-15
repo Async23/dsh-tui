@@ -178,6 +178,11 @@ TUI 只负责交互与呈现。会话日志是对话真源，模型调用、工�
 compaction 和持久化继续由 DSH 服务拥有。更详细的模块边界与性能设计见
 [架构文档](docs/architecture.md)。
 
+```text
+聊天 / 工具基础事件 ──> 持久 Session 日志 ──> TUI / Web
+        └──────────────> ActivityTracker（内存）──> 仅 TUI 状态栏
+```
+
 ## 技术要点
 
 - **Gentle Mist Blue 配色**：雾蓝只承担品牌、焦点、交互与高亮，正文保持中性灰；
@@ -188,9 +193,9 @@ compaction 和持久化继续由 DSH 服务拥有。更详细的模块边界与�
 - **上下文进度条**：参考 pi-nano-context 算法（最大余数法分段着色 + 多级缩略读数）。
 - **TPS 仪表**：参考 pi-tps-meter——流式 1/8 格 gauge、历史 min-max sparkline、
   速度语义色（≥50 绿 / ≥20 黄 / <20 红）。
-- **working-activity 生态**：工作状态行消费
+- **working-activity 生态**：工作状态行复用
   [dsh-working-activity](https://github.com/ccch1mneyyy/dsh-working-activity)
-  的 log-only `activity/status` 事件（与 Web UI 同一数据源）。
+  的纯状态机，在进程内从基础会话事件派生，不向共享日志写入 UI 状态。
 - **终端粘贴**：raw 模式下 Ctrl+V 由应用接管，按平台读取系统剪贴板——Windows
   走 PowerShell `Get-Clipboard`，macOS 走 `osascript`/`pbpaste`，Linux 自动探测
   `wl-paste`/`xclip`/`xsel`；文件管理器复制的文件插入文件路径，剪贴板图片（截图）
