@@ -77,3 +77,7 @@ jobs:
       # thinking spinner 残影回归（issue #72）：text-default emoji（✳）
       # 量宽 2 实画 1 致 spinner 行每帧错位，thinking 残影堆积不消失。
       - run: node --import tsx/esm scripts/repro-thinking.tsx
+
+      # 斜杠命令描述 i18n 回归（issue #41）：/ 菜单与 ? 帮助菜单描述随
+      # /lang 中英切换，外部命令查不到映射回退注册表原文，窄终端中文不劈字。
+      - run: node --import tsx/esm scripts/verify-i18n-command-descriptions.tsx

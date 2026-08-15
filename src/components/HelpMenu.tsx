@@ -2,6 +2,7 @@ import React from 'react'
 import Box from '../ink/components/Box.js'
 import Text from '../ink/components/Text.js'
 import type { LocalCommand } from '../commands.js'
+import { localizedDescription } from '../commands.js'
 import { modLabel } from '../utils/modifiers.js'
 
 /**
@@ -69,7 +70,7 @@ export function HelpMenu({
         {commands.map(command => (
           <Box key={command.name}>
             <Text dimColor wrap="truncate-end">
-              /{command.name} — {command.description}
+              /{command.name} — {localizedDescription(command)}
             </Text>
           </Box>
         ))}
