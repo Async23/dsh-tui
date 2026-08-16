@@ -31,7 +31,20 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm build
+      # lib/ is not checked in. Compile it once from a clean output directory;
+      # the following gates reuse this exact runtime instead of rebuilding it.
+      - run: pnpm compile
+
+      - name: Verify clean compile output
+        run: |
+          test -f lib/types/index.js
+          test -f lib/types/dsh-adapter/invariant.js
+
+      - run: pnpm verify:build
+
+      # Keep every main/types/bin/exports target inside the published tarball
+      # and smoke-import the two runtime entry points.
+      - run: pnpm verify:package
 
       # 带断言的回归：提问面板内联输入（issue #9）+ 工具卡排版
       # （⎿ 缩进、diff 红绿行、信封剥离），失败即非零退出。
@@ -249,4 +262,3 @@ jobs:
       # 提问面板 hideCustomInput 行为回归：纯选择题隐藏输入行且 Tab/打字
       # 不劫持焦点，纯文本题忽略 hide 标记，多选题默认行为不回退。
       - run: node --import tsx/esm scripts/verify-askpanel-hide-custom-input.tsx
-
