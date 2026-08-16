@@ -91,6 +91,32 @@ const dict = {
   'subagent-archived': { zh: ' 已归档', en: ' archived' },
   'subagent-query-failed': { zh: '查询失败 · {{err}}', en: 'Query failed · {{err}}' },
   'agent-preset-switched': { zh: 'Agent preset 已切换：{{preset}}', en: 'Agent preset switched: {{preset}}' },
+  'context-low-warning': { zh: '上下文即将耗尽（剩余 {{percent}}%）· 运行 /clear 或新建会话', en: 'Context low ({{percent}}% remaining) · Run /clear or start a new session' },
+  'rewind-unavailable': { zh: '回退不可用——会话服务未加载', en: 'Rewind unavailable — session services not loaded' },
+  'rewind-settling': { zh: '无法回退——回合仍在收尾，请稍候再试', en: 'Cannot rewind — the turn is still settling, try again in a moment' },
+  'rewind-fork-failed': { zh: '无法回退到该处 · {{err}}', en: 'Cannot rewind to this point · {{err}}' },
+  'rewind-create-failed': { zh: '回退失败——无法创建替代会话', en: 'Rewind failed — could not create the replacement session' },
+  'rewind-attach-failed': { zh: '已回退，但工作区挂载失败 · {{err}}', en: 'Session rewound, but workspace attachment failed · {{err}}' },
+  'resume-while-working': { zh: '回合运行中，无法恢复会话', en: 'Cannot resume while a turn is running' },
+  'resume-unavailable': { zh: '恢复不可用——agents 服务未加载', en: 'Resume unavailable — agents service not loaded' },
+  'resume-failed': { zh: '恢复失败 · {{err}}', en: 'Resume failed · {{err}}' },
+  'resume-attach-failed': { zh: '已恢复会话，但工作区挂载失败 · {{err}}', en: 'Session resumed, but workspace attachment failed · {{err}}' },
+  'new-session-while-working': { zh: '回合运行中，无法新建会话', en: 'Cannot start a new session while a turn is running' },
+  'new-session-unavailable': { zh: '新建会话不可用——agents 服务未加载', en: 'New session unavailable — agents service not loaded' },
+  'new-session-failed': { zh: '新建会话失败 · {{err}}', en: 'New session failed · {{err}}' },
+  'new-session-attach-failed': { zh: '会话已创建，但工作区挂载失败 · {{err}}', en: 'Session created, but workspace attachment failed · {{err}}' },
+  'model-switch-while-working': { zh: '回合运行中，无法切换模型', en: 'Cannot switch models while a turn is running' },
+  'model-switch-unavailable': { zh: '模型切换不可用——会话服务未加载', en: 'Model switch unavailable — session services not loaded' },
+  'model-switch-fork-failed': { zh: '无法切换模型 · {{err}}', en: 'Cannot switch models · {{err}}' },
+  'model-switch-failed': { zh: '模型切换失败 · {{err}}', en: 'Model switch failed · {{err}}' },
+  'model-switch-attach-failed': { zh: '模型已切换，但工作区挂载失败 · {{err}}', en: 'Model switched, but workspace attachment failed · {{err}}' },
+  'compact-unavailable': { zh: '压缩不可用——当前 leaf 没有压缩服务', en: 'Compaction unavailable · no compaction service in this leaf' },
+  'compact-while-working': { zh: '回合运行中，无法压缩会话', en: 'Cannot compact while a turn is running' },
+  'compact-working': { zh: '正在压缩会话…', en: 'Compacting conversation…' },
+  'compact-done': { zh: '会话已压缩', en: 'Conversation compacted' },
+  'compact-nothing': { zh: '没有可压缩的内容', en: 'Nothing to compact' },
+  'compact-failed': { zh: '压缩失败 · {{err}}', en: 'Compaction failed · {{err}}' },
+  'turn-failed': { zh: '回合出错{{detail}}', en: 'Turn error{{detail}}' },
 
   // ── questions.ts ─────────────────────────────────────────────────────
   'questionnaire-answered': { zh: '📋 问卷已答 · {{total}} 题', en: '📋 Questionnaire answered · {{total}} questions' },
@@ -212,10 +238,21 @@ const dict = {
   'btw-hint-loading': { zh: 'Esc 取消', en: 'Esc cancel' },
   'btw-hint-done': { zh: '↑/↓ 滚动 · Space/Enter/Esc 关闭 · c 复制', en: '↑/↓ scroll · Space/Enter/Esc dismiss · c copy' },
   'btw-llm-unavailable': { zh: '侧问不可用（llm 服务未挂载）', en: 'Side question unavailable (llm service not mounted)' },
+  'exit-press-again': { zh: '再次按 Ctrl+C 退出', en: 'Press Ctrl+C again to exit' },
+  'new-session-started': { zh: '已新建会话', en: 'New session started' },
+  'command-not-found': { zh: '/{{name}}：没有这个命令', en: '/{{name}}: no such command' },
+  'thinking-toggled': { zh: '思考模式：{{state}}', en: 'Thinking {{state}}' },
+  'thinking-on': { zh: '开启', en: 'on' },
+  'thinking-off': { zh: '关闭', en: 'off' },
+  'tokens-usage': { zh: 'Tokens：{{in}} 输入 · {{out}} 输出', en: 'Tokens: {{in}} in · {{out}} out' },
+  'tokens-usage-context': { zh: '{{usage}} · 上下文 {{percent}}%', en: '{{usage}} · {{percent}}% of context' },
 
   // ── plugin.ts — boot-time rename notices (issue #120) ───────────────
   'legacy-dir-migrated': { zh: '数据目录已从 ~/.dsh-tui 复制到 ~/.dsh-tui（旧目录保留，确认无误后可自行删除）', en: 'Data directory copied from ~/.dsh-tui to ~/.dsh-tui (the old directory is kept; delete it yourself once satisfied)' },
   'legacy-env-renamed': { zh: '环境变量 {{old}} 已更名为 {{new}}，旧名不再生效', en: 'Environment variable {{old}} was renamed to {{new}}; the old name no longer takes effect' },
+
+  // ── plugin.ts — /update flow ───────────────────────────────────────
+  'update-aborted-no-profile': { zh: 'dsh-tui 更新中止：未解析到 dsh profile。', en: 'dsh-tui update aborted: no dsh profile resolved.' },
 
   // ── components/ActivityLine.tsx ──────────────────────────────────────
   'activity-ctx-warn': { zh: '⚠ 上下文', en: '⚠ ctx ' },
@@ -249,6 +286,7 @@ const dict = {
   'logo-tip-model': { zh: '切换模型', en: 'switch model' },
   'logo-tip-help': { zh: '查看命令', en: 'view commands' },
   'logo-tip-tab': { zh: '自动补全', en: 'autocomplete' },
+  'logo-tip-prefix': { zh: '提示：', en: 'Tip: ' },
 
   // ── components/PromptInput.tsx ──────────────────────────────────────
   'input-sent-after-turn': { zh: '已发送，当前回合结束后处理', en: 'Sent, processed after the current turn' },

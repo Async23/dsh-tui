@@ -696,7 +696,7 @@ function writeStream(stream: NodeJS.WriteStream, data: string): Promise<void> {
 function runUpdate(ctx: Context, profile: string | undefined, sessionId: string): void {
   disposeRootAndThen(ctx, () => {
     if (profile === undefined) {
-      process.stderr.write('\ndsh-tui update aborted: no dsh profile resolved.\n')
+      process.stderr.write(`\n${t('update-aborted-no-profile')}\n`)
       process.exit(1)
     }
     void updateTuiAndRestart(sessionId, profile).then(

@@ -321,7 +321,7 @@ export function Chat({
       onExit()
     } else {
       exitPendingRef.current = true
-      channel.notify('Press Ctrl+C again to exit')
+      channel.notify(t('exit-press-again'))
       exitTimerRef.current = setTimeout(() => {
         exitPendingRef.current = false
       }, 3000)
@@ -641,7 +641,7 @@ export function Chat({
         // non-destructive — no CC-style "press /new again" confirmation.
         setHelpOpen(false)
         void channel.newSession().then((ok) => {
-          if (ok) channel.notify('New session started')
+          if (ok) channel.notify(t('new-session-started'))
         })
         return true
       }
@@ -710,7 +710,7 @@ export function Chat({
         setThinkingFocus(thinkingVisible ? 0 : 1)
         return true
       case 'tokens': {
-        const usage = `Tokens: ${formatTokens(channel.tokens.input)} in · ${formatTokens(channel.tokens.output)} out`
+        const usage = t('tokens-usage', { in: formatTokens(channel.tokens.input), out: formatTokens(channel.tokens.output) })
         if (channel.contextWindow === undefined) {
           channel.notify(usage)
         } else {
@@ -718,9 +718,7 @@ export function Chat({
             0,
             Math.min(100, Math.round((channel.tokens.input / channel.contextWindow) * 100)),
           )
-          channel.notify(
-            `${usage} · ${percent}% of context`,
-          )
+          channel.notify(t('tokens-usage-context', { usage, percent }))
         }
         return true
       }
@@ -1011,7 +1009,7 @@ export function Chat({
             if (text !== undefined && text !== '') {
               channel.notify(text)
             } else if (text === undefined) {
-              channel.notify(`/${name}: no such command`, { color: 'error' })
+              channel.notify(t('command-not-found', { name }), { color: 'error' })
             }
           })
           return true
@@ -1274,7 +1272,7 @@ export function Chat({
           setThinkingVisible(enabled)
           setThinkingConfirm(null)
           setThinkingOpen(false)
-          channel.notify(`Thinking ${enabled ? 'on' : 'off'}`)
+          channel.notify(t('thinking-toggled', { state: enabled ? t('thinking-on') : t('thinking-off') }))
         } else if (key.escape) {
           setThinkingConfirm(null)
         }
@@ -1288,7 +1286,7 @@ export function Chat({
         } else {
           setThinkingVisible(enabled)
           setThinkingOpen(false)
-          channel.notify(`Thinking ${enabled ? 'on' : 'off'}`)
+          channel.notify(t('thinking-toggled', { state: enabled ? t('thinking-on') : t('thinking-off') }))
         }
       } else if (key.escape) {
         setThinkingOpen(false)

@@ -1023,7 +1023,7 @@ export function createChannel(
       Math.round((remaining / state.contextWindow) * 100),
     )
     state.notify(
-      `Context low (${percentLeft}% remaining) · Run /clear or start a new session`,
+      t('context-low-warning', { percent: percentLeft }),
       { color: 'warning', timeoutMs: 8000 },
     )
   }
@@ -1578,7 +1578,7 @@ export function createChannel(
         | { create(options: CreateAgentOptions): Promise<AgentHandle> }
         | undefined
       if (!sessions || !agents) {
-        state.notify('Rewind unavailable — session services not loaded', { color: 'error' })
+        state.notify(t('rewind-unavailable'), { color: 'error' })
         return null
       }
       // Stop a running turn first and WAIT for its turn/end to land — fork
@@ -1590,7 +1590,7 @@ export function createChannel(
       if (wasWorking) {
         const turnSettled = await waitForTurnEnd(agent.session, cancelSeq, 30000)
         if (!turnSettled) {
-          state.notify('Cannot rewind — the turn is still settling, try again in a moment', { color: 'error' })
+          state.notify(t('rewind-settling'), { color: 'error' })
           return null
         }
       }
@@ -1624,7 +1624,7 @@ export function createChannel(
         seed = sessions.fork(agent.session, boundary).events
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Cannot rewind to this point · ${message}`, { color: 'error' })
+        state.notify(t('rewind-fork-failed', { err: message }), { color: 'error' })
         return null
       }
       let handle: AgentHandle
@@ -1650,14 +1650,14 @@ export function createChannel(
           ...(rewindComposed.setup === undefined ? {} : { setup: rewindComposed.setup }),
         })
       } catch {
-        state.notify('Rewind failed — could not create the replacement session', { color: 'error' })
+        state.notify(t('rewind-create-failed'), { color: 'error' })
         return null
       }
       try {
         await attachSessionToWorkspace(ctx, state.cwd, childId)
       } catch (error) {
         state.notify(
-          `Session rewound, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('rewind-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -1717,7 +1717,7 @@ export function createChannel(
       // loads the history immediately (the `--resume` launcher path keeps
       // resolving through DSH_TUI_RESUME_SESSION at boot).
       if (state.working) {
-        state.notify('Cannot resume while a turn is running', { color: 'warning' })
+        state.notify(t('resume-while-working'), { color: 'warning' })
         return false
       }
       const agents = ctx.get('agents') as
@@ -1730,7 +1730,7 @@ export function createChannel(
         }
         | undefined
       if (!agents) {
-        state.notify('Resume unavailable — agents service not loaded', { color: 'error' })
+        state.notify(t('resume-unavailable'), { color: 'error' })
         return false
       }
       let handle: AgentHandle
@@ -1764,7 +1764,7 @@ export function createChannel(
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Resume failed · ${message}`, { color: 'error', timeoutMs: 8000 })
+        state.notify(t('resume-failed', { err: message }), { color: 'error', timeoutMs: 8000 })
         return false
       }
       try {
@@ -1774,7 +1774,7 @@ export function createChannel(
         await attachSessionToWorkspace(ctx, handle.agent.session.header.cwd ?? state.cwd, SessionId(sessionId))
       } catch (error) {
         state.notify(
-          `Session resumed, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('resume-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -1857,7 +1857,7 @@ export function createChannel(
       // transcript reset, the `--resume` marker forgotten (the old session
       // stays persisted for /resume). Same reset shape as rewindTo/resumeTo.
       if (state.working) {
-        state.notify('Cannot start a new session while a turn is running', {
+        state.notify(t('new-session-while-working'), {
           color: 'warning',
         })
         return false
@@ -1866,7 +1866,7 @@ export function createChannel(
         | { create(options: CreateAgentOptions): Promise<AgentHandle> }
         | undefined
       if (!agents) {
-        state.notify('New session unavailable — agents service not loaded', {
+        state.notify(t('new-session-unavailable'), {
           color: 'error',
         })
         return false
@@ -1919,7 +1919,7 @@ export function createChannel(
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`New session failed · ${message}`, {
+        state.notify(t('new-session-failed', { err: message }), {
           color: 'error',
           timeoutMs: 8000,
         })
@@ -1929,7 +1929,7 @@ export function createChannel(
         await attachSessionToWorkspace(ctx, state.cwd, sessionId)
       } catch (error) {
         state.notify(
-          `Session created, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('new-session-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -2048,7 +2048,7 @@ export function createChannel(
       // routed to the chosen model. Same reset shape as rewindTo/resumeTo;
       // the history replays unchanged, only the request model changes.
       if (state.working) {
-        state.notify('Cannot switch models while a turn is running', {
+        state.notify(t('model-switch-while-working'), {
           color: 'warning',
         })
         return false
@@ -2060,7 +2060,7 @@ export function createChannel(
         | { create(options: CreateAgentOptions): Promise<AgentHandle> }
         | undefined
       if (!sessions || !agents) {
-        state.notify('Model switch unavailable — session services not loaded', {
+        state.notify(t('model-switch-unavailable'), {
           color: 'error',
         })
         return false
@@ -2071,7 +2071,7 @@ export function createChannel(
         seed = sessions.fork(agent.session).events
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Cannot switch models · ${message}`, { color: 'error' })
+        state.notify(t('model-switch-fork-failed', { err: message }), { color: 'error' })
         return false
       }
       const childId = SessionId(randomUUID())
@@ -2096,14 +2096,14 @@ export function createChannel(
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Model switch failed · ${message}`, { color: 'error', timeoutMs: 8000 })
+        state.notify(t('model-switch-failed', { err: message }), { color: 'error', timeoutMs: 8000 })
         return false
       }
       try {
         await attachSessionToWorkspace(ctx, state.cwd, childId)
       } catch (error) {
         state.notify(
-          `Model switched, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('model-switch-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -2587,25 +2587,25 @@ export function createChannel(
           ): Promise<unknown>
         }>(ctx, agent, 'compaction')
       if (!compactService) {
-        state.notify('Compaction unavailable · no compaction service in this leaf', {
+        state.notify(t('compact-unavailable'), {
           color: 'warning',
         })
         return
       }
       if (state.working) {
-        state.notify('Cannot compact while a turn is running', { color: 'warning' })
+        state.notify(t('compact-while-working'), { color: 'warning' })
         return
       }
       const signal = new AbortController().signal
-      state.notify('Compacting conversation…')
+      state.notify(t('compact-working'))
       void compactService
         .compactNow(agent, signal)
         .then((result) => {
-          state.notify(result ? 'Conversation compacted' : 'Nothing to compact')
+          state.notify(result ? t('compact-done') : t('compact-nothing'))
         })
         .catch((error: unknown) => {
           state.notify(
-            `Compaction failed · ${error instanceof Error ? error.message : String(error)}`,
+            t('compact-failed', { err: error instanceof Error ? error.message : String(error) }),
             { color: 'error', timeoutMs: 8000 },
           )
         })
@@ -3548,7 +3548,7 @@ ${output}
           state.rows.push({
             id: nextRowId,
             kind: 'interrupt',
-            text: 'Interrupted · What should Claude do instead?',
+            text: t('interrupted-by-user') + t('interrupted-ask-next'),
           })
           nextRowId += 1
           break
@@ -3557,7 +3557,7 @@ ${output}
         state.rows.push({ id: nextRowId, kind: 'notice', text: `turn ${reason.kind}${detail ? ` · ${detail}` : ''}` })
         nextRowId += 1
         state.notify(
-          `Turn ${reason.kind}${detail ? ` · ${detail}` : ''}`,
+          t('turn-failed', { detail: detail ? ` · ${detail}` : '' }),
           { color: 'error', timeoutMs: 8000 },
         )
         break
