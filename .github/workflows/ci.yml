@@ -235,6 +235,12 @@ jobs:
       # scrollback 零增量、动效帧只含 SGR。
       - run: node --import tsx/esm scripts/verify-trace-scene.tsx
 
+      # 缩放重排回归（实机反馈：打开长会话后最大化窗口）：判据是终局等价
+      # ——缩放后的物理终端必须等于在新尺寸上全新渲染的同一状态。缩放会让
+      # 树内每个测量所依据的宽度失效，而没有任何节点被标脏，文本节点会沿用
+      # 旧宽度的测量结果，靠 flex 仲裁的行因此由两套布局拼成。
+      - run: node --import tsx/esm scripts/verify-resize-reflow.tsx
+
       # /provider 向导回归：catalog/custom 两分支的 profile 形状、凭据回滚
       # （覆盖时恢复旧 key 而非误删）、env shadow 跳过、rc.6 兼容守卫、
       # hideCustomInput 逐题标记。
