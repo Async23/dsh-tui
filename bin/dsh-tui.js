@@ -22,9 +22,9 @@
  * `DSH_TUI_LANG` 显式指定时从其值，否则默认中文（同 src/i18n.ts 的缺省）。
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { shellQuote } from '../lib/types/utils/shellQuote.js'
 import { detectLegacyEnv, RENAMED_ENV } from '../lib/types/utils/paths.js'
@@ -86,10 +86,15 @@ const isWin = process.platform === 'win32'
 // 转义——shell 路径的所有参数必须先过 shellQuote（同 src/update.ts 的
 // /update 重启路径），否则含空格/引号的参数会被拆断。
 const shellOpt = isWin ? { shell: true } : {}
-const q = args => (isWin ? shellQuote(args) : args)
+// DEP0190（issue #148）：Node ≥22 对「shell:true + 非空参数数组」的调用
+// 发出弃用警告，判定是语法级的——参数已过 shellQuote 也一样告警；且未来
+// 大版本可能升级为运行时错误。把转义后的参数拼进命令字符串传入
+// （shell:true + 空参数数组不触发），非 Windows 路径保持数组直传。
+const cmd = (command, args) =>
+  isWin ? [`${command} ${shellQuote(args).join(' ')}`, []] : [command, args]
 
 // --- 1. dsh CLI 预检 ---------------------------------------------------------
-const probe = spawnSync('dsh', q(['--version']), { stdio: 'pipe', ...shellOpt })
+const probe = spawnSync(...cmd('dsh', ['--version']), { stdio: 'pipe', ...shellOpt })
 if (probe.error || probe.status !== 0) {
   console.error(msg('noDsh'))
   process.exit(1)
@@ -109,13 +114,13 @@ try {
   installedVersion = undefined
 }
 if (installedVersion === undefined) {
-  const pnpmProbe = spawnSync('pnpm', q(['--version']), { stdio: 'pipe', ...shellOpt })
+  const pnpmProbe = spawnSync(...cmd('pnpm', ['--version']), { stdio: 'pipe', ...shellOpt })
   if (pnpmProbe.error || pnpmProbe.status !== 0) {
     console.error(msg('noPnpm'))
     process.exit(1)
   }
   console.log(msg('bootstrapStart'))
-  const add = spawnSync('dsh', q(['plugin', '--profile', PROFILE, 'add', `${PACKAGE}@${ownVersion}`]), { stdio: 'inherit', ...shellOpt })
+  const add = spawnSync(...cmd('dsh', ['plugin', '--profile', PROFILE, 'add', `${PACKAGE}@${ownVersion}`]), { stdio: 'inherit', ...shellOpt })
   if (add.status !== 0) {
     console.error(msg('installFailed'))
     process.exit(add.status ?? 1)
@@ -143,6 +148,14 @@ for (const a of process.argv.slice(2)) {
       process.env.DSH_TUI_RESUME_SESSION = sessionId
       process.env.DSH_CC_RESUME_SESSION = sessionId
     }
+  } else if (
+    process.env.DSH_TUI_WORKSPACE_TARGET === undefined
+    && !a.startsWith('-')
+    && (isAbsolute(a) || /^[a-z][a-z0-9+.-]*:\/\//iu.test(a) || existsSync(resolve(a)))
+  ) {
+    // A workspace target is launcher syntax, not an argument for the profile
+    // app. The registry resolves local paths/file URLs and provider URIs.
+    process.env.DSH_TUI_WORKSPACE_TARGET = a
   } else {
     args.push(a)
   }
@@ -154,7 +167,7 @@ for (const oldName of detectLegacyEnv()) {
 }
 
 // --- 4. 启动 ------------------------------------------------------------------
-const child = spawn('dsh', q(['--profile', PROFILE, ...args]), {
+const child = spawn(...cmd('dsh', ['--profile', PROFILE, ...args]), {
   stdio: 'inherit',
   env: process.env,
   ...shellOpt,

@@ -1,6 +1,7 @@
 import React from 'react'
 import { Box, Text, useTerminalSize, useTheme } from '../ui.js'
 import { formatTokens } from '../cc/format.js'
+import { t } from '../i18n.js'
 import { Byline } from '../components/design-system/Byline.js'
 import { KeyboardShortcutHint } from '../components/design-system/KeyboardShortcutHint.js'
 import { ActivityLine, contextPressurePct } from '../components/ActivityLine.js'
@@ -62,7 +63,7 @@ export function StatusLine({
     const rate = total > 0 ? (usage.cacheRead / total) * 100 : 0
     contextParts.push(
       <Text key="cache">
-        <Text dimColor>cache </Text>
+        <Text dimColor>{t('status-cache-label')}</Text>
         <Text color="inactiveShimmer">{rate.toFixed(1)}%</Text>
       </Text>,
     )
@@ -123,7 +124,7 @@ export function StatusLine({
         ]
       : []),
     <Text key="cwd" color="inactiveShimmer">
-      {basename(channel.cwd)}
+      {basename(channel.displayCwd)}
     </Text>,
     ...(channel.sessionTitle
       ? [

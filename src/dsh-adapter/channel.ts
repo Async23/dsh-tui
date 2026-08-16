@@ -19,12 +19,12 @@ type SideQuestionLlm = {
 }
 import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
 import { renderContextSections, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { discoverBaselineInstructionFiles } from '@deepseek-ai/dsh-agent-instructions'
+import { loadBaselineInstructions } from '@deepseek-ai/dsh-agent-instructions'
 import type { Context } from '@deepseek-ai/cordis'
-import { isAbsolute, join } from 'node:path'
-import { LOCAL_COMMANDS, type LocalCommand } from '../commands.js'
+import { extname, isAbsolute, join } from 'node:path'
+import { completeCommands, LOCAL_COMMANDS, type CommandCompletion, type CommandCompletionNode, type LocalCommand } from '../commands.js'
 import { clearResumeTarget, forgetSession, readLastUsed, readResumeTarget, touchSession, type SessionRecord, writeResumeTarget } from '../sessionHistory.js'
-import { appendSessionTitle, deleteSessionLog, readSessionTitleFromLog, sessionsRoots } from './compat/index.js'
+import { appendSessionTitle, deleteSessionLog, ensureLegacySessionEventTypes, readSessionTitleFromLog, sessionsRoots } from './compat/index.js'
 import { writeActivityFrames } from '../activityPrefs.js'
 import { readEffortPref, writeEffortPref } from '../effortPrefs.js'
 import { readModelPref, writeModelPref } from '../modelPrefs.js'
@@ -33,7 +33,7 @@ import type { ProviderSetupHost } from './providerWizard.js'
 import { readPresetPref, writePresetPref } from '../presetPrefs.js'
 import { composePreset, resolvePersistedPreset, rosterOf, runningPresetOf, serviceForAgent, type AgentPresetInfo } from './presets.js'
 import { isPresetName } from '../components/activityFrames.js'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { logForDebugging } from '../utils/debug.js'
 import { homeDir, LEGACY_DATA_DIR } from '../utils/paths.js'
 import { extractMentions } from '../utils/mentions.js'
@@ -42,6 +42,17 @@ import { modeDisplayName, resolveSessionModes, type SessionModeSpec } from '../s
 import type { SpinnerMode } from '../components/Spinner/spinnerMode.js'
 import { ActivityTracker, type ActivityState } from 'dsh-working-activity/status'
 import { attachSessionToWorkspace } from './workspace.js'
+import { createLocalWorkspaceRuntime, type TuiWorkspaceCommand, type TuiWorkspaceCommandResult, type TuiWorkspaceTarget } from './workspaces.js'
+import type { TuiCommandTreeRuntime } from './command-trees.js'
+
+type ChannelImageBlock = Extract<ContentBlock, { type: 'image' }>
+type ChannelImageMediaType = ChannelImageBlock['attachment']['mediaType']
+
+export interface StagedImageInput {
+  data: Uint8Array
+  mediaType: ChannelImageMediaType
+  name?: string
+}
 
 /** Tool-call card state, mirroring the Claude Code tool-use presentation. */
 export interface ToolRow {
@@ -129,6 +140,8 @@ export interface ChatRow {
   kind: 'user' | 'assistant' | 'tool' | 'notice' | 'reasoning' | 'interrupt' | 'local' | 'local-output' | 'compact'
   /** Extra label for non-human user rows (e.g. `steering`). */
   label?: string
+  /** Actual execution location for `!command` rows. */
+  executionTarget?: string
   text: string
   /** True while an assistant step is still streaming chunks. */
   streaming?: boolean
@@ -262,6 +275,8 @@ export interface Channel {
   readonly tokens: TokenUsage
   /** Working directory of the session. */
   readonly cwd: string
+  /** Human-facing cwd (remote POSIX path/URI instead of a host alias). */
+  readonly displayCwd: string
   /** Current git branch, when the cwd is inside a git worktree. */
   readonly gitBranch: string | undefined
   /** True between turn/start and turn/end — drives the working spinner. */
@@ -334,6 +349,8 @@ export interface Channel {
    * nothing here; locals win on name collisions.
    */
   readonly commandList: readonly LocalCommand[]
+  /** Context-aware slash completions, including plugin subcommands. */
+  commandCompletions(input: string): readonly CommandCompletion[]
   /**
    * Run a plugin-registered slash command against the live agent (DSH
    * `dsh-commands` registry): logs `command/run`/`command/done` and returns
@@ -356,6 +373,8 @@ export interface Channel {
     tools: number
   }
   subscribe: (listener: () => void) => () => void
+  /** Validate and persist a pasted image, returning its prompt placeholder. */
+  stageImage(input: StagedImageInput): Promise<string>
   submit(text: string): void
   /**
    * Steer a message into the running turn (Codex/pi semantics): injected at
@@ -379,6 +398,17 @@ export interface Channel {
   /** Start a fresh conversation (`/new`): a brand-new agent + session, the
    *  transcript cleared, the resume marker forgotten. */
   newSession(): Promise<boolean>
+  /** Workspace targets contributed by the TUI and optional providers. */
+  listWorkspaces(): Promise<readonly TuiWorkspaceTarget[]>
+  /** Resolve an absolute path, file URL, or provider URI. */
+  resolveWorkspace(reference: string): Promise<TuiWorkspaceTarget | undefined>
+  /** Start a fresh session in the selected workspace. */
+  switchWorkspace(target: TuiWorkspaceTarget): Promise<boolean>
+  /** Rename the current durable workspace. */
+  renameWorkspace(title: string): Promise<boolean>
+  /** Provider-owned workspace subcommands. */
+  workspaceCommands(): readonly Pick<TuiWorkspaceCommand, 'name' | 'aliases' | 'description'>[]
+  runWorkspaceCommand(name: string, input: string): Promise<TuiWorkspaceCommandResult | undefined>
   /** Switch the live model (`/model` picker): forks the conversation at its
    *  current end and continues it with a new agent routed to `provider`/`model`.
    *  The history replays unchanged; only the request route changes. */
@@ -519,6 +549,7 @@ export interface ChannelState {
   provider: string
   tokens: TokenUsage
   cwd: string
+  displayCwd: string
   gitBranch: string | undefined
   working: boolean
   spinnerMode: SpinnerMode
@@ -563,6 +594,8 @@ export interface ChannelState {
   ): Promise<{ answer: string | null; error?: string }>
   /** Effective slash commands (see the public Channel type). */
   commandList: readonly LocalCommand[]
+  /** Context-aware slash completions (see the public Channel type). */
+  commandCompletions(input: string): readonly CommandCompletion[]
   /** Run a plugin-registered command (see the public Channel type). */
   runExternalCommand(name: string, rawInput: string): Promise<string | undefined>
   /** Estimated context segments by content type (pi-nano-context style bar). */
@@ -574,6 +607,7 @@ export interface ChannelState {
     tools: number
   }
   subscribe: (listener: () => void) => () => void
+  stageImage(input: StagedImageInput): Promise<string>
   /** @internal event bump (the public `notify(text)` posts a notification). */
   emit(): void
   /** @internal frame-aligned emit for high-frequency streaming deltas:
@@ -591,6 +625,12 @@ export interface ChannelState {
   resumeTo(sessionId: string): Promise<boolean>
   /** Start a fresh conversation (`/new`). */
   newSession(): Promise<boolean>
+  listWorkspaces(): Promise<readonly TuiWorkspaceTarget[]>
+  resolveWorkspace(uri: string): Promise<TuiWorkspaceTarget | undefined>
+  switchWorkspace(target: TuiWorkspaceTarget): Promise<boolean>
+  renameWorkspace(title: string): Promise<boolean>
+  workspaceCommands(): readonly Pick<TuiWorkspaceCommand, 'name' | 'aliases' | 'description'>[]
+  runWorkspaceCommand(name: string, input: string): Promise<TuiWorkspaceCommandResult | undefined>
   /** Switch the live model (`/model` picker). */
   switchModel(provider: string, model: string): Promise<boolean>
   /** The route's effort levels for `/effort` (see the public Channel type). */
@@ -788,18 +828,32 @@ function restoreRowFromEvent(row: ChatRow, event: SessionEvent): void {
   }
 }
 
+/** Render the durable tool-result payload, including provider error details. */
+function toolResultText(event: SessionEvent<'tool/result'>): string {
+  const block = event.data.message.content[0]
+  if (block === undefined || block.type !== 'tool-result') return ''
+  return block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
+}
+
+function toolErrorText(event: SessionEvent<'tool/result'>): string {
+  const failure = event.data.error
+  if (failure === undefined) return ''
+  const identity = `${failure.name}: ${failure.code}`
+  const detail = toolResultText(event)
+  return detail === '' || detail === identity ? identity : `${identity} — ${detail}`
+}
+
 /** Restore a folded tool row's result text from its tool/result event. */
 function restoreToolResult(row: ChatRow, event: SessionEvent<'tool/result'>): void {
   if (row.tool === undefined) return
   const failure = event.data.error
   if (failure !== undefined) {
     row.tool.status = 'error'
-    row.tool.errorText = `${failure.name}: ${failure.code}`
+    row.tool.errorText = toolErrorText(event)
     return
   }
   row.tool.status = 'ok'
-  const block = event.data.message.content[0]
-  const result = block.content.map(b => b.type === 'text' ? b.text : '').join('').trim()
+  const result = toolResultText(event)
   row.tool.resultFull = result || undefined
 }
 
@@ -943,6 +997,8 @@ export function createChannel(
   // command/run + command/done records). Absent the service, only the
   // built-in local commands exist.
   const commandService: CommandRuntime | undefined = ctx.get('commands')
+  const workspaceService = ctx.tuiWorkspaces ?? createLocalWorkspaceRuntime()
+  const commandTrees = ctx.get('tuiCommandTrees') as TuiCommandTreeRuntime | undefined
   // Shift+Tab session-mode cycle: cordis.yml `modes` wins; absent/empty/
   // atom-less → the built-in default/plan/full cycle (sessionModes.ts).
   const { modes: sessionModes, dropped: droppedModeIds } = resolveSessionModes(options.modes)
@@ -967,7 +1023,7 @@ export function createChannel(
       Math.round((remaining / state.contextWindow) * 100),
     )
     state.notify(
-      `Context low (${percentLeft}% remaining) · Run /clear or start a new session`,
+      t('context-low-warning', { percent: percentLeft }),
       { color: 'warning', timeoutMs: 8000 },
     )
   }
@@ -992,6 +1048,12 @@ export function createChannel(
    * through this chain to keep the send order FIFO.
    */
   let sendChain: Promise<void> = Promise.resolve()
+  let stagedImageSequence = 0
+  const stagedImages = new Map<string, ChannelImageBlock['attachment']>()
+  const clearStagedImages = (): void => {
+    stagedImages.clear()
+    stagedImageSequence = 0
+  }
   /**
    * Expand the text's `@` mentions and deliver ONE user message: the typed
    * text stays the first content block (the transcript bubble renders it —
@@ -1000,7 +1062,13 @@ export function createChannel(
    */
   const deliverUserText = (text: string, placement: PendingMessage['placement']): void => {
     sendChain = sendChain.then(async () => {
-      const expansion = await expandMentions(mentionFs(ctx), state.cwd, text)
+      const expansion = await expandMentions(
+        mentionFs(ctx),
+        state.cwd,
+        text,
+        mentionAttachments(ctx),
+        stagedImages,
+      )
       const message = createUserMessage({
         content: expansion.blocks,
         source: { kind: 'user' },
@@ -1297,6 +1365,7 @@ export function createChannel(
     provider: options.provider,
     tokens: { input: 0, output: 0 },
     cwd: options.cwd,
+    displayCwd: workspaceService.describe(options.cwd).description ?? options.cwd,
     gitBranch: undefined,
     working: false,
     spinnerMode: 'requesting',
@@ -1323,6 +1392,29 @@ export function createChannel(
     loadedContext: undefined,
     pending: [],
     commandList: LOCAL_COMMANDS,
+    commandCompletions(input: string) {
+      return completeCommands(input, state.commandList, (path) => {
+        if (path.length === 1 && path[0] === 'workspace') {
+          const builtins: CommandCompletionNode[] = [
+            { name: 'resume', description: 'Switch to another workspace', descriptionKey: 'cmd-desc-workspace-resume' },
+            { name: 'rename', description: 'Rename the current workspace', descriptionKey: 'cmd-desc-workspace-rename' },
+            { name: 'open', description: 'Open a path or workspace URI', descriptionKey: 'cmd-desc-workspace-open' },
+          ]
+          const reserved = new Set(builtins.map(command => command.name))
+          return [
+            ...builtins,
+            ...workspaceService.commands()
+              .filter(command => !reserved.has(command.name.toLowerCase()))
+              .map(command => ({
+                name: command.name,
+                aliases: command.aliases,
+                description: command.description,
+              })),
+          ]
+        }
+        return commandTrees?.children(path) ?? []
+      })
+    },
     lastUsage: undefined,
     tps: undefined,
     tpsSamples: [],
@@ -1370,6 +1462,28 @@ export function createChannel(
       const restored = foldBack(state.rows, agent.session.events, { call: presentCallView, result: presentResultView })
       if (restored > 0) state.emit()
       return restored
+    },
+    async stageImage(input: StagedImageInput): Promise<string> {
+      const attachments = mentionAttachments(ctx)
+      if (attachments === undefined) throw new Error('image attachments are unavailable in this profile')
+      if (!attachments.imageLimits.mediaTypes.includes(input.mediaType)) {
+        throw new Error(`${input.mediaType} images are not accepted by this profile`)
+      }
+      if (input.data.byteLength > attachments.imageLimits.maxImageBytes) {
+        throw new Error(`image exceeds this profile's per-image size limit`)
+      }
+      const attachment = await attachments.saveImage(input)
+      stagedImageSequence += 1
+      const token = `[Image #${stagedImageSequence}]`
+      stagedImages.set(token, attachment)
+      // References are content-addressed and durable. This map only connects
+      // editable prompt placeholders to them; cap it to bound a long TUI run.
+      while (stagedImages.size > 128) {
+        const oldest = stagedImages.keys().next().value as string | undefined
+        if (oldest === undefined) break
+        stagedImages.delete(oldest)
+      }
+      return token
     },
     submit(text) {
       const trimmed = text.trim()
@@ -1464,7 +1578,7 @@ export function createChannel(
         | { create(options: CreateAgentOptions): Promise<AgentHandle> }
         | undefined
       if (!sessions || !agents) {
-        state.notify('Rewind unavailable — session services not loaded', { color: 'error' })
+        state.notify(t('rewind-unavailable'), { color: 'error' })
         return null
       }
       // Stop a running turn first and WAIT for its turn/end to land — fork
@@ -1476,7 +1590,7 @@ export function createChannel(
       if (wasWorking) {
         const turnSettled = await waitForTurnEnd(agent.session, cancelSeq, 30000)
         if (!turnSettled) {
-          state.notify('Cannot rewind — the turn is still settling, try again in a moment', { color: 'error' })
+          state.notify(t('rewind-settling'), { color: 'error' })
           return null
         }
       }
@@ -1510,7 +1624,7 @@ export function createChannel(
         seed = sessions.fork(agent.session, boundary).events
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Cannot rewind to this point · ${message}`, { color: 'error' })
+        state.notify(t('rewind-fork-failed', { err: message }), { color: 'error' })
         return null
       }
       let handle: AgentHandle
@@ -1536,14 +1650,14 @@ export function createChannel(
           ...(rewindComposed.setup === undefined ? {} : { setup: rewindComposed.setup }),
         })
       } catch {
-        state.notify('Rewind failed — could not create the replacement session', { color: 'error' })
+        state.notify(t('rewind-create-failed'), { color: 'error' })
         return null
       }
       try {
-        await attachSessionToWorkspace(ctx, options.cwd, childId)
+        await attachSessionToWorkspace(ctx, state.cwd, childId)
       } catch (error) {
         state.notify(
-          `Session rewound, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('rewind-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -1557,6 +1671,11 @@ export function createChannel(
       // Goal/todo/title are session-scoped; the replay re-derives them for
       // the session being entered (or leaves them empty).
       state.todos = []
+      // Queued-but-undelivered messages live in the OLD agent's inbox; the
+      // swap must drop their previews or they linger forever (unretirable —
+      // retire events are filtered to the new agent, unwithdrawable — the
+      // new inbox never heard of them).
+      state.pending = []
       state.goal = undefined
       state.sessionTitle = ''
       state.tokens = { input: 0, output: 0 }
@@ -1598,7 +1717,7 @@ export function createChannel(
       // loads the history immediately (the `--resume` launcher path keeps
       // resolving through DSH_TUI_RESUME_SESSION at boot).
       if (state.working) {
-        state.notify('Cannot resume while a turn is running', { color: 'warning' })
+        state.notify(t('resume-while-working'), { color: 'warning' })
         return false
       }
       const agents = ctx.get('agents') as
@@ -1611,10 +1730,17 @@ export function createChannel(
         }
         | undefined
       if (!agents) {
-        state.notify('Resume unavailable — agents service not loaded', { color: 'error' })
+        state.notify(t('resume-unavailable'), { color: 'error' })
         return false
       }
       let handle: AgentHandle
+      // Compat boundary: register vouched-for legacy event types (e.g.
+      // activity/status from pre-#143 logs) in every reachable dsh-session
+      // copy before ANY strict read path (preset lookup below, then the
+      // harness seed validation) loads the target — the plugin's #119
+      // registration never ran in processes where it is unmounted (issue
+      // #153). In-process only: the shared log is never rewritten.
+      ensureLegacySessionEventTypes()
       // The target session's own preset (from its persisted log) — never the
       // current preference: a resume re-enters the composition its history
       // was produced under. Same rule for the route: only an explicit
@@ -1638,17 +1764,17 @@ export function createChannel(
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Resume failed · ${message}`, { color: 'error', timeoutMs: 8000 })
+        state.notify(t('resume-failed', { err: message }), { color: 'error', timeoutMs: 8000 })
         return false
       }
       try {
         // `/resume` is an explicit adoption of this persisted conversation.
         // This also repairs sessions created by TUI versions that predate the
         // separate workspace ownership ledger.
-        await attachSessionToWorkspace(ctx, options.cwd, SessionId(sessionId))
+        await attachSessionToWorkspace(ctx, handle.agent.session.header.cwd ?? state.cwd, SessionId(sessionId))
       } catch (error) {
         state.notify(
-          `Session resumed, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('resume-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -1662,6 +1788,11 @@ export function createChannel(
       // Goal/todo/title are session-scoped; the replay re-derives them for
       // the session being entered (or leaves them empty).
       state.todos = []
+      // Queued-but-undelivered messages live in the OLD agent's inbox; the
+      // swap must drop their previews or they linger forever (unretirable —
+      // retire events are filtered to the new agent, unwithdrawable — the
+      // new inbox never heard of them).
+      state.pending = []
       state.goal = undefined
       state.sessionTitle = ''
       state.tokens = { input: 0, output: 0 }
@@ -1679,6 +1810,7 @@ export function createChannel(
       // drop the session back out of the /resume filter. The branch
       // breadcrumb follows the adopted cwd.
       state.cwd = handle.agent.session.header.cwd ?? state.cwd
+      state.displayCwd = workspaceService.describe(state.cwd).description ?? state.cwd
       refreshGitBranch()
       state.agentPreset = resumeComposed.agentPreset
       // Status-line route follows the resumed session (review feedback): the
@@ -1717,6 +1849,7 @@ export function createChannel(
       touchSession(sessionId)
       state.emit()
       void oldHandle?.dispose().catch(() => {})
+      clearStagedImages()
       return true
     },
     async newSession(): Promise<boolean> {
@@ -1724,7 +1857,7 @@ export function createChannel(
       // transcript reset, the `--resume` marker forgotten (the old session
       // stays persisted for /resume). Same reset shape as rewindTo/resumeTo.
       if (state.working) {
-        state.notify('Cannot start a new session while a turn is running', {
+        state.notify(t('new-session-while-working'), {
           color: 'warning',
         })
         return false
@@ -1733,7 +1866,7 @@ export function createChannel(
         | { create(options: CreateAgentOptions): Promise<AgentHandle> }
         | undefined
       if (!agents) {
-        state.notify('New session unavailable — agents service not loaded', {
+        state.notify(t('new-session-unavailable'), {
           color: 'error',
         })
         return false
@@ -1786,17 +1919,17 @@ export function createChannel(
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`New session failed · ${message}`, {
+        state.notify(t('new-session-failed', { err: message }), {
           color: 'error',
           timeoutMs: 8000,
         })
         return false
       }
       try {
-        await attachSessionToWorkspace(ctx, options.cwd, sessionId)
+        await attachSessionToWorkspace(ctx, state.cwd, sessionId)
       } catch (error) {
         state.notify(
-          `Session created, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('new-session-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -1808,6 +1941,11 @@ export function createChannel(
       // Goal/todo/title are session-scoped; the replay re-derives them for
       // the session being entered (or leaves them empty).
       state.todos = []
+      // Queued-but-undelivered messages live in the OLD agent's inbox; the
+      // swap must drop their previews or they linger forever (unretirable —
+      // retire events are filtered to the new agent, unwithdrawable — the
+      // new inbox never heard of them).
+      state.pending = []
       state.goal = undefined
       state.sessionTitle = ''
       state.tokens = { input: 0, output: 0 }
@@ -1843,7 +1981,66 @@ export function createChannel(
       // The brand-new session becomes the most recently used.
       touchSession(handle.agent.id)
       void oldHandle?.dispose().catch(() => {})
+      clearStagedImages()
       return true
+    },
+    listWorkspaces() {
+      return workspaceService.list(state.cwd)
+    },
+    resolveWorkspace(uri: string) {
+      return workspaceService.resolve(uri, state.cwd)
+    },
+    async switchWorkspace(target: TuiWorkspaceTarget): Promise<boolean> {
+      if (state.working) {
+        state.notify(t('workspace-switch-working'), { color: 'warning' })
+        return false
+      }
+      // Local targets must exist and be directories — creating a session in
+      // a typo'd cwd "succeeds" and then every file tool errors per call.
+      if (target.kind === 'local') {
+        try {
+          if (!statSync(target.cwd).isDirectory()) throw new Error('not a directory')
+        } catch {
+          state.notify(t('workspace-open-invalid', { target: target.label }), { color: 'error', timeoutMs: 8000 })
+          return false
+        }
+      }
+      const previousCwd = state.cwd
+      const previousDisplay = state.displayCwd
+      state.cwd = target.cwd
+      state.displayCwd = target.description ?? target.uri
+      const switched = await state.newSession()
+      if (!switched) {
+        state.cwd = previousCwd
+        state.displayCwd = previousDisplay
+        return false
+      }
+      // The breadcrumb follows the adopted cwd, same as /resume (#96).
+      refreshGitBranch()
+      state.notify(t('workspace-switched', { target: target.label }))
+      state.emit()
+      return true
+    },
+    async renameWorkspace(title: string): Promise<boolean> {
+      try {
+        const renamed = await workspaceService.rename(state.cwd, title)
+        state.displayCwd = renamed.description ?? renamed.uri
+        state.notify(t('workspace-renamed', { title: renamed.label }))
+        state.emit()
+        return true
+      } catch (error) {
+        state.notify(
+          t('workspace-rename-failed', { err: error instanceof Error ? error.message : String(error) }),
+          { color: 'error', timeoutMs: 8000 },
+        )
+        return false
+      }
+    },
+    workspaceCommands() {
+      return workspaceService.commands()
+    },
+    runWorkspaceCommand(name: string, input: string) {
+      return workspaceService.runCommand(name, input, state.cwd)
     },
     async switchModel(provider: string, model: string): Promise<boolean> {
       // `/model` picker Enter — switch the live model by forking the
@@ -1851,7 +2048,7 @@ export function createChannel(
       // routed to the chosen model. Same reset shape as rewindTo/resumeTo;
       // the history replays unchanged, only the request model changes.
       if (state.working) {
-        state.notify('Cannot switch models while a turn is running', {
+        state.notify(t('model-switch-while-working'), {
           color: 'warning',
         })
         return false
@@ -1863,7 +2060,7 @@ export function createChannel(
         | { create(options: CreateAgentOptions): Promise<AgentHandle> }
         | undefined
       if (!sessions || !agents) {
-        state.notify('Model switch unavailable — session services not loaded', {
+        state.notify(t('model-switch-unavailable'), {
           color: 'error',
         })
         return false
@@ -1874,7 +2071,7 @@ export function createChannel(
         seed = sessions.fork(agent.session).events
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Cannot switch models · ${message}`, { color: 'error' })
+        state.notify(t('model-switch-fork-failed', { err: message }), { color: 'error' })
         return false
       }
       const childId = SessionId(randomUUID())
@@ -1899,14 +2096,14 @@ export function createChannel(
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        state.notify(`Model switch failed · ${message}`, { color: 'error', timeoutMs: 8000 })
+        state.notify(t('model-switch-failed', { err: message }), { color: 'error', timeoutMs: 8000 })
         return false
       }
       try {
-        await attachSessionToWorkspace(ctx, options.cwd, childId)
+        await attachSessionToWorkspace(ctx, state.cwd, childId)
       } catch (error) {
         state.notify(
-          `Model switched, but workspace attachment failed · ${error instanceof Error ? error.message : String(error)}`,
+          t('model-switch-attach-failed', { err: error instanceof Error ? error.message : String(error) }),
           { color: 'warning', timeoutMs: 8000 },
         )
       }
@@ -1918,6 +2115,11 @@ export function createChannel(
       // Goal/todo/title are session-scoped; the replay re-derives them for
       // the session being entered (or leaves them empty).
       state.todos = []
+      // Queued-but-undelivered messages live in the OLD agent's inbox; the
+      // swap must drop their previews or they linger forever (unretirable —
+      // retire events are filtered to the new agent, unwithdrawable — the
+      // new inbox never heard of them).
+      state.pending = []
       state.goal = undefined
       state.sessionTitle = ''
       state.tokens = { input: 0, output: 0 }
@@ -2385,25 +2587,25 @@ export function createChannel(
           ): Promise<unknown>
         }>(ctx, agent, 'compaction')
       if (!compactService) {
-        state.notify('Compaction unavailable · no compaction service in this leaf', {
+        state.notify(t('compact-unavailable'), {
           color: 'warning',
         })
         return
       }
       if (state.working) {
-        state.notify('Cannot compact while a turn is running', { color: 'warning' })
+        state.notify(t('compact-while-working'), { color: 'warning' })
         return
       }
       const signal = new AbortController().signal
-      state.notify('Compacting conversation…')
+      state.notify(t('compact-working'))
       void compactService
         .compactNow(agent, signal)
         .then((result) => {
-          state.notify(result ? 'Conversation compacted' : 'Nothing to compact')
+          state.notify(result ? t('compact-done') : t('compact-nothing'))
         })
         .catch((error: unknown) => {
           state.notify(
-            `Compaction failed · ${error instanceof Error ? error.message : String(error)}`,
+            t('compact-failed', { err: error instanceof Error ? error.message : String(error) }),
             { color: 'error', timeoutMs: 8000 },
           )
         })
@@ -2641,9 +2843,21 @@ export function createChannel(
           tools.push({ name: tool.name, description: tool.description ?? '' })
         }
       }
-      const discovered = await discoverBaselineInstructionFiles({ cwd: state.cwd })
+      const renderedInstructions = await loadBaselineInstructions({
+        cwd: state.cwd,
+        maxBytes: 1024 * 1024,
+        maxSourceBytes: 1024 * 1024,
+      }, ctx.get('fs'))
       if (target !== agent) return
-      files.push(...discovered.map(file => ({ displayPath: file.displayPath })))
+      const instructionSources = renderedInstructions as (typeof renderedInstructions & {
+        represented?: readonly { displayPath: string }[]
+      })
+      const instructionPaths = new Set([
+        ...(instructionSources?.represented ?? []).map(file => file.displayPath),
+        ...(renderedInstructions?.omitted ?? []).map(file => file.displayPath),
+        ...(renderedInstructions?.truncated ?? []).map(file => file.displayPath),
+      ])
+      files.push(...[...instructionPaths].map(displayPath => ({ displayPath })))
       // The skills registry is host-plane but scope-layered: preset rows
       // (skill-filesystem) register into the preset's layer, so the catalog
       // must be read through the agent's scope chain (serviceForAgent falls
@@ -2697,9 +2911,11 @@ export function createChannel(
     if (commandService) {
       for (const descriptor of commandService.list(target)) {
         if (merged.some(command => command.name === descriptor.name)) continue
+        const descriptions = commandTrees?.descriptions(descriptor.name)
         merged.push({
           name: descriptor.name,
           description: descriptor.description,
+          ...(descriptions === undefined ? {} : { descriptions }),
           tag: descriptor.input?.hint,
           external: true,
         })
@@ -2797,23 +3013,30 @@ export function createChannel(
     }
     | undefined
 
-  /** Claude Code's `!` mode: run a command on the user's machine and render its
- *  output in the transcript as local rows (never sent to the model). */
+  /** Claude Code's `!` mode: execute in the current workspace provider and
+   *  render local-only transcript rows (never sent to the model). */
   const runLocalCommand = async (
     command: string,
     includeInContext: boolean,
   ): Promise<void> => {
-    state.rows.push({ id: nextRowId++, kind: 'local', text: command })
+    const workspace = workspaceService.describe(state.cwd)
+    state.rows.push({
+      id: nextRowId++,
+      kind: 'local',
+      text: command,
+      executionTarget: workspace.kind === 'local' ? workspace.badge : `${workspace.badge} · ${workspace.label}`,
+    })
     state.emit()
     let output = '(no output)'
-    if (bash) {
+    const executionShell = await workspaceService.commandShell(state.cwd) ?? bash
+    if (executionShell) {
       try {
-        const spec = bash.resolve({
+        const spec = executionShell.resolve({
           command,
           workdir: state.cwd,
           timeoutMs: 30000,
         })
-        const result = await bash.run(spec)
+        const result = await executionShell.run(spec)
         output =
           result.stdout.text.trim() ||
           result.stderr.text.trim() ||
@@ -3241,7 +3464,7 @@ ${output}
           const failure = event.data.error
           if (failure !== undefined) {
             card.tool.status = 'error'
-            const errorText = `${failure.name}: ${failure.code}`
+            const errorText = toolErrorText(event)
             card.tool.errorText = errorText
             state.contextSegments.tools += estimateTokens(errorText)
           } else {
@@ -3325,7 +3548,7 @@ ${output}
           state.rows.push({
             id: nextRowId,
             kind: 'interrupt',
-            text: 'Interrupted · What should Claude do instead?',
+            text: t('interrupted-by-user') + t('interrupted-ask-next'),
           })
           nextRowId += 1
           break
@@ -3334,7 +3557,7 @@ ${output}
         state.rows.push({ id: nextRowId, kind: 'notice', text: `turn ${reason.kind}${detail ? ` · ${detail}` : ''}` })
         nextRowId += 1
         state.notify(
-          `Turn ${reason.kind}${detail ? ` · ${detail}` : ''}`,
+          t('turn-failed', { detail: detail ? ` · ${detail}` : '' }),
           { color: 'error', timeoutMs: 8000 },
         )
         break
@@ -3455,6 +3678,21 @@ ${output}
     // this agent's route offers it (dsh-agent installModelSelection).
     selection.current = undefined
     selection.assembled = undefined
+    // {{model}} backfill (issue #155): a resumed agent's route lives only in
+    // its session's request/header records — agentOptions.model stays
+    // undefined unless cordis.yml pins a COMPLETE provider+model pair — so
+    // the assemble-time persona variable `{{model}}` was registered but
+    // valueless, and dsh-system-prompt's interpolate() throws before any
+    // model call. Seed the selection from the channel's display route (on
+    // resume it already carries the session's recorded route; on create it
+    // matches the route the agent was created with). Per
+    // installModelSelection's contract an absent effort restores the
+    // provider/default behavior, so seeding never pins an effort the route
+    // did not ask for; applyPreferredEffort below still upgrades the seed
+    // when the user has a persisted preference the route offers.
+    if (agent.options.model === undefined && state.provider !== '' && state.model !== '') {
+      selection.current = { provider: state.provider, model: state.model }
+    }
     void applyPreferredEffort()
     refreshMode()
     agentSubscriptions = [
@@ -3582,6 +3820,14 @@ function normalizeCwd(path: string, caseInsensitive: boolean): string {
  * `c:\repo`). `caseInsensitive` is a parameter (not a platform read) so the
  * verifier can exercise both modes on any host. Exported for
  * scripts/verify-session-cwd.mjs.
+ *
+ * Boundary rule (issue #153): container directories are nobody's workspace.
+ * $HOME and the Windows root forms — plain drive roots (`C:`), UNC share
+ * roots (`//server/share`), and extended-length roots (`//?/C:`,
+ * `//?/UNC/server/share`) — are ancestors of unrelated projects, so the
+ * descendant rules below would list every session on the machine from `~`
+ * (and every session on the drive/share from those roots). At these
+ * boundaries, in either direction, only an exact match passes.
  */
 export function sessionCwdMatches(
   stateCwd: string,
@@ -3591,6 +3837,16 @@ export function sessionCwdMatches(
   const cwd = normalizeCwd(stateCwd, caseInsensitive)
   const recorded = normalizeCwd(headerCwd, caseInsensitive)
   if (recorded === '' || cwd === '') return false
+  const home = normalizeCwd(homeDir(), caseInsensitive)
+  // Paths below arrive backslash-normalized (`\\server\share` →
+  // `//server/share`, `\\?\C:\` → `//?/C:`), trailing slashes stripped.
+  const isContainer = (path: string): boolean =>
+    (home !== '' && path === home) ||
+    /^[a-z]:$/i.test(path) || // drive root: C:
+    /^\/\/[^/]+\/[^/]+$/.test(path) || // UNC share root: //server/share
+    /^\/\/\?\/[a-z]:$/i.test(path) || // extended drive root: //?/C:
+    /^\/\/\?\/unc\/[^/]+\/[^/]+$/i.test(path) // extended UNC root: //?/UNC/server/share
+  if (isContainer(cwd) || isContainer(recorded)) return recorded === cwd
   return (
     recorded === cwd ||
     // Pre-upgrade subdirectory session of this workspace.
@@ -3701,6 +3957,7 @@ export interface MentionFs {
   resolve(path: string): Promise<{ displayPath: string }>
   stat(target: { displayPath: string }): Promise<{ type: 'file' | 'directory' | 'other' } | undefined>
   readText(target: { displayPath: string }): Promise<string>
+  readBytes?(target: { displayPath: string }, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array>
   listDir(target: { displayPath: string }): Promise<Array<{ name: string; type: 'file' | 'directory' | 'other' }>>
 }
 
@@ -3710,9 +3967,39 @@ function mentionFs(ctx: Context): MentionFs | undefined {
   return ctx.get('fs') as MentionFs | undefined
 }
 
+type MentionImageBlock = ChannelImageBlock
+type MentionImageMediaType = ChannelImageMediaType
+
+/** Attachment subset used to turn an image path into a durable user block. */
+export interface MentionAttachments {
+  readonly imageLimits: {
+    readonly maxImageBytes: number
+    readonly maxImagesPerMessage: number
+    readonly maxMessageImageBytes: number
+    readonly mediaTypes: readonly MentionImageMediaType[]
+  }
+  saveImage(input: { data: Uint8Array; mediaType: MentionImageMediaType; name?: string }): Promise<MentionImageBlock['attachment']>
+}
+
+function mentionAttachments(ctx: Context): MentionAttachments | undefined {
+  return ctx.get('attachments') as MentionAttachments | undefined
+}
+
+const MENTION_IMAGE_MEDIA_TYPES: Readonly<Record<string, MentionImageMediaType>> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+}
+
+function mentionImageMediaType(path: string): MentionImageMediaType | undefined {
+  return MENTION_IMAGE_MEDIA_TYPES[extname(path).toLowerCase()]
+}
+
 export interface MentionExpansion {
   /** Model-facing blocks: the typed text first, one block per attachment. */
-  blocks: Array<{ type: 'text'; text: string }>
+  blocks: ContentBlock[]
   /** Paths that resolved and were attached (for the confirmation notice). */
   attached: string[]
   /** Mention tokens that failed to resolve (kept literal, warned about). */
@@ -3721,26 +4008,30 @@ export interface MentionExpansion {
 
 /**
  * Expand a submitted text's `@` mentions (issue #15) into model-facing
- * attachment blocks: each referenced file contributes its (capped) content,
- * each directory a shallow listing. The typed text stays the first block
- * verbatim — mentions that resolve keep their `@path` spelling in it, and
- * unresolved ones stay literal everywhere. Best-effort: an unreadable or
- * binary file degrades to `missing`, never a failed send.
+ * attachment blocks: supported image files become durable image blocks,
+ * other files contribute capped text, and directories contribute a shallow
+ * listing. Reads always go through the active fs service, so provider-owned
+ * workspaces keep their routing semantics. The typed text stays first and
+ * verbatim. Best-effort failures degrade to `missing`, never a failed send.
  */
 export async function expandMentions(
   fs: MentionFs | undefined,
   cwd: string,
   text: string,
+  attachments?: MentionAttachments,
+  stagedImages?: ReadonlyMap<string, MentionImageBlock['attachment']>,
 ): Promise<MentionExpansion> {
   const blocks: MentionExpansion['blocks'] = [{ type: 'text', text }]
   const attached: string[] = []
   const missing: string[] = []
   const mentions = extractMentions(text)
-  if (!fs || mentions.length === 0) return { blocks, attached, missing }
-
   let budget = MENTION_MAX_TOTAL_CHARS
-  for (const mention of mentions) {
-    if (budget <= 0) break
+  let imageCount = 0
+  let imageBytes = 0
+  if (fs !== undefined) {
+    for (const mention of mentions) {
+    const imageMediaType = mentionImageMediaType(mention.path)
+    if (budget <= 0 && imageMediaType === undefined) break
     // Mentions resolve against the session cwd, same as the model-facing fs
     // tools; absolute paths pass through untouched.
     const absolute = isAbsolute(mention.path) ? mention.path : join(cwd, mention.path)
@@ -3754,6 +4045,32 @@ export async function expandMentions(
       continue
     }
     if (info?.type === 'file') {
+      if (imageMediaType !== undefined && attachments !== undefined && fs.readBytes !== undefined) {
+        const limits = attachments.imageLimits
+        if (!limits.mediaTypes.includes(imageMediaType) || imageCount >= limits.maxImagesPerMessage) {
+          missing.push(mention.path)
+          continue
+        }
+        try {
+          const data = await fs.readBytes(target, undefined, limits.maxImageBytes)
+          if (imageBytes + data.byteLength > limits.maxMessageImageBytes) {
+            missing.push(mention.path)
+            continue
+          }
+          const attachment = await attachments.saveImage({
+            data,
+            mediaType: imageMediaType,
+            name: basename(target.displayPath),
+          })
+          blocks.push({ type: 'image', attachment })
+          imageCount += 1
+          imageBytes += data.byteLength
+          attached.push(mention.path)
+        } catch {
+          missing.push(mention.path)
+        }
+        continue
+      }
       try {
         const cap = Math.min(MENTION_MAX_FILE_CHARS, budget)
         let content = await fs.readText(target)
@@ -3797,6 +4114,27 @@ export async function expandMentions(
     }
     // Absent (stat → undefined) or a special file.
     missing.push(mention.path)
+    }
+  }
+  if (attachments !== undefined && stagedImages !== undefined) {
+    const limits = attachments.imageLimits
+    for (const [token, attachment] of stagedImages) {
+      if (!text.includes(token)) continue
+      // A referenced-but-dropped staged image must be loud: silently sending
+      // the bare token would leave the user believing the image reached the
+      // model. Reuse the missing-mention warning channel.
+      if (
+        imageCount >= limits.maxImagesPerMessage
+        || imageBytes + attachment.bytes > limits.maxMessageImageBytes
+        || !limits.mediaTypes.includes(attachment.mediaType)
+      ) {
+        missing.push(token)
+        continue
+      }
+      blocks.push({ type: 'image', attachment })
+      imageCount += 1
+      imageBytes += attachment.bytes
+    }
   }
   return { blocks, attached, missing }
 }

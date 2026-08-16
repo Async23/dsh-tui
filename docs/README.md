@@ -16,6 +16,7 @@ the `.en.md` suffix.
 | 运行链路、性能、安全与限制 / Runtime, performance, security, and limitations | [架构与限制](architecture.md) | [Architecture and limitations](architecture.en.md) |
 | VS Code 集成终端与 companion 扩展 / VS Code integrated terminal and companion extension | [VS Code 使用指南](vscode.md) | [VS Code guide](vscode.en.md) |
 | 贡献与开发约定 / Contributing and development rules | [贡献指南](contributing.md) | [Contributing](contributing.en.md) |
+| 插件开发 / Plugin development | [插件开发指南](plugins.md) | [Plugin development](plugins.en.md) |
 
 ## 快速入口 / Quick Links
 

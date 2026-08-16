@@ -276,7 +276,7 @@ export function MessageList({
       )}
       {!showAll && hiddenCount > 0 && (
         <Box marginTop={1} onClick={onToggleAll}>
-          <Divider title={` ctrl+e to show ${hiddenCount} previous messages `} />
+          <Divider title={t('show-previous-messages', { n: hiddenCount })} />
         </Box>
       )}
       {topPad > 0 && <Box height={topPad} flexShrink={0} />}
@@ -293,6 +293,7 @@ export function MessageList({
               rowId={row.id}
               kind={row.kind}
               text={row.text}
+              executionTarget={row.executionTarget}
               streaming={row.streaming === true}
               durationMs={row.durationMs}
               time={row.time}
@@ -338,6 +339,7 @@ type MemoRowProps = {
   rowId: number
   kind: ChatRow['kind']
   text: string
+  executionTarget: string | undefined
   streaming: boolean
   durationMs: number | undefined
   time: number | undefined
@@ -374,6 +376,7 @@ function TranscriptRow({
   rowId,
   kind,
   text,
+  executionTarget,
   streaming,
   durationMs,
   time,
@@ -536,7 +539,7 @@ function TranscriptRow({
     // `!` mode command echo, like CC's UserBashInputMessage.
       return (
         <Box marginTop={1} backgroundColor={background} ref={ref}>
-          <Text color="bashBorder">! {text}</Text>
+          <Text color="bashBorder">!{executionTarget ? ` [${executionTarget}]` : ''} {text}</Text>
         </Box>
       )
     case 'local-output':

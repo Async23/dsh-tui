@@ -13,7 +13,7 @@
 | `Shift+Tab` | Cycle the configured session modes (default: default → plan → full-access) |
 | `Alt/Option+Up` | Pull the latest undelivered message back into the editor |
 | `Up/Down` | Select menu items; in ordinary input, browse history or move through multiline text |
-| `Ctrl+V` | Insert system clipboard text; files copied in a file manager insert paths; a clipboard image (screenshot) is exported to a temp file and its path inserted |
+| `Ctrl+V` | Insert clipboard text or files; images are sent as durable attachments |
 | `Ctrl+X` | Edit the current input in an external editor (`$VISUAL` → `$EDITOR` → vi); saving and quitting fills it back, `:cq`/non-zero exit keeps the draft |
 | `Esc` | Close the active menu, selection, or modal; clear input; interrupt a working model; double-tap on empty input to rewind |
 | `Ctrl+C` | Interrupt while working; clear non-empty idle input; press twice on empty input to exit |
@@ -48,13 +48,14 @@ inserted verbatim, including newlines, and is never mistaken for an Enter key.
 
 Typing `@` at **any position** of the message opens file completion: keep typing
 path fragments to filter, `Tab`/`Enter` to pick, and directories can be entered
-further. When you send, the selected file content or directory listing is attached
-to the message automatically (0.3.7+).
+further. Text files and directory listings are attached as text; PNG, JPEG, WebP,
+and GIF files are sent as durable Harness image blocks. Reads use the active
+workspace filesystem, including provider-owned workspaces.
 
 On `Ctrl+V`, files copied from a file manager (Windows Explorer, GNOME Files, KDE
-Dolphin, …) are inserted as file paths (quoted automatically when they contain
-spaces) instead of pasting the path text. A raw clipboard image (e.g. a screenshot)
-is first exported to a temp file and its path is inserted.
+Dolphin, …) insert as paths, while image files become `@` references. Clipboard
+bitmaps are saved in the attachment store and appear as `[Image #N]`; submitting
+the prompt sends a real image block. The prompt never contains base64.
 
 ## Interface language
 
@@ -121,6 +122,27 @@ DSH has no in-place model-switch API. The old session remains in `/resume`.
 the choice becomes the default for the next `/new` or launch. See
 [Configuration](configuration.en.md#agent-presets).
 
+### Workspaces
+
+`/workspace resume` opens the workspace picker. `/workspace rename <name>`
+renames the current workspace, while `/workspace open <target>` opens a
+workspace and starts a fresh session. `/resume` and `/rename` continue to
+switch sessions within the current workspace and rename the current session.
+A local target may be an absolute path,
+a path relative to the current local workspace, or a standard `file://` URL.
+Other URI schemes and `/workspace` subcommands are registered by optional plugins; the TUI has no built-in
+knowledge of any external protocol. When a plugin owns the current workspace,
+it also resolves relative paths in its own path space.
+
+After `/workspace `, the completion menu includes both built-in and
+plugin-contributed subcommands. Type a prefix and press Tab, for example
+`/workspace rem`; plugin aliases participate in matching as well.
+
+The launcher accepts the same target, for example `dsh-tui .`,
+`dsh-tui ../project`, or `dsh-tui file:///path/to/project`. Without any
+workspace plugin installed, local paths, `!command`, and all normal TUI session
+flows remain available.
+
 ## Fullscreen and mouse
 
 `fullscreen: false` is the default inline mode, where the terminal emulator
@@ -150,10 +172,39 @@ keyboard:
 | `Space` | Toggle a multi-select option |
 | `Tab` | Switch to a custom text answer |
 | `Enter` | Submit the current question |
-| `Esc` | Cancel; the model receives `ASK_ABORTED` |
+| `Esc` | Cancel the whole batch of questions; the model receives `ASK_CANCELLED` (a harness-side abort still reports `ASK_ABORTED`) |
 
 Batched questions and concurrent subagent questions are shown one at a time in
 FIFO order. A compact Q&A summary is added to the local transcript afterward.
+
+## Plan review
+
+When the model calls `exit_plan_mode` in plan mode, the full plan is rendered
+as markdown in the review panel (the dedicated decision layout for
+`intent: plan-review`):
+
+| Key | Behavior |
+| --- | --- |
+| `Up/Down` | Move between the options and the feedback input line at the bottom |
+| `1`/`2` | Submit the corresponding option directly (when the feedback buffer is empty; otherwise digits are treated as feedback characters) |
+| Typing | Enters the feedback input line |
+| `Enter` (option row) | Submit that option; an approval row with feedback errors out — approval must carry no feedback, or the protocol treats it as “continue planning” |
+| `Enter` (input line) | Submit “continue planning” with the feedback text |
+| `Esc` | Interrupt the review to talk (`ASK_CANCELLED`); the model stays in plan mode |
+
+## Tool approval
+
+When the permission layer issues an `approval/request`, the approval panel
+shows the tool name, the full command extracted from the paired tool call, and
+the reason, and temporarily owns the keyboard (when a questionnaire is also
+pending, approval takes priority):
+
+| Key | Behavior |
+| --- | --- |
+| `Up/Down` | Move through options |
+| `1` / `2` | Allow (this time only) / deny |
+| `Enter` | Submit the focused item |
+| `Esc` / `Ctrl+C` | Deny (fail closed) |
 
 ## Slash commands
 
@@ -165,7 +216,7 @@ zh; unmapped registry commands fall back to the registry's own text.
 
 | Group | Commands |
 | --- | --- |
-| Sessions | `/new`, `/resume`, `/clear`, `/compact`, `/export`, `/btw`, `/trace` |
+| Sessions | `/new`, `/resume`, `/rename`, `/workspace resume|rename|open`, `/clear`, `/compact`, `/export`, `/btw`, `/trace` |
 | Status | `/status`, `/cost`, `/config`, `/doctor`, `/init`, `/agents` |
 | Model and display | `/model`, `/effort`, `/thinking`, `/tokens`, `/activity`, `/preset`, `/theme`, `/lang` |
 | Account and policy | `/provider`, `/login`, `/logout`, `/permissions`, `/add-dir`, `/hooks`, `/mcp`, `/memory` |

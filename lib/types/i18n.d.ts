@@ -267,6 +267,110 @@ declare const dict: {
         readonly zh: "Agent preset 已切换：{{preset}}";
         readonly en: "Agent preset switched: {{preset}}";
     };
+    readonly 'context-low-warning': {
+        readonly zh: "上下文即将耗尽（剩余 {{percent}}%）· 运行 /clear 或新建会话";
+        readonly en: "Context low ({{percent}}% remaining) · Run /clear or start a new session";
+    };
+    readonly 'rewind-unavailable': {
+        readonly zh: "回退不可用——会话服务未加载";
+        readonly en: "Rewind unavailable — session services not loaded";
+    };
+    readonly 'rewind-settling': {
+        readonly zh: "无法回退——回合仍在收尾，请稍候再试";
+        readonly en: "Cannot rewind — the turn is still settling, try again in a moment";
+    };
+    readonly 'rewind-fork-failed': {
+        readonly zh: "无法回退到该处 · {{err}}";
+        readonly en: "Cannot rewind to this point · {{err}}";
+    };
+    readonly 'rewind-create-failed': {
+        readonly zh: "回退失败——无法创建替代会话";
+        readonly en: "Rewind failed — could not create the replacement session";
+    };
+    readonly 'rewind-attach-failed': {
+        readonly zh: "已回退，但工作区挂载失败 · {{err}}";
+        readonly en: "Session rewound, but workspace attachment failed · {{err}}";
+    };
+    readonly 'resume-while-working': {
+        readonly zh: "回合运行中，无法恢复会话";
+        readonly en: "Cannot resume while a turn is running";
+    };
+    readonly 'resume-unavailable': {
+        readonly zh: "恢复不可用——agents 服务未加载";
+        readonly en: "Resume unavailable — agents service not loaded";
+    };
+    readonly 'resume-failed': {
+        readonly zh: "恢复失败 · {{err}}";
+        readonly en: "Resume failed · {{err}}";
+    };
+    readonly 'resume-attach-failed': {
+        readonly zh: "已恢复会话，但工作区挂载失败 · {{err}}";
+        readonly en: "Session resumed, but workspace attachment failed · {{err}}";
+    };
+    readonly 'new-session-while-working': {
+        readonly zh: "回合运行中，无法新建会话";
+        readonly en: "Cannot start a new session while a turn is running";
+    };
+    readonly 'new-session-unavailable': {
+        readonly zh: "新建会话不可用——agents 服务未加载";
+        readonly en: "New session unavailable — agents service not loaded";
+    };
+    readonly 'new-session-failed': {
+        readonly zh: "新建会话失败 · {{err}}";
+        readonly en: "New session failed · {{err}}";
+    };
+    readonly 'new-session-attach-failed': {
+        readonly zh: "会话已创建，但工作区挂载失败 · {{err}}";
+        readonly en: "Session created, but workspace attachment failed · {{err}}";
+    };
+    readonly 'model-switch-while-working': {
+        readonly zh: "回合运行中，无法切换模型";
+        readonly en: "Cannot switch models while a turn is running";
+    };
+    readonly 'model-switch-unavailable': {
+        readonly zh: "模型切换不可用——会话服务未加载";
+        readonly en: "Model switch unavailable — session services not loaded";
+    };
+    readonly 'model-switch-fork-failed': {
+        readonly zh: "无法切换模型 · {{err}}";
+        readonly en: "Cannot switch models · {{err}}";
+    };
+    readonly 'model-switch-failed': {
+        readonly zh: "模型切换失败 · {{err}}";
+        readonly en: "Model switch failed · {{err}}";
+    };
+    readonly 'model-switch-attach-failed': {
+        readonly zh: "模型已切换，但工作区挂载失败 · {{err}}";
+        readonly en: "Model switched, but workspace attachment failed · {{err}}";
+    };
+    readonly 'compact-unavailable': {
+        readonly zh: "压缩不可用——当前 leaf 没有压缩服务";
+        readonly en: "Compaction unavailable · no compaction service in this leaf";
+    };
+    readonly 'compact-while-working': {
+        readonly zh: "回合运行中，无法压缩会话";
+        readonly en: "Cannot compact while a turn is running";
+    };
+    readonly 'compact-working': {
+        readonly zh: "正在压缩会话…";
+        readonly en: "Compacting conversation…";
+    };
+    readonly 'compact-done': {
+        readonly zh: "会话已压缩";
+        readonly en: "Conversation compacted";
+    };
+    readonly 'compact-nothing': {
+        readonly zh: "没有可压缩的内容";
+        readonly en: "Nothing to compact";
+    };
+    readonly 'compact-failed': {
+        readonly zh: "压缩失败 · {{err}}";
+        readonly en: "Compaction failed · {{err}}";
+    };
+    readonly 'turn-failed': {
+        readonly zh: "回合出错{{detail}}";
+        readonly en: "Turn error{{detail}}";
+    };
     readonly 'questionnaire-answered': {
         readonly zh: "📋 问卷已答 · {{total}} 题";
         readonly en: "📋 Questionnaire answered · {{total}} questions";
@@ -447,6 +551,94 @@ declare const dict: {
         readonly zh: "目录   {{cwd}}";
         readonly en: "Directory   {{cwd}}";
     };
+    readonly 'workspace-picker-title': {
+        readonly zh: "工作区";
+        readonly en: "Workspace";
+    };
+    readonly 'workspace-picker-hint': {
+        readonly zh: "**Enter** 切换并新建会话 · Esc 退出 · 也可输入 /workspace open <路径或 URI>";
+        readonly en: "**Enter** switch and start a new session · Esc to exit · or type /workspace open <path-or-URI>";
+    };
+    readonly 'workspace-none': {
+        readonly zh: "没有可用工作区";
+        readonly en: "No workspaces available";
+    };
+    readonly 'workspace-list-failed': {
+        readonly zh: "读取工作区失败 · {{err}}";
+        readonly en: "Failed to list workspaces · {{err}}";
+    };
+    readonly 'workspace-uri-invalid': {
+        readonly zh: "无法解析工作区目标：{{uri}}";
+        readonly en: "Cannot resolve workspace target: {{uri}}";
+    };
+    readonly 'workspace-uri-failed': {
+        readonly zh: "加载工作区失败 · {{err}}";
+        readonly en: "Failed to load workspace · {{err}}";
+    };
+    readonly 'workspace-switch-working': {
+        readonly zh: "Agent 运行中，无法切换工作区";
+        readonly en: "Cannot switch workspaces while the agent is running";
+    };
+    readonly 'workspace-open-invalid': {
+        readonly zh: "无法打开工作区：{target} 不是存在的目录";
+        readonly en: "Cannot open workspace: {target} is not an existing directory";
+    };
+    readonly 'workspace-switched': {
+        readonly zh: "已切换工作区：{{target}}";
+        readonly en: "Workspace switched: {{target}}";
+    };
+    readonly 'workspace-flow-hint': {
+        readonly zh: "**Enter** 选择 · Esc 退出";
+        readonly en: "**Enter** select · Esc to exit";
+    };
+    readonly 'workspace-flow-edit-hint': {
+        readonly zh: "**Enter** 选择当前目录 · Tab 手动输入路径 · Esc 退出";
+        readonly en: "**Enter** select current directory · Tab enter a path · Esc to exit";
+    };
+    readonly 'workspace-flow-input-hint': {
+        readonly zh: "输入绝对路径 · **Enter** 读取目录 · Esc 返回";
+        readonly en: "Enter an absolute path · **Enter** load directory · Esc back";
+    };
+    readonly 'workspace-flow-input-empty': {
+        readonly zh: "目录路径不能为空";
+        readonly en: "Directory path cannot be empty";
+    };
+    readonly 'workspace-flow-loading': {
+        readonly zh: "正在连接并读取目录… · Esc 关闭";
+        readonly en: "Connecting and loading directories… · Esc to close";
+    };
+    readonly 'workspace-command-usage': {
+        readonly zh: "用法：/workspace resume | rename <名称> | open <路径或 URI>{{commands}}";
+        readonly en: "Usage: /workspace resume | rename <name> | open <path-or-URI>{{commands}}";
+    };
+    readonly 'workspace-open-usage': {
+        readonly zh: "用法：/workspace open <路径或 URI>";
+        readonly en: "Usage: /workspace open <path-or-URI>";
+    };
+    readonly 'workspace-rename-usage': {
+        readonly zh: "用法：/workspace rename <名称>";
+        readonly en: "Usage: /workspace rename <name>";
+    };
+    readonly 'workspace-command-unknown': {
+        readonly zh: "未知的 workspace 子命令：{{command}}";
+        readonly en: "Unknown workspace subcommand: {{command}}";
+    };
+    readonly 'workspace-command-empty': {
+        readonly zh: "该 workspace 操作没有可选目标";
+        readonly en: "This workspace action has no available targets";
+    };
+    readonly 'workspace-command-failed': {
+        readonly zh: "workspace 操作失败 · {{err}}";
+        readonly en: "Workspace action failed · {{err}}";
+    };
+    readonly 'workspace-renamed': {
+        readonly zh: "工作区已重命名：{{title}}";
+        readonly en: "Workspace renamed: {{title}}";
+    };
+    readonly 'workspace-rename-failed': {
+        readonly zh: "工作区重命名失败 · {{err}}";
+        readonly en: "Failed to rename workspace · {{err}}";
+    };
     readonly 'cost-cache-rate': {
         readonly zh: "缓存率 {{rate}}% · {{read}} 读 / {{write}} 写";
         readonly en: "Cache rate {{rate}}% · {{read}} read / {{write}} write";
@@ -596,8 +788,8 @@ declare const dict: {
         readonly en: "Recommended: Windows Terminal (≥110 columns, monospace, TrueColor).";
     };
     readonly 'terminal-paste-hint': {
-        readonly zh: "{{mod}}V 粘贴文本/文件路径；Ctrl+Shift+V 终端原生粘贴；右键粘贴同样可用。";
-        readonly en: "{{mod}}V pastes text/file paths; Ctrl+Shift+V is native terminal paste; right-click paste also works.";
+        readonly zh: "{{mod}}V 粘贴文本、文件路径或图片；Ctrl+Shift+V 终端原生粘贴；右键粘贴同样可用。";
+        readonly en: "{{mod}}V pastes text, file paths, or images; Ctrl+Shift+V is native terminal paste; right-click paste also works.";
     };
     readonly 'connect-none': {
         readonly zh: "DSH 暂无远程连接机制（CC 的 /connect 对应能力未适配）。";
@@ -631,6 +823,38 @@ declare const dict: {
         readonly zh: "侧问不可用（llm 服务未挂载）";
         readonly en: "Side question unavailable (llm service not mounted)";
     };
+    readonly 'exit-press-again': {
+        readonly zh: "再次按 Ctrl+C 退出";
+        readonly en: "Press Ctrl+C again to exit";
+    };
+    readonly 'new-session-started': {
+        readonly zh: "已新建会话";
+        readonly en: "New session started";
+    };
+    readonly 'command-not-found': {
+        readonly zh: "/{{name}}：没有这个命令";
+        readonly en: "/{{name}}: no such command";
+    };
+    readonly 'thinking-toggled': {
+        readonly zh: "思考模式：{{state}}";
+        readonly en: "Thinking {{state}}";
+    };
+    readonly 'thinking-on': {
+        readonly zh: "开启";
+        readonly en: "on";
+    };
+    readonly 'thinking-off': {
+        readonly zh: "关闭";
+        readonly en: "off";
+    };
+    readonly 'tokens-usage': {
+        readonly zh: "Tokens：{{in}} 输入 · {{out}} 输出";
+        readonly en: "Tokens: {{in}} in · {{out}} out";
+    };
+    readonly 'tokens-usage-context': {
+        readonly zh: "{{usage}} · 上下文 {{percent}}%";
+        readonly en: "{{usage}} · {{percent}}% of context";
+    };
     readonly 'legacy-dir-migrated': {
         readonly zh: "数据目录已从 ~/.dsh-tui 复制到 ~/.dsh-tui（旧目录保留，确认无误后可自行删除）";
         readonly en: "Data directory copied from ~/.dsh-tui to ~/.dsh-tui (the old directory is kept; delete it yourself once satisfied)";
@@ -638,6 +862,10 @@ declare const dict: {
     readonly 'legacy-env-renamed': {
         readonly zh: "环境变量 {{old}} 已更名为 {{new}}，旧名不再生效";
         readonly en: "Environment variable {{old}} was renamed to {{new}}; the old name no longer takes effect";
+    };
+    readonly 'update-aborted-no-profile': {
+        readonly zh: "dsh-tui 更新中止：未解析到 dsh profile。";
+        readonly en: "dsh-tui update aborted: no dsh profile resolved.";
     };
     readonly 'activity-ctx-warn': {
         readonly zh: "⚠ 上下文";
@@ -723,6 +951,10 @@ declare const dict: {
         readonly zh: "自动补全";
         readonly en: "autocomplete";
     };
+    readonly 'logo-tip-prefix': {
+        readonly zh: "提示：";
+        readonly en: "Tip: ";
+    };
     readonly 'input-sent-after-turn': {
         readonly zh: "已发送，当前回合结束后处理";
         readonly en: "Sent, processed after the current turn";
@@ -774,6 +1006,14 @@ declare const dict: {
     readonly 'input-clipboard-image-saved': {
         readonly zh: "剪贴板图片已保存为临时文件，已插入路径";
         readonly en: "Clipboard image saved to a temp file; path inserted";
+    };
+    readonly 'input-image-pasted': {
+        readonly zh: "已粘贴图片 {{token}}";
+        readonly en: "Pasted image {{token}}";
+    };
+    readonly 'input-image-paste-failed': {
+        readonly zh: "粘贴图片失败：{{err}}";
+        readonly en: "Could not paste image: {{err}}";
     };
     readonly 'input-pending-steer-label': {
         readonly zh: "插话 · 下一步送达";
@@ -835,9 +1075,85 @@ declare const dict: {
         readonly zh: "摆尾巴3";
         readonly en: "tail3";
     };
+    readonly 'help-for-commands': {
+        readonly zh: "/ 查看命令";
+        readonly en: "/ for commands";
+    };
+    readonly 'help-this-help': {
+        readonly zh: "? 查看本帮助";
+        readonly en: "? for this help";
+    };
+    readonly 'help-verbose-output': {
+        readonly zh: "{{mod}}o 详细输出";
+        readonly en: "{{mod}}o for verbose output";
+    };
+    readonly 'help-toggle-context': {
+        readonly zh: "{{mod}}t 切换上下文";
+        readonly en: "{{mod}}t to toggle context";
+    };
+    readonly 'help-search-history': {
+        readonly zh: "{{mod}}r 搜索历史";
+        readonly en: "{{mod}}r to search history";
+    };
+    readonly 'help-interrupt': {
+        readonly zh: "ctrl+c 打断";
+        readonly en: "ctrl+c to interrupt";
+    };
+    readonly 'help-exit': {
+        readonly zh: "ctrl+d 退出";
+        readonly en: "ctrl+d to exit";
+    };
+    readonly 'help-redraw': {
+        readonly zh: "{{mod}}l 重绘";
+        readonly en: "{{mod}}l to redraw";
+    };
+    readonly 'help-clear-input': {
+        readonly zh: "esc 清空输入";
+        readonly en: "esc to clear input";
+    };
+    readonly 'help-history-nav': {
+        readonly zh: "↑/↓ 历史";
+        readonly en: "↑/↓ for history";
+    };
+    readonly 'help-move-cursor': {
+        readonly zh: "←/→ 移动光标";
+        readonly en: "←/→ to move cursor";
+    };
+    readonly 'help-word-jumps': {
+        readonly zh: "{{mod}}←/→ 按词跳转";
+        readonly en: "{{mod}}←/→ for word jumps";
+    };
+    readonly 'help-complete-command': {
+        readonly zh: "tab 补全命令";
+        readonly en: "tab to complete command";
+    };
+    readonly 'help-cycle-mode': {
+        readonly zh: "shift+tab 切换模式";
+        readonly en: "shift+tab to cycle mode";
+    };
+    readonly 'help-open-editor': {
+        readonly zh: "ctrl+x 打开编辑器";
+        readonly en: "ctrl+x to open editor";
+    };
+    readonly 'help-commands-title': {
+        readonly zh: "命令：";
+        readonly en: "commands:";
+    };
+    readonly 'interrupted-by-user': {
+        readonly zh: "已打断 ";
+        readonly en: "Interrupted ";
+    };
+    readonly 'interrupted-ask-next': {
+        readonly zh: "· 接下来想让 DeepSeek 做什么？";
+        readonly en: "· What should DeepSeek do instead?";
+    };
     readonly 'load-earlier': {
         readonly zh: " ↑ 加载更早消息（会话日志完整，/export 导出全文） ";
         readonly en: " ↑ load earlier messages (full session log; /export for full text) ";
+    };
+    readonly 'show-previous-messages': {
+        readonly zh: " ctrl+e 显示前 {{n}} 条消息 ";
+        readonly en: " ctrl+e to show {{n}} previous messages ";
     };
     readonly 'resume-none-in-cwd': {
         readonly zh: "当前目录没有可恢复的历史会话";
@@ -1070,6 +1386,14 @@ declare const dict: {
     readonly 'compact-summary-folded': {
         readonly zh: "摘要已折叠";
         readonly en: "Summary folded";
+    };
+    readonly 'new-message': {
+        readonly zh: "{{n}} 条新消息";
+        readonly en: "1 new message";
+    };
+    readonly 'new-messages': {
+        readonly zh: "{{n}} 条新消息";
+        readonly en: "{{n}} new messages";
     };
     readonly 'theme-builtin-base': {
         readonly zh: "内置 · {{name}} 基底";
@@ -1522,6 +1846,21 @@ declare const dict: {
     readonly 'cmd-desc-connect': {
         readonly zh: "连接远程机器";
     };
+    readonly 'cmd-desc-workspace': {
+        readonly zh: "切换、重命名或打开工作区";
+    };
+    readonly 'cmd-desc-workspace-resume': {
+        readonly zh: "切换到另一个工作区";
+        readonly en: "Switch to another workspace";
+    };
+    readonly 'cmd-desc-workspace-rename': {
+        readonly zh: "重命名当前工作区";
+        readonly en: "Rename the current workspace";
+    };
+    readonly 'cmd-desc-workspace-open': {
+        readonly zh: "打开路径或工作区 URI";
+        readonly en: "Open a path or workspace URI";
+    };
     readonly 'cmd-desc-help': {
         readonly zh: "查看快捷键与命令";
     };
@@ -1560,6 +1899,10 @@ declare const dict: {
     readonly 'lang-switch-failed': {
         readonly zh: "语言「{{lang}}」切换失败（无法写入 ~/.dsh-tui/lang.json）";
         readonly en: "Language \"{{lang}}\" switch failed (cannot write ~/.dsh-tui/lang.json)";
+    };
+    readonly 'status-cache-label': {
+        readonly zh: "缓存 ";
+        readonly en: "cache ";
     };
     readonly 'trace-title': {
         readonly zh: "轨迹";
