@@ -611,7 +611,10 @@ export type I18nParams = Record<string, string | number>
 /** The active language, module-level so non-React modules (channel.ts,
  *  loaded-context.ts) resolve strings without a context. Defaults to `zh`
  *  (the original hard-coded language). */
-let activeLang: Lang = 'zh'
+// Resolved at import time (env var → persisted /lang → OS locale → zh) so
+// direct consumers of t() — repro/verify scripts that never reach
+// plugin.apply — still get the pinned language instead of a hardcoded zh.
+let activeLang: Lang = resolveStartupLang()
 
 /** Emitted on every language switch so React screens can re-render. */
 type Listener = () => void
