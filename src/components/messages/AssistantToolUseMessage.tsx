@@ -26,6 +26,8 @@ type Props = {
    * is worth less than mentioning it once.
    */
   footnote?: string
+  /** Diff presentation preference; `auto` picks by terminal width. */
+  diffLayout?: 'auto' | 'split' | 'unified'
 }
 
 /** Tool display names: DSH emits lowercase tool ids (`bash`); Claude Code
@@ -69,8 +71,8 @@ const DIFF_BODY_MAX_LINES = 8
  *  would squeeze under ~50 columns each and the unified view reads better. */
 const SPLIT_DIFF_MIN_COLS = 110
 
-const GUTTER_FIRST = '  ⎿  '
-const GUTTER_REST = '     '
+const GUTTER_FIRST = ' ⎿ '
+const GUTTER_REST = '   '
 
 const add = (text: string): BodyLine => ({ text, tone: 'add' })
 const del = (text: string): BodyLine => ({ text, tone: 'del' })
@@ -240,6 +242,7 @@ export function AssistantToolUseMessage({
   isSelected = false,
   isExpanded = false,
   footnote,
+  diffLayout = 'auto',
 }: Props): React.ReactNode {
   const isRunning = tool.status === 'running'
   const isError = tool.status === 'error'
@@ -271,7 +274,8 @@ export function AssistantToolUseMessage({
   // source line per terminal row (truncate) keeps the panes row-aligned,
   // which the flat add/del line model cannot express.
   const { columns } = useTerminalSize()
-  const useSplitDiff = !isError && view?.card === 'diff' && columns >= SPLIT_DIFF_MIN_COLS
+  const useSplitDiff = !isError && view?.card === 'diff' &&
+    (diffLayout === 'split' || (diffLayout !== 'unified' && columns >= SPLIT_DIFF_MIN_COLS))
   let body: BodyLine[] = []
   if (isError) {
     if (tool.errorText) body = [{ text: tool.errorText, tone: 'error' }]
@@ -322,12 +326,12 @@ export function AssistantToolUseMessage({
         </Box>
         {useSplitDiff && view?.card === 'diff' ? (
           <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
+            <Box width={3} flexShrink={0}>
               <Text dimColor>{GUTTER_FIRST}</Text>
             </Box>
             <SplitDiffView
               diffs={view.diffs}
-              width={columns - 6}
+              width={columns - 4}
               maxRows={DIFF_BODY_MAX_LINES}
               verbose={verbose}
             />
@@ -335,7 +339,7 @@ export function AssistantToolUseMessage({
         ) : (
           rendered.map((line, index) => (
             <Box key={index} flexDirection="row">
-              <Box width={5} flexShrink={0}>
+              <Box width={3} flexShrink={0}>
                 <Text dimColor>{index === 0 ? GUTTER_FIRST : GUTTER_REST}</Text>
               </Box>
               <Box flexGrow={1}>
@@ -362,7 +366,7 @@ export function AssistantToolUseMessage({
         )}
         {useSplitDiff && footnote !== undefined && (
           <Box flexDirection="row">
-            <Box width={5} flexShrink={0}>
+            <Box width={3} flexShrink={0}>
               <Text dimColor>{GUTTER_REST}</Text>
             </Box>
             <Text color="subtle">{footnote}</Text>

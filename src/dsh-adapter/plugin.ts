@@ -5,6 +5,8 @@ import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import * as toolAskUser from '@deepseek-ai/dsh-tool-ask-user'
 import type { Context } from '@deepseek-ai/cordis'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import Schema from '@deepseek-ai/schemastery'
 import { Config } from './index.js'
 import { createChannel } from './channel.js'
 import { createChildStderrReporter, installChildStderrGuard } from './childStderr.js'
@@ -310,8 +312,63 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // Shift+Tab session-mode cycle (undefined → the built-in default/
     // plan/full cycle in sessionModes.ts).
     modes: config.modes,
+    // Edit/Write diff presentation (schema default 'auto'); the /settings
+    // screen edits this key live through the dsh-tui namespace.
+    diffLayout: config.diffLayout,
     handle,
   })
+  // Register the dsh-tui settings namespace so the /settings screen can
+  // edit it (the section below was '命名空间未注册' without this): the
+  // user layer in settings.yaml wins over cordis.yml's diffLayout, and
+  // watch() lands commits on the live channel — no recompose needed.
+  ctx.inject(['settings'], (settingsCtx) => {
+    const scope = settingsCtx.settings.register(
+      settingsNamespace('dsh-tui'),
+      Schema.object({
+        diffLayout: Schema.union(['auto', 'split', 'unified']).default('auto'),
+      }),
+    )
+    const applyLayout = (value: { diffLayout?: 'auto' | 'split' | 'unified' }): void => {
+      channel.setDiffLayout(value.diffLayout ?? config.diffLayout ?? 'auto')
+    }
+    applyLayout(scope.get())
+    scope.watch(next => {
+      applyLayout(next)
+    })
+  })
+  // The /settings screen's own section: the dsh-tui namespace comes from
+  // this plugin's Config schema, and the declared select writes diffLayout
+  // back through the settings service's revision-fenced mutate.
+  const settingsSections = ctx.get('tuiSettingsSections') as
+    | { register(section: {
+        ns: string
+        title: string
+        descriptions?: Record<string, string>
+        fields: readonly unknown[]
+      }): () => void }
+    | undefined
+  if (settingsSections !== undefined) {
+    const unregister = settingsSections.register({
+      ns: 'dsh-tui',
+      title: 'dsh-tui',
+      fields: [
+        {
+          path: ['diffLayout'],
+          label: 'Diff layout',
+          descriptions: { zh: 'diff 布局' },
+          hint: 'Edit/Write tool cards: auto picks by terminal width, or force one layout.',
+          hintDescriptions: { zh: 'Edit/Write 工具卡的 diff 呈现：auto 按终端宽度选择，或强制一种布局。' },
+          kind: 'select',
+          options: [
+            { value: 'auto', label: 'Auto (by width)', descriptions: { zh: '自动（按宽度）' } },
+            { value: 'split', label: 'Side-by-side', descriptions: { zh: '双栏对照' } },
+            { value: 'unified', label: 'Unified', descriptions: { zh: '统一式' } },
+          ],
+        },
+      ],
+    })
+    ctx.effect(() => unregister)
+  }
   // DSH approval seam: the permission layer asks ApprovalService.request(),
   // which dispatches an `approval/request` waterfall. With no answerer the
   // chain falls through to the fail-closed 'unavailable', so register this
