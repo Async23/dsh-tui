@@ -20,6 +20,7 @@
 >一个美观且实用的 Claude Code 风格 TUI 插件：像素鲸鱼顶栏、双流光大字、实时工作状态行、思考流式展开、双击 Esc 时间回溯、蓝白上下文进度条 + TPS 仪表。
 >零核心改动，纯插件挂载。安装插件即可启用，卸载后不会留下核心补丁。
 >献给钟爱tui的各位极客们~
+>
 >A beautiful, practical Claude Code-style TUI plugin: pixel whale top bar, dual flowing-glow title, real-time status line, streaming thought expansion, double-Esc time rewind, blue-white context progress bar + TPS gauge.
 >Zero core changes, pure plugin mounting. Install to enable; uninstall leaves no core patches.
 >For all TUI-loving geeks~
