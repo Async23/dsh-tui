@@ -931,9 +931,85 @@ declare const dict: {
         readonly zh: "摆尾巴3";
         readonly en: "tail3";
     };
+    readonly 'help-for-commands': {
+        readonly zh: "/ 查看命令";
+        readonly en: "/ for commands";
+    };
+    readonly 'help-this-help': {
+        readonly zh: "? 查看本帮助";
+        readonly en: "? for this help";
+    };
+    readonly 'help-verbose-output': {
+        readonly zh: "{{mod}}o 详细输出";
+        readonly en: "{{mod}}o for verbose output";
+    };
+    readonly 'help-toggle-context': {
+        readonly zh: "{{mod}}t 切换上下文";
+        readonly en: "{{mod}}t to toggle context";
+    };
+    readonly 'help-search-history': {
+        readonly zh: "{{mod}}r 搜索历史";
+        readonly en: "{{mod}}r to search history";
+    };
+    readonly 'help-interrupt': {
+        readonly zh: "ctrl+c 打断";
+        readonly en: "ctrl+c to interrupt";
+    };
+    readonly 'help-exit': {
+        readonly zh: "ctrl+d 退出";
+        readonly en: "ctrl+d to exit";
+    };
+    readonly 'help-redraw': {
+        readonly zh: "{{mod}}l 重绘";
+        readonly en: "{{mod}}l to redraw";
+    };
+    readonly 'help-clear-input': {
+        readonly zh: "esc 清空输入";
+        readonly en: "esc to clear input";
+    };
+    readonly 'help-history-nav': {
+        readonly zh: "↑/↓ 历史";
+        readonly en: "↑/↓ for history";
+    };
+    readonly 'help-move-cursor': {
+        readonly zh: "←/→ 移动光标";
+        readonly en: "←/→ to move cursor";
+    };
+    readonly 'help-word-jumps': {
+        readonly zh: "{{mod}}←/→ 按词跳转";
+        readonly en: "{{mod}}←/→ for word jumps";
+    };
+    readonly 'help-complete-command': {
+        readonly zh: "tab 补全命令";
+        readonly en: "tab to complete command";
+    };
+    readonly 'help-cycle-mode': {
+        readonly zh: "shift+tab 切换模式";
+        readonly en: "shift+tab to cycle mode";
+    };
+    readonly 'help-open-editor': {
+        readonly zh: "ctrl+x 打开编辑器";
+        readonly en: "ctrl+x to open editor";
+    };
+    readonly 'help-commands-title': {
+        readonly zh: "命令：";
+        readonly en: "commands:";
+    };
+    readonly 'interrupted-by-user': {
+        readonly zh: "已打断 ";
+        readonly en: "Interrupted ";
+    };
+    readonly 'interrupted-ask-next': {
+        readonly zh: "· 接下来想让 DeepSeek 做什么？";
+        readonly en: "· What should DeepSeek do instead?";
+    };
     readonly 'load-earlier': {
         readonly zh: " ↑ 加载更早消息（会话日志完整，/export 导出全文） ";
         readonly en: " ↑ load earlier messages (full session log; /export for full text) ";
+    };
+    readonly 'show-previous-messages': {
+        readonly zh: " ctrl+e 显示前 {{n}} 条消息 ";
+        readonly en: " ctrl+e to show {{n}} previous messages ";
     };
     readonly 'resume-none-in-cwd': {
         readonly zh: "当前目录没有可恢复的历史会话";
@@ -1166,6 +1242,14 @@ declare const dict: {
     readonly 'compact-summary-folded': {
         readonly zh: "摘要已折叠";
         readonly en: "Summary folded";
+    };
+    readonly 'new-message': {
+        readonly zh: "{{n}} 条新消息";
+        readonly en: "1 new message";
+    };
+    readonly 'new-messages': {
+        readonly zh: "{{n}} 条新消息";
+        readonly en: "{{n}} new messages";
     };
     readonly 'theme-builtin-base': {
         readonly zh: "内置 · {{name}} 基底";
@@ -1671,6 +1755,10 @@ declare const dict: {
     readonly 'lang-switch-failed': {
         readonly zh: "语言「{{lang}}」切换失败（无法写入 ~/.dsh-tui/lang.json）";
         readonly en: "Language \"{{lang}}\" switch failed (cannot write ~/.dsh-tui/lang.json)";
+    };
+    readonly 'status-cache-label': {
+        readonly zh: "缓存 ";
+        readonly en: "cache ";
     };
     readonly 'trace-title': {
         readonly zh: "轨迹";

@@ -2107,7 +2107,7 @@ function NewMessagesPill({
         onMouseLeave={() =>{  setHover(false) }}
       >
         <Text color="inverseText" bold>
-          {' '}↓ {count === 1 ? '1 new message' : `${count} new messages`}{' '}
+          {' '}↓ {t(count === 1 ? 'new-message' : 'new-messages', { n: count })}{' '}
         </Text>
       </Box>
     </Box>
