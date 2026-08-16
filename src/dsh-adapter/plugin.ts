@@ -371,8 +371,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     channel,
     questionStore,
     approvalStore,
-    // The trajectory scene enters the alt screen itself in inline mode; in
-    // fullscreen the tree is already wrapped below, so it must not nest.
+    // Full-screen surfaces inside Chat — the trajectory scene and the session
+    // browser — enter the alt screen themselves in inline mode; in fullscreen
+    // the tree is already wrapped below, so they must not nest.
     fullscreen: config.fullscreen === true,
     onExit: () => handleExit(),
     // Only a `dsh --profile <name>` launch has a profile installation for
