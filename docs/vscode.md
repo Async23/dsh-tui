@@ -11,10 +11,17 @@ dsh-TUI 是终端程序：它把 ANSI 写进 PTY、从 PTY 读按键，因此任
    侧边栏会话历史、一键启动/恢复/指定会话恢复（
    [issue #161](https://github.com/ccch1mneyyy/dsh-TUI/issues/161) 的完整实现）。
 
+> 版本说明：本文中的 `dsh-tui` 指本仓库（TUI 插件，当前 0.7.0）；
+> `dsh-tui-vscode` 指 companion 扩展（当前 0.5.0）。两者版本独立。
+
 ## 方式一：VS Code 集成终端直接运行
 
 前置条件与[快速开始](getting-started.md)一致：全局安装 `dsh` CLI 与 `dsh-tui`
-（首次启动会自举 profile，需要 pnpm）。
+（首次启动会自举 profile，需要 pnpm）：
+
+```sh
+npm install -g @deepseek-ai/dsh @deepseek-harness-tui/dsh-tui
+```
 
 1. 打开 VS Code 集成终端（`` Ctrl+` ``）：
 
@@ -85,6 +92,12 @@ WezTerm / iTerm2 / tmux）。
 | 自动启停 | 打开 = 启动；关闭终端 = 结束 | 同 |
 | 环境注入 | — | `DSH_TUI_LANG` / `$VISUAL` / `$DSH_HOME` / 指定会话 id |
 
+### 前置条件
+
+- VS Code ≥ 1.90；
+- 全局安装 `dsh` CLI 与 `dsh-tui`（**建议 dsh-tui 0.7.0+**，见[快速开始](getting-started.md)）；
+- 运行模型需要 `DEEPSEEK_API_KEY`（放在终端环境或 dsh 配置里）。
+
 ### 安装
 
 ```sh
@@ -95,6 +108,8 @@ npm run package
 code --install-extension dsh-tui-vscode-0.5.0.vsix --force
 # 或一步到位：npm run install:local
 ```
+
+扩展也已上架 VS Code Marketplace：扩展面板搜索 **`dsh-tui`** 一键安装。
 
 ### 入口与命令
 
@@ -119,11 +134,12 @@ createTerminal({
   isTransient: true,                                  // 不随窗口恢复
 })
 terminal.show()
-// shell 就绪（shell integration 事件，或 1.2s 兜底延时）后运行启动命令
+// shell 就绪（shell integration 事件，或兜底延时）后运行启动命令
 ```
 
-启动命令由配置 `dsh-tui-vscode.command` 决定（默认 `dsh-tui`，shell 按 PATH
-解析），附加 `--resume`（恢复上次）或额外参数。
+启动命令由配置 `dsh-tui-vscode.command` 决定（默认 `dsh-tui`，按**宿主 PATH**
+解析为绝对路径后发送——终端 shell 的 PATH 不可信，登录 shell 会重建，已实测），
+附加 `--resume`（恢复上次）或额外参数。
 
 **环境注入**：`DSH_TUI_LANG`（界面语言）、`$DSH_HOME`（可选覆盖）、
 `$VISUAL`（未设置时导出 `code -w`）通过 `createTerminal` 的 env 传入；恢复
@@ -136,9 +152,9 @@ terminal.show()
 **指定会话恢复机制**：点击侧边栏会话条目时，扩展把目标会话 id 通过
 `DSH_TUI_RESUME_SESSION` 环境变量注入终端环境，并**刻意不传 `--resume`**：
 本 profile 的 `cordis.patch.yml` 在启动时读取该 env（`sessionId: !!js
-process.env.DSH_TUI_RESUME_SESSION ?? ...`），TUI 随即恢复该会话。若传
-`--resume`，启动器（`bin/dsh-tui.js`）会用 `~/.dsh-tui/resume.txt` 覆盖
-env——那是"恢复上次会话"的路径，两者互不干扰（已读启动器源码确认）。
+process.env.DSH_TUI_RESUME_SESSION ?? ...`，0.7.0 未变），TUI 随即恢复该会话。
+若传 `--resume`，启动器（`bin/dsh-tui.js`）会用 `~/.dsh-tui/resume.txt` 覆盖
+env——那是"恢复上次会话"的路径，两者互不干扰（已读 0.7.0 启动器源码确认）。
 
 **侧边栏会话历史**：
 - 数据源：`~/.dsh/sessions` 的会话日志（zstd 压缩的 JSONL）+ dsh-storage
@@ -157,7 +173,7 @@ env——那是"恢复上次会话"的路径，两者互不干扰（已读启动
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `dsh-tui-vscode.command` | `dsh-tui` | 启动命令（由终端 shell 按 PATH 解析） |
+| `dsh-tui-vscode.command` | `dsh-tui` | 启动命令（按宿主 PATH 解析为绝对路径） |
 | `dsh-tui-vscode.extraArgs` | `[]` | 每次启动追加的 CLI 参数，如 `["--lang","en"]` |
 | `dsh-tui-vscode.lang` | `""` | `""`/`zh`/`en`，写入 `DSH_TUI_LANG` |
 | `dsh-tui-vscode.injectEditor` | `true` | 未设 `$VISUAL`/`$EDITOR` 时导出 `$VISUAL` |
@@ -169,8 +185,8 @@ env——那是"恢复上次会话"的路径，两者互不干扰（已读启动
 ```sh
 npm install
 npm run typecheck   # tsc --noEmit
-npm test            # 编译 + node --test（数据层单测 8 个）
-npm run test:e2e    # 真实扩展宿主测试 8 个（Linux 用 xvfb-run -a）
+npm test            # 编译 + node --test（数据层单测）
+npm run test:e2e    # 真实扩展宿主测试（Linux 用 xvfb-run -a）
 npm run package     # 编译 + 生成 .vsix
 ```
 
@@ -181,7 +197,7 @@ e2e 覆盖：命令注册、真实终端创建与环境注入、输入回环、�
 ### 已知限制
 
 - 会话内容即终端内容：滚动历史由 VS Code 终端管理（同 Claude Code 终端模式）；
-- 指定会话恢复依赖 dsh-tui profile 的 `cordis.patch.yml`（dsh-tui 0.6.1+）；
+- 指定会话恢复依赖 dsh-tui profile 的 `cordis.patch.yml`（dsh-tui 0.7.0+）；
 - 无 `session` 头日志的项目名来自组目录解码，含连字符的项目名解码有损
   （如 `flow-comet` → `flow\comet`）——此类会话的 cwd 仍可在悬浮提示中查看。
 

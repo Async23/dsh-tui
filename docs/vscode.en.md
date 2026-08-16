@@ -13,11 +13,19 @@ integrated terminal** (xterm.js). This page covers two ways to use it:
    sessions, a sidebar session history, one-click start/resume and
    specific-session resume ([issue #161](https://github.com/ccch1mneyyy/dsh-TUI/issues/161)).
 
+> Version note: `dsh-tui` in this page refers to this repository (the TUI
+> plugin, currently 0.7.0); `dsh-tui-vscode` refers to the companion extension
+> (currently 0.5.0). The two version independently.
+
 ## Option 1: run directly in the VS Code integrated terminal
 
 Prerequisites match [Getting started](getting-started.en.md): install the `dsh`
 CLI and `dsh-tui` globally (the first run bootstraps the profile; pnpm is
-required).
+required):
+
+```sh
+npm install -g @deepseek-ai/dsh @deepseek-harness-tui/dsh-tui
+```
 
 1. Open the VS Code integrated terminal (`` Ctrl+` ``) and run:
 
@@ -94,6 +102,14 @@ TUI's rendering core — it only **hosts** it and adds editor integration.
 | Auto start/stop | Open = start; closing the terminal = end | Same |
 | Env injection | — | `DSH_TUI_LANG` / `$VISUAL` / `$DSH_HOME` / session id |
 
+### Prerequisites
+
+- VS Code >= 1.90;
+- Global `dsh` CLI and `dsh-tui` (**dsh-tui 0.7.0+ recommended**, see
+  [Getting started](getting-started.en.md));
+- `DEEPSEEK_API_KEY` for running models (in the terminal environment or the
+  dsh configuration).
+
 ### Install
 
 ```sh
@@ -104,6 +120,9 @@ npm run package
 code --install-extension dsh-tui-vscode-0.5.0.vsix --force
 # or: npm run install:local
 ```
+
+The extension is also on the VS Code Marketplace: search for **`dsh-tui`** in
+the extension panel and install with one click.
 
 ### Entry points and commands
 
@@ -131,11 +150,13 @@ createTerminal({
 })
 terminal.show()
 // runs the launch command once the shell is ready (shell-integration event,
-// or a 1.2s fallback delay)
+// or a fallback delay)
 ```
 
-The launch command comes from `dsh-tui-vscode.command` (default `dsh-tui`,
-resolved by the shell via PATH), plus `--resume` (resume last) or extra args.
+The launch command comes from `dsh-tui-vscode.command` (default `dsh-tui`),
+resolved to an ABSOLUTE path against the HOST PATH before being sent — the
+terminal shell's PATH is not trustworthy (login shells rebuild it; verified
+empirically) — plus `--resume` (resume last) or extra args.
 
 **Env injection**: `DSH_TUI_LANG`, `$DSH_HOME` (optional override) and
 `$VISUAL` (`code -w` when unset) are passed through `createTerminal`'s env;
@@ -149,11 +170,11 @@ recently created terminal; closing a terminal ends only that session.
 **Specific-session resume**: clicking a sidebar entry injects the target
 session id into the terminal env via `DSH_TUI_RESUME_SESSION` and deliberately
 does NOT pass `--resume`: this profile's `cordis.patch.yml` reads that env at
-boot (`sessionId: !!js process.env.DSH_TUI_RESUME_SESSION ?? ...`) and the TUI
-resumes the session. Passing `--resume` would make the launcher
-(`bin/dsh-tui.js`) overwrite the env from `~/.dsh-tui/resume.txt` — that is the
-"resume last session" path; the two do not interfere (verified in the launcher
-source).
+boot (`sessionId: !!js process.env.DSH_TUI_RESUME_SESSION ?? ...`, unchanged in
+0.7.0) and the TUI resumes the session. Passing `--resume` would make the
+launcher (`bin/dsh-tui.js`) overwrite the env from `~/.dsh-tui/resume.txt` —
+that is the "resume last session" path; the two do not interfere (verified in
+the 0.7.0 launcher source).
 
 **Sidebar session history**:
 - Data sources: session logs under `~/.dsh/sessions` (zstd JSONL), the
@@ -175,7 +196,7 @@ background daemons.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `dsh-tui-vscode.command` | `dsh-tui` | Launch command (resolved by the shell via PATH) |
+| `dsh-tui-vscode.command` | `dsh-tui` | Launch command (resolved to an absolute path against the host PATH) |
 | `dsh-tui-vscode.extraArgs` | `[]` | Extra CLI args, e.g. `["--lang","en"]` |
 | `dsh-tui-vscode.lang` | `""` | `""`/`zh`/`en`, exported as `DSH_TUI_LANG` |
 | `dsh-tui-vscode.injectEditor` | `true` | Export `$VISUAL` when unset |
@@ -187,8 +208,8 @@ background daemons.
 ```sh
 npm install
 npm run typecheck   # tsc --noEmit
-npm test            # compile + node --test (8 data-layer unit tests)
-npm run test:e2e    # 8 real extension-host tests (xvfb-run -a on Linux)
+npm test            # compile + node --test (data-layer unit tests)
+npm run test:e2e    # real extension-host tests (xvfb-run -a on Linux)
 npm run package     # compile + build the .vsix
 ```
 
@@ -203,7 +224,7 @@ session — observable).
 - Session content is terminal content: scrollback is managed by the VS Code
   terminal (same as Claude Code's terminal mode);
 - Specific-session resume requires this profile's `cordis.patch.yml`
-  (dsh-tui 0.6.1+);
+  (dsh-tui 0.7.0+);
 - For logs without a `session` header, the project name comes from decoding
   the cwd-encoded group dir, which is lossy for hyphenated project names
   (e.g. `flow-comet` → `flow\comet`); the real cwd is still available in the
