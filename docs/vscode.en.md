@@ -130,8 +130,8 @@ The launch command comes from `dsh-tui-vscode.command` (default `dsh-tui`).
 The extension first resolves a bare command to an ABSOLUTE path against the
 HOST PATH (quoting it for the shell when it contains spaces) — the terminal
 shell's PATH is not trustworthy (login shells rebuild it; verified
-empirically) — then appends `--resume` (resume last) or configured extra
-args.
+empirically) — then appends the configured extra args, adding `--resume` at
+the end when resuming the last session.
 
 **Env injection**: `DSH_TUI_LANG`, `$DSH_HOME` (optional override) and
 `$VISUAL` (`code -w` when neither is set) are passed through
@@ -203,11 +203,12 @@ injection, input round-trip, multiple sessions, Ctrl+C termination,
 session — observable).
 
 The extension repository's CI (GitHub Actions) additionally runs a test
-matrix (Linux/Windows × Node 22/24), quality (bilingual mirror symmetry / BOM
-guard / actionlint), pr-policy (Conventional Commits / PR template),
-release-consistency (five-place version consistency + per-version PR links),
-security-scan and docs-links (dead-link check) jobs; local commit hooks
-(pre-commit / commit-msg) are shipped in the repository's `.githooks/`.
+matrix (Linux/Windows × Node 22/24), an e2e job (real extension host),
+quality (bilingual mirror symmetry / BOM guard / actionlint), pr-policy
+(Conventional Commits / PR template), release-consistency (five-place
+version consistency + per-version PR links), security-scan and docs-links
+(dead-link check) jobs; local commit hooks (pre-commit / commit-msg) are
+shipped in the repository's `.githooks/`.
 
 ### Known limitations
 

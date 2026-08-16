@@ -111,8 +111,8 @@ terminal.show()
 
 启动命令由配置 `dsh-tui-vscode.command` 决定（默认 `dsh-tui`），扩展先按
 **宿主 PATH** 把裸命令解析为绝对路径（含空格时按 shell 规则加引号）再发送——
-终端 shell 的 PATH 不可信（登录 shell 会重建，已实测），最后追加 `--resume`
-（恢复上次）或配置的额外参数。
+终端 shell 的 PATH 不可信（登录 shell 会重建，已实测）；随后追加配置的额外参数
+（`extraArgs`），恢复上次会话时最后追加 `--resume`。
 
 **环境注入**：`DSH_TUI_LANG`（界面语言）、`$DSH_HOME`（可选覆盖）、
 `$VISUAL`（两者均未设置时导出 `code -w`）通过 `createTerminal` 的 env 传入；
@@ -172,9 +172,9 @@ e2e 覆盖：命令注册、真实终端创建与环境注入、输入回环、�
 真实 dsh-tui 恢复测试**（恢复成功 = 不新建会话，可观测）。
 
 扩展仓库 CI（GitHub Actions）另有 test 矩阵（Linux/Windows × Node 22/24）、
-quality（双语镜像对称/BOM 防线/actionlint）、pr-policy（Conventional
-Commits/PR 模板）、release-consistency（版本五处一致 + 每版本段 PR 链接）、
-security-scan 与 docs-links（死链检查）job；本地提交钩子（pre-commit /
+e2e（真实扩展宿主）、quality（双语镜像对称/BOM 防线/actionlint）、pr-policy
+（Conventional Commits/PR 模板）、release-consistency（版本五处一致 + 每版本段
+PR 链接）、security-scan 与 docs-links（死链检查）job；本地提交钩子（pre-commit /
 commit-msg）由仓库 `.githooks/` 分发。
 
 ### 已知限制
