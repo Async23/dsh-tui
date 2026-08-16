@@ -141,6 +141,10 @@ jobs:
       # TUI 创建及恢复的会话必须持久关联到 Workspace。
       - run: node scripts/verify-workspace-attachment.mjs
 
+      # tuiWorkspaces 服务可选化回归（issue #183）：代码层 inject 不含
+      # tuiWorkspaces、消费处带本地兜底、patch 保留服务行与行级顺序保证。
+      - run: node scripts/verify-workspaces-degrade.mjs
+
       # 会话标题回归：选择器标题宽容读取（带未标记第三方事件的日志
       # 不能让标题退化成目录名），/rename 的最后一条 session/title 优先。
       - run: node scripts/verify-session-titles.mjs
@@ -230,6 +234,10 @@ jobs:
       # CJK 显示宽度截断回归（issue #41）：4 处描述按终端显示宽度处理，
       # CJK 不劈字、窄终端布局不破。
       - run: node --import tsx/esm scripts/verify-cjk-truncate.tsx
+
+      # 启动上下文摘要窄终端回归（issue #167）：摘要与 Ctrl+T 提示必须
+      # 作为一条可截断文本布局，不能换行后互相穿插。
+      - run: node --import tsx/esm scripts/verify-loaded-context-width.tsx
 
       # thinking spinner 残影回归（issue #72）：text-default emoji（✳）
       # 量宽 2 实画 1 致 spinner 行每帧错位，thinking 残影堆积不消失。
