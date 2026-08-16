@@ -267,6 +267,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       String(req.agent.id) === channel.agentId ? approvalStore.park(req) : next())
     ctx.effect(() => () => approvalStore.settleAll('cancelled'))
   }
+  // Positional command-line arguments are the initial prompt (issue #53):
+  // `dsh-tui "run the tests"` forwards positionals through the dsh CLI,
+  // which mounts them as ctx.cmdlineArgs. Submit once the channel exists —
+  // delivery goes through the normal pending/inbox chain, so no special
+  // timing is needed; flag-shaped leftovers are not prompt text.
+  const cmdlineArgs = (ctx as { cmdlineArgs?: { args?: readonly string[] } }).cmdlineArgs?.args
+  const initialPrompt = cmdlineArgs?.filter(arg => !arg.startsWith('-')).join(' ').trim()
+  if (initialPrompt) channel.submit(initialPrompt)
   // Attach the stderr reporter to the live channel and flush anything a
   // startup-spawned server produced while the channel didn't exist yet.
   notifyStderr = (text, options) => channel.notify(text, options)
