@@ -13,9 +13,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # Repro/verify scripts assert English UI copy; pin the language so the
-      # result never depends on the runner's locale variables.
-      DSH_TUI_LANG: en
+      # Keep UI language deterministic for the repro/verify scripts: zh is the
+      # historical script-context default; scripts asserting English copy pin
+      # DSH_TUI_LANG=en themselves before their dynamic imports.
+      DSH_TUI_LANG: zh
     steps:
       - uses: actions/checkout@v4
 
