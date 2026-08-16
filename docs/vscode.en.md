@@ -78,10 +78,11 @@ npm run package && code --install-extension dsh-tui-vscode-0.5.1.vsix --force
 
 ### Quick start
 
-1. Click the **activity-bar whale icon** (or the editor-title whale button,
-   or the command-palette entry `dsh-tui: Start new session / 启动新会话`) — a
-   **DeepSeek** terminal opens on the Beside column and runs dsh-tui
-   automatically;
+1. Click the **editor-title whale button** (or the command-palette entry
+   `dsh-tui: Start new session / 启动新会话`) — a **DeepSeek** terminal opens
+   on the Beside column and runs dsh-tui automatically; the **activity-bar
+   whale icon** opens the sidebar session history (its welcome view offers
+   start/resume buttons);
 2. Click again = **another concurrent session**; older sessions keep running
    in their own terminals;
 3. **Resume the last session**: `dsh-tui: Resume last session / 恢复上次会话`;
@@ -93,7 +94,7 @@ npm run package && code --install-extension dsh-tui-vscode-0.5.1.vsix --force
    terminal.
 
 While sessions are running, a **status-bar** item (`dsh-tui`, bottom-left)
-appears; clicking it focuses the most recent terminal.
+appears; clicking it starts a new session (`dsh-tui-vscode.open`).
 
 ### Command reference
 
