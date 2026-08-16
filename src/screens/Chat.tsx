@@ -1011,13 +1011,6 @@ export function Chat({
         setHelpOpen(false)
         channel.pushLocal('/mcp', channel.mcpStatus())
         return true
-      case 'memory':
-        setHelpOpen(false)
-        channel.pushLocal('/memory', [
-          t('memory-none'),
-          t('memory-hint'),
-        ])
-        return true
       case 'update':
         setHelpOpen(false)
         if (onUpdate === undefined) {
