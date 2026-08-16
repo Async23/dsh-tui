@@ -6,7 +6,7 @@ import { isMod, isPlainReturnInput, modLabel } from '../utils/modifiers.js'
 import { formatTokens } from '../cc/format.js'
 import { homeDir } from '../utils/paths.js'
 import type { LlmModelInfo } from '../dsh-adapter/types.js'
-import { sessionCwdMatches, type Channel, type ChatRow, type EffortOption, type PresetOption } from '../dsh-adapter/channel.js'
+import { sessionCwdMatches, type Channel, type ChatRow, type EffortOption, type PresetOption, type SkillInfo } from '../dsh-adapter/channel.js'
 import type { QuestionStore } from '../dsh-adapter/questions.js'
 import { runProviderWizard } from '../dsh-adapter/providerWizard.js'
 import { ApprovalStore } from '../dsh-adapter/approvals.js'
@@ -28,6 +28,7 @@ import { StatusLine } from './StatusLine.js'
 import { WorkingSpinner, useThinkingStatus } from '../components/WorkingSpinner.js'
 import { ActivityLine, contextPressurePct } from '../components/ActivityLine.js'
 import { ModelPicker } from '../components/ModelPicker.js'
+import { SkillsPicker, SkillsPickerLoading } from '../components/SkillsPicker.js'
 import { SessionBrowser } from './SessionBrowser.js'
 import { WorkspacePicker } from '../components/WorkspacePicker.js'
 import { WorkspaceFlowPicker } from '../components/WorkspaceFlowPicker.js'
@@ -211,6 +212,10 @@ export function Chat({
   const [modelPickerOpen, setModelPickerOpen] = React.useState(false)
   const [models, setModels] = React.useState<readonly LlmModelInfo[]>([])
   const [modelIndex, setModelIndex] = React.useState(0)
+  /** `/skills` 技能目录（issue #204）：null = 注册表快照在途。 */
+  const [skillsPickerOpen, setSkillsPickerOpen] = React.useState(false)
+  const [skillsList, setSkillsList] = React.useState<readonly SkillInfo[] | null>(null)
+  const [skillsIndex, setSkillsIndex] = React.useState(0)
   /** `/resume` opens the session browser, a screen rather than a panel. It
    *  owns its own selection, filters and keyboard — Chat only opens it. */
   const [browserOpen, setBrowserOpen] = React.useState(false)
@@ -727,6 +732,23 @@ export function Chat({
             model => model.provider === channel.provider && model.id === channel.model,
           )
           setModelIndex(index >= 0 ? index : 0)
+        })
+        return true
+      case 'skills':
+        // issue #204: 列出当前 agent 的完整技能目录（名称 + 来源 + 简述），
+        // Enter 把可直调技能以 `/name ` 填回输入行（completion-only 分发的
+        // 同一路径）。注册表读取走 channel（快照 scoped 到 live agent）。
+        setHelpOpen(false)
+        setSkillsList(null)
+        setSkillsIndex(0)
+        setSkillsPickerOpen(true)
+        void channel.listSkills().then((list) => {
+          if (list === undefined) {
+            setSkillsPickerOpen(false)
+            channel.notify(t('skills-load-failed'), { color: 'error' })
+            return
+          }
+          setSkillsList(list)
         })
         return true
       case 'provider': {
@@ -1510,6 +1532,24 @@ export function Chat({
       }
       return
     }
+    if (skillsPickerOpen) {
+      const list = skillsList ?? []
+      if (key.upArrow) {
+        if (list.length > 0) setSkillsIndex(index => (index <= 0 ? list.length - 1 : index - 1))
+      } else if (key.downArrow) {
+        if (list.length > 0) setSkillsIndex(index => (index >= list.length - 1 ? 0 : index + 1))
+      } else if (plainReturn) {
+        const skill = list[skillsIndex]
+        setSkillsPickerOpen(false)
+        // 可直调技能 Enter 填入 `/name `——与 / 菜单选中技能同一条
+        // completion-only 分发路径；模型专用技能（userInvocable=false）只关闭。
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: out-of-range index on an empty list
+        if (skill?.userInvocable) setHistoryFill(`/${skill.name} `)
+      } else if (key.escape) {
+        setSkillsPickerOpen(false)
+      }
+      return
+    }
     if (activityPickerOpen) {
       if (key.upArrow) {
         setActivityIndex(index => (index <= 0 ? PRESET_NAMES.length - 1 : index - 1))
@@ -1778,7 +1818,7 @@ export function Chat({
 
   /** Prompt input is inert while a modal dialog owns the keyboard. */
   const promptSelectionActive =
-    selectionActive || modelPickerOpen || workspacePickerOpen || workspaceFlow !== null || activityPickerOpen ||
+    selectionActive || modelPickerOpen || skillsPickerOpen || workspacePickerOpen || workspaceFlow !== null || activityPickerOpen ||
     effortSliderOpen || presetPickerOpen || themePickerOpen || thinkingOpen || historyOpen || rewindOpen || searchOpen ||
     btw !== null
 
@@ -1802,7 +1842,7 @@ export function Chat({
   // blit-skip 后留空（Esc 关 picker 一片空白的根因）。
   const dialogOverlayOpen =
     thinkingOpen || (workspacePickerOpen && workspaceTargets.length > 0) || workspaceFlow !== null ||
-    modelPickerOpen ||
+    modelPickerOpen || skillsPickerOpen ||
     activityPickerOpen || (effortSliderOpen && effortOptions.length > 1) ||
     (presetPickerOpen && presetOptions.length > 0) || themePickerOpen || historyOpen ||
     rewindOpen || searchOpen
@@ -2006,6 +2046,18 @@ export function Chat({
                   models={models}
                   focusIndex={modelIndex}
                   currentModel={`${channel.provider}/${channel.model}`}
+                />
+              )}
+            </Box>
+          )}
+          {skillsPickerOpen && (
+            <Box flexDirection="column" marginTop={1}>
+              {skillsList === null ? (
+                <SkillsPickerLoading />
+              ) : (
+                <SkillsPicker
+                  skills={skillsList}
+                  focusIndex={skillsIndex}
                 />
               )}
             </Box>

@@ -249,6 +249,16 @@ export interface LoadedContextSkill {
   readonly description: string
 }
 
+/** One skill in the live agent's catalog, for the `/skills` picker (issue #204). */
+export interface SkillInfo {
+  readonly name: string
+  readonly description: string
+  /** True when `/name` invokes it (it appears in the `/` menu, issue #86). */
+  readonly userInvocable: boolean
+  /** Discovery source bucket (bundled / user-* / project-* / runtime / …). */
+  readonly source: string
+}
+
 /** One model-visible tool from the prompt assembly. */
 export interface LoadedContextTool {
   readonly name: string
@@ -478,6 +488,11 @@ export interface Channel {
   setActivityFrames(name: string): boolean
   /** Advertised models across every registered provider route (empty when the LLM service is absent). */
   listModels(): Promise<readonly LlmModelInfo[]>
+  /** The live agent's full skill catalog for `/skills` (issue #204) — name,
+   *  description, invocation flags and source bucket. Undefined on a failed
+   *  or incomplete registry read (the picker shows an error); empty only
+   *  when no registry is mounted or it genuinely holds nothing. */
+  listSkills(): Promise<readonly SkillInfo[] | undefined>
   /** Safe credential metadata for `/login`; undefined without the service. */
   describeCredential(ref: string): Promise<CredentialStatus | undefined>
   /** Runtime capabilities for the `/provider` wizard, over the settings /
@@ -695,6 +710,8 @@ export interface ChannelState {
   /** Switch the working-activity indicator preset (see the public Channel). */
   setActivityFrames(name: string): boolean
   listModels(): Promise<readonly LlmModelInfo[]>
+  /** The live agent's skill catalog for `/skills` (see the public Channel type). */
+  listSkills(): Promise<readonly SkillInfo[] | undefined>
   /** Safe credential metadata for `/login` (see the public Channel type). */
   describeCredential(ref: string): Promise<CredentialStatus | undefined>
   /** `/provider` wizard capabilities (see the public Channel type). */
@@ -2362,6 +2379,25 @@ export function createChannel(
       const providers = llm.listProviders()
       return Promise.all(providers.map(provider => llm.listModels(provider.id).catch(() => [])))
         .then(lists => lists.flat())
+    },
+    async listSkills() {
+      // snapshot() over list(): only a COMPLETE observation is authoritative
+      // (same contract as the skill-command merge above) — a partial catalog
+      // must surface as "failed", not as a misleading near-empty picker.
+      const registry = skillRegistryFor(agent)
+      if (registry === undefined) return []
+      try {
+        const observation = await registry.snapshot(skillViewOptions(agent))
+        if (!observation.complete) return undefined
+        return observation.skills.map(skill => ({
+          name: skill.name,
+          description: skill.description,
+          userInvocable: isUserInvocable(skill),
+          source: skill.source,
+        }))
+      } catch {
+        return undefined
+      }
     },
     async describeCredential(ref) {
       const credentials = ctx.get('credentials') as

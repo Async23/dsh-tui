@@ -406,6 +406,7 @@ const dict = {
   'hint-confirm-exit': { zh: '**Enter** 确认 · Esc 退出', en: '**Enter** to confirm · Esc to exit' },
   'hint-confirm-cancel': { zh: '**Enter** 确认 · Esc 取消', en: '**Enter** to confirm · Esc to cancel' },
   'hint-select-exit': { zh: '**Enter** 选择 · Esc 退出', en: '**Enter** to select · Esc to exit' },
+  'hint-fill-exit': { zh: '**Enter** 填入命令 · Esc 退出', en: '**Enter** to insert · Esc to exit' },
   'hint-rewind-back': { zh: '**Enter** 回退 · Esc 返回', en: '**Enter** to rewind · Esc to back' },
   'hint-adjust-done': { zh: '**←/→** 调整 · Enter/Esc 完成', en: '**←/→** to adjust · Enter/Esc to done' },
   'hint-history-search': { zh: '↑/↓ 选择 · **Enter** 确认 · Esc 取消', en: '↑/↓ to navigate · **Enter** to select · Esc to cancel' },
@@ -413,6 +414,16 @@ const dict = {
 
   // ── components/ModelPicker.tsx / ThemePicker.tsx / ActivityPicker.tsx / EffortSlider.tsx ──
   'picker-title-model': { zh: '模型', en: 'Model' },
+  'picker-title-skills': { zh: '技能', en: 'Skills' },
+  'skills-loading': { zh: '正在加载技能', en: 'Loading skills' },
+  'skills-loading-subtitle': { zh: '正在查询技能注册表…', en: 'Querying the skill registry…' },
+  'skills-empty': { zh: '当前会话没有可用技能', en: 'No skills available in this session' },
+  'skills-load-failed': { zh: '技能列表加载失败', en: 'Failed to load the skill list' },
+  'skills-source-bundled': { zh: '内置', en: 'built-in' },
+  'skills-source-user': { zh: '用户', en: 'user' },
+  'skills-source-project': { zh: '项目', en: 'project' },
+  'skills-source-runtime': { zh: '运行时', en: 'runtime' },
+  'skills-source-custom': { zh: '自定义', en: 'custom' },
   'picker-title-theme': { zh: '颜色主题', en: 'Color theme' },
   'picker-title-activity': { zh: '指示器预设', en: 'Indicator preset' },
   'picker-title-effort': { zh: '推理强度', en: 'Reasoning effort' },
@@ -595,6 +606,7 @@ const dict = {
   'cmd-desc-hooks': { zh: '查看 hooks 状态' },
   'cmd-desc-mcp': { zh: '查看 MCP 状态' },
   'cmd-desc-memory': { zh: '查看记忆状态' },
+  'cmd-desc-skills': { zh: '列出所有可用技能' },
   'cmd-desc-update': { zh: '更新 dsh-tui 并重启' },
   // Built-in skills
   'cmd-desc-audit': { zh: '对当前项目做全面代码审计' },
