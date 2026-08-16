@@ -1,6 +1,6 @@
 import React from 'react'
 import { t, getLang, setLang, isLang, writeLangPref, subscribeLang, type I18nKey } from '../i18n.js'
-import { Box, Text, useInput, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
+import { AlternateScreen, Box, Text, useInput, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
 import { POINTER } from '../cc/figures.js'
 import { isMod, isPlainReturnInput, modLabel } from '../utils/modifiers.js'
 import { formatTokens } from '../cc/format.js'
@@ -18,7 +18,6 @@ import { useTerminalFocus } from '../ink/hooks/use-terminal-focus.js'
 import { useCopyOnSelect } from '../ink/hooks/use-copy-on-select.js'
 import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
-import instances from '../ink/instances.js'
 import { LogoHeader, MessageList } from '../components/MessageList.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { PromptInput, type PromptController } from '../components/PromptInput.js'
@@ -43,19 +42,20 @@ import { HistorySearchDialog } from '../components/HistorySearchDialog.js'
 import { RewindPicker } from '../components/RewindPicker.js'
 import { BtwPanel } from '../components/BtwPanel.js'
 import { setClipboard } from '../ink/termio/osc.js'
-import { TraceView, TRACE_WINDOW } from '../components/TraceView.js'
-import {
-  extendTrace,
-  filterTraceEntries,
-  TRACE_FILTERS,
-  type TraceBuild,
-  type TraceEntry,
-  type TraceFilter,
-} from '../dsh-adapter/trace.js'
+import instances from '../ink/instances.js'
+import { useAnimationFrame } from '../ink/hooks/use-animation-frame.js'
+import { TrajectoryScene } from './TrajectoryScene.js'
+import { extendTrajectory, projectWave, type TrajBuild } from '../dsh-adapter/trajectory/index.js'
+import { miniWakeWidth } from '../components/trajectory/MiniWake.js'
+import { readTrajectorySeen, writeTrajectorySeen } from '../trajectoryPrefs.js'
+import type { SessionEvent } from '../dsh-adapter/types.js'
 import { LoadingState } from '../components/design-system/LoadingState.js'
 import { Pane } from '../components/design-system/Pane.js'
 import { loadHistory, type HistoryEntry } from '../history.js'
 import type { SessionRecord } from '../sessionHistory.js'
+
+/** Shared empty snapshot for hosts whose channel has no event log. */
+const NO_EVENTS: readonly SessionEvent[] = []
 
 /** Row kinds the message-selection cursor can land on. */
 const SELECTABLE_KINDS = new Set<ChatRow['kind']>([
@@ -72,9 +72,6 @@ const SELECTABLE_KINDS = new Set<ChatRow['kind']>([
 /** Shared empty list for mode-gated derived rows (stable reference, so
  *  downstream consumers never see a changing prop when the mode is off). */
 const NO_ROWS: readonly ChatRow[] = []
-
-/** Shared empty list for the closed `/trace` view (see NO_ROWS). */
-const NO_TRACE_ENTRIES: readonly TraceEntry[] = []
 
 /** `max` → `Max` (effort levels arrive lower-case from the adapter). */
 function capitalize(text: string): string {
@@ -140,6 +137,8 @@ export function Chat({
   approvalStore,
   onExit,
   onUpdate,
+  fullscreen = false,
+  trajectorySeen: trajectorySeenProp,
 }: {
   channel: Channel
   questionStore: QuestionStore
@@ -152,6 +151,22 @@ export function Chat({
   onExit: () => void
   /** Update the installed package and restart the current TUI process. */
   onUpdate?: () => void
+  /**
+   * True when the host already wrapped this tree in `<AlternateScreen>`
+   * (`fullscreen: true`). The trajectory scene needs this: entering the alt
+   * screen a second time is harmless, but the inner unmount's DEC 1049 exit
+   * would drop the whole app back to the main screen.
+   */
+  fullscreen?: boolean
+  /**
+   * Whether the trajectory has been opened before on this machine.
+   *
+   * A prop rather than a filesystem read inside the component: a render
+   * initializer touching disk is the wrong layer, and hosts that already know
+   * (or tests that need determinism) can simply say. Falls back to the
+   * persisted flag when the host does not supply one.
+   */
+  trajectorySeen?: boolean
 }) {
   // Re-render whenever the channel mutates; rows/status are read fresh below.
   React.useSyncExternalStore(channel.subscribe, () => channel.version)
@@ -259,14 +274,40 @@ export function Chat({
     setBtw(null)
   }
   React.useEffect(() => () => btwAbortRef.current?.abort(), [])
-  /** `/trace` trajectory view (issue #80): open state + type filter + cursor.
-   *  `traceFollowRef` pins the cursor to the newest entry while the view
-   *  follows a running session; any upward scroll unpins it. */
-  const [traceOpen, setTraceOpen] = React.useState(false)
-  const [traceFilter, setTraceFilter] = React.useState<TraceFilter>('all')
-  const [traceCursor, setTraceCursor] = React.useState(0)
-  const traceFollowRef = React.useRef(true)
-  const traceBuildRef = React.useRef<TraceBuild | null>(null)
+  /**
+   * The trajectory scene (issue #80 evolution). Unlike every other overlay
+   * here it is not a panel but a whole screen: while open, Chat renders the
+   * scene INSTEAD of the conversation (see the early return below) and hands
+   * it the keyboard. Chat itself stays mounted, so scroll position, pickers
+   * and in-flight turn state survive the round trip untouched.
+   */
+  const [sceneOpen, setSceneOpen] = React.useState(false)
+  /**
+   * Close the scene.
+   *
+   * Leaving the alternate screen makes the terminal restore the main buffer
+   * itself; Ink then repaints once, because `setAltScreenActive(false)` blanks
+   * its front frame. In inline mode that costs one frame of scrollback per
+   * round trip — the same, already-accepted cost as the Ctrl+X external-editor
+   * handoff, and bounded per OPEN rather than per keystroke. Making it zero
+   * needs the render core to save and restore the pre-alt front frame, which
+   * is a separate change to `setAltScreenActive` and deliberately not made
+   * here. `verify-trace-scene` pins the property that matters meanwhile:
+   * navigating inside the scene adds nothing at all.
+   */
+  const closeScene = React.useCallback(() => {
+    setSceneOpen(false)
+  }, [])
+
+  /** Open the scene, mark failures seen, and retire the key hint for good. */
+  const openScene = React.useCallback(() => {
+    seenFailuresRef.current = trajectoryRef.current?.counts.errors ?? 0
+    setTrajectorySeen(previous => {
+      if (!previous) writeTrajectorySeen()
+      return true
+    })
+    setSceneOpen(true)
+  }, [])
   /** Startup context panel: expanded by header click or Ctrl+T. */
   const [loadedContextOpen, setLoadedContextOpen] = React.useState(false)
   /** `/` transcript search (less-style incsearch, ported from CC's REPL). */
@@ -657,15 +698,10 @@ export function Chat({
         channel.compact()
         return true
       case 'trace':
-        // Open the trajectory view (issue #80): the timeline reads the live
-        // session event log via channel.traceEvents() and follows new events
-        // in real time (every session event bumps the channel version, which
-        // re-renders this screen). Opens pinned to the newest entry.
+        // `/trace` is kept as the discoverable spelling of Ctrl+T: the
+        // command menu is where a user finds out the trajectory exists.
         setHelpOpen(false)
-        traceFollowRef.current = true
-        setTraceFilter('all')
-        setTraceCursor(0)
-        setTraceOpen(true)
+        openScene()
         return true
       case 'help':
         setHelpOpen(true)
@@ -1070,29 +1106,76 @@ export function Chat({
     }
   }
 
-  // `/trace` timeline: extend the incremental build with the session's
-  // current event snapshot, then apply the /thinking gate and the type
-  // filter. Computed per render while open (channel events bump `version`);
-  // extendTrace only consumes the appended tail, so a long session costs
-  // O(new events), never O(log), per frame.
-  if (traceOpen) {
-    traceBuildRef.current = extendTrace(traceBuildRef.current, channel.traceEvents())
-  }
-  const traceEntries: readonly TraceEntry[] = traceOpen && traceBuildRef.current !== null
-    ? filterTraceEntries(
-      thinkingVisible
-        ? traceBuildRef.current.entries
-        : traceBuildRef.current.entries.filter(entry => entry.kind !== 'thinking'),
-      traceFilter,
-    )
-    : NO_TRACE_ENTRIES
-  /** Effective cursor: pinned to the newest entry while following, clamped
-   *  against the (possibly filtered) list otherwise. */
-  const traceCursorClamped = traceEntries.length === 0
-    ? 0
-    : traceFollowRef.current
-      ? traceEntries.length - 1
-      : Math.min(traceCursor, traceEntries.length - 1)
+  /**
+   * The session's trajectory projection, folded here rather than inside the
+   * scene.
+   *
+   * Two things fall out of owning it at this level: the status-line chip can
+   * show live counters without a second fold, and opening the scene is
+   * instant because the build is already warm. The fold is incremental — it
+   * consumes only events appended since the last render — so an idle
+   * conversation pays nothing for it.
+   */
+  const trajectoryRef = React.useRef<TrajBuild | null>(null)
+  trajectoryRef.current = extendTrajectory(
+    trajectoryRef.current,
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: headless hosts render Chat with a partial channel
+    channel.traceEvents?.() ?? NO_EVENTS,
+  )
+  const trajectory = trajectoryRef.current
+
+  /**
+   * The status-line wake.
+   *
+   * Projected onto a dozen-odd columns and memoized against the ledger's row
+   * count, so it recomputes when the session actually grows rather than on
+   * every animation tick. The tick only re-colours the cells it already has.
+   */
+  const { columns: terminalColumns } = useTerminalSize()
+  const wakeWidth = miniWakeWidth(terminalColumns)
+  const wakeBand = React.useMemo(
+        () =>
+      wakeWidth === 0
+        ? undefined
+        // `sequence`, not the scene's `compressed`: at sixteen columns an idle
+        // gap cannot express how long it was, so it only reads as a broken
+        // strip. Equal-width columns give a continuous silhouette, which is
+        // the only thing this size can actually say.
+        // Width is also clamped to the row count: with fewer rows than
+        // columns the strip would be mostly gaps, which reads as broken
+        // rather than as short. It simply grows as the session does.
+        : projectWave(trajectory.nodes, Math.min(wakeWidth, trajectory.nodes.length), 'sequence'),
+    // The node array is mutated in place by the incremental fold, so its
+    // length is the honest dependency; its identity never changes.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    [trajectory.nodes, trajectory.counts.rows, wakeWidth],
+  )
+  const [wakeTickRef, wakeTime] = useAnimationFrame(channel.working ? 120 : null)
+  /**
+   * The key hint beside the strip retires itself once the trajectory has been
+   * opened — teaching belongs in the first minute, not on every frame forever.
+   */
+  const [trajectorySeen, setTrajectorySeen] = React.useState(() => trajectorySeenProp ?? readTrajectorySeen())
+
+  /**
+   * The one failure worth pointing at.
+   *
+   * Only the LATEST failed tool row carries the footnote, and only while its
+   * failures are unseen. Repeating it under every historical failure would be
+   * exactly the clutter the whole entry design is trying to avoid — one
+   * pointer, at the newest problem, is enough to find the rest.
+   */
+  const seenFailuresRef = React.useRef(0)
+  const unreadFailures = Math.max(0, trajectory.counts.errors - seenFailuresRef.current)
+  const failureHintRowId = React.useMemo(() => {
+    if (unreadFailures === 0) return null
+    for (let index = channel.rows.length - 1; index >= 0; index--) {
+      const row = channel.rows[index]
+      if (row?.kind === 'tool' && row.tool?.status === 'error') return row.id
+    }
+    return null
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel.rows, channel.version, unreadFailures])
 
   // Row seeking under layout virtualization: a mounted row seeks directly;
   // an unmounted one is force-mounted first, then sought by the completion
@@ -1650,49 +1733,14 @@ export function Chat({
       }
       return
     }
-    if (traceOpen) {
-      // Trajectory view (issue #80): read-only timeline navigation. ↑/↓ and
-      // PgUp/PgDn move the cursor (any upward move unpins tail-following,
-      // landing back on the newest entry re-pins it); g/G jump top/bottom;
-      // `f` cycles the type filter (all → tool → thinking → message →
-      // progress); Esc/q closes back to the conversation.
-      const last = traceEntries.length - 1
-      const letter = input !== '' && !key.ctrl && !key.meta
-      if (key.escape || (letter && input === 'q')) {
-        setTraceOpen(false)
-      } else if (key.upArrow) {
-        traceFollowRef.current = false
-        setTraceCursor(Math.max(0, traceCursorClamped - 1))
-      } else if (key.downArrow) {
-        const next = Math.min(last, traceCursorClamped + 1)
-        setTraceCursor(next)
-        traceFollowRef.current = next >= last
-      } else if (key.pageUp) {
-        traceFollowRef.current = false
-        setTraceCursor(Math.max(0, traceCursorClamped - TRACE_WINDOW))
-      } else if (key.pageDown) {
-        const next = Math.min(last, traceCursorClamped + TRACE_WINDOW)
-        setTraceCursor(next)
-        traceFollowRef.current = next >= last
-      } else if (key.home || (letter && input === 'g')) {
-        traceFollowRef.current = false
-        setTraceCursor(0)
-      } else if (key.end || (letter && input === 'G')) {
-        traceFollowRef.current = true
-        setTraceCursor(Math.max(0, last))
-      } else if (letter && input === 'f') {
-        const index = TRACE_FILTERS.indexOf(traceFilter)
-        setTraceFilter(TRACE_FILTERS[(index + 1) % TRACE_FILTERS.length] ?? 'all')
-        // The filtered list re-anchors to the newest entry.
-        traceFollowRef.current = true
-        setTraceCursor(0)
-      }
-      return
-    }
     if (isMod(key) && input === 't') {
-      // Toggle the startup loaded-context panel (keyboard only — the
-      // ported ink core handles no mouse clicks).
-      setLoadedContextOpen(previous => !previous)
+      // Ctrl+T opens the trajectory scene (issue #80 evolution). It used to
+      // toggle the startup loaded-context panel — which only ever renders
+      // before the first message (see the render below), so the binding was
+      // dead for the whole rest of a session. The panel keeps its header
+      // click-to-toggle; the key now has a meaning that always applies.
+      openScene()
+      return
     }
     if (isMod(key) && input === 'r' && !helpOpen) {
       setHistoryQuery('')
@@ -1776,8 +1824,20 @@ export function Chat({
   const promptSelectionActive =
     selectionActive || modelPickerOpen || resumePickerOpen || workspacePickerOpen || workspaceFlow !== null || activityPickerOpen ||
     effortSliderOpen || presetPickerOpen || themePickerOpen || thinkingOpen || historyOpen || rewindOpen || searchOpen ||
-    btw !== null ||
-    traceOpen
+    btw !== null
+
+  // The trajectory scene replaces the conversation for as long as it is open.
+  // Rendering it INSTEAD of (not above) the transcript is what makes it a
+  // screen rather than an overlay: it owns the full viewport, and the
+  // conversation's own frame is never resized while it is up. Chat stays
+  // mounted, so every hook above has already run and no state is lost.
+  // `<AlternateScreen>` is skipped when the app is already fullscreen —
+  // nesting it would emit a second DEC 1049, and its unmount would drop the
+  // whole app back to the main screen.
+  if (sceneOpen) {
+    const scene = <TrajectoryScene channel={channel} build={trajectory} onClose={closeScene} />
+    return fullscreen ? scene : <AlternateScreen>{scene}</AlternateScreen>
+  }
 
   // 浮层整体挂载条件：必须与内部各面板的可见条件精确同值。关闭时把
   // 整个 absolute 浮层从树里移除——渲染器的"移除 absolute 节点"检测只看
@@ -1789,10 +1849,10 @@ export function Chat({
     (resumePickerOpen && resumeSessions.length > 0) || modelPickerOpen ||
     activityPickerOpen || (effortSliderOpen && effortOptions.length > 1) ||
     (presetPickerOpen && presetOptions.length > 0) || themePickerOpen || historyOpen ||
-    rewindOpen || traceOpen || searchOpen
+    rewindOpen || searchOpen
 
   return (
-    <Box flexDirection="column" flexGrow={1} width="100%">
+    <Box ref={wakeTickRef} flexDirection="column" flexGrow={1} width="100%">
       {!isSticky && channel.lastUserText && (
         <StickyPromptHeader
           text={channel.lastUserText}
@@ -1823,6 +1883,8 @@ export function Chat({
         )}
         <MessageList
           rows={channel.rows}
+          failureHintRowId={failureHintRowId}
+          failureHint={t('traj-hint-failure', { key: `${modLabel}t` })}
           expanded={expanded}
           expandedRows={expandedRows}
           selectedId={selectionActive ? selectedId : null}
@@ -1930,6 +1992,15 @@ export function Chat({
           channel={channel}
           selectionActive={selectionActive}
           helpOpen={helpOpen}
+          wake={
+            wakeBand === undefined
+              ? undefined
+              : {
+                  band: wakeBand,
+                  hint: trajectorySeen ? undefined : `${modLabel}t`,
+                  tick: Math.floor(wakeTime / 120),
+                }
+          }
         />
         {/* 瞬态面板浮层：absolute + bottom:'100%' 钉在本 chrome Box 顶边，向上
             覆盖转录尾部行，自身零布局高度。in-flow 挂载会让帧高随面板开关涨落，
@@ -2036,15 +2107,6 @@ export function Chat({
                 rows={rewindRows}
                 focusIndex={rewindIndex}
                 confirmRow={rewindConfirm}
-              />
-            </Box>
-          )}
-          {traceOpen && (
-            <Box flexDirection="column" marginTop={1}>
-              <TraceView
-                entries={traceEntries}
-                cursor={traceCursorClamped}
-                filter={traceFilter}
               />
             </Box>
           )}

@@ -138,6 +138,21 @@ export declare const createTextNode: (text: string) => TextNode;
  */
 export declare const markDirty: (node?: DOMNode) => void;
 /**
+ * Invalidate cached layout for a whole subtree — the response to a viewport
+ * change.
+ *
+ * {@link markDirty} walks *upward* from the one node whose content changed,
+ * which is the right shape for every ordinary mutation: one node is new, its
+ * ancestors need to know. A resize is the opposite shape. Nothing in the tree
+ * changed, yet every measurement in it was taken against a width that no
+ * longer exists — so the invalidation has to run the other way, down to the
+ * leaves, or the nodes that were never touched keep answering with the sizes
+ * they computed for the old terminal.
+ *
+ * @param node - subtree root; a no-op when undefined.
+ */
+export declare const markTreeDirty: (node?: DOMNode) => void;
+/**
  * Walk to the root and call its onRender (the throttled scheduleRender).
  * Use for DOM-level mutations (scrollTop changes) that should trigger an
  * Ink frame without going through React's reconciler. Pair with markDirty()
