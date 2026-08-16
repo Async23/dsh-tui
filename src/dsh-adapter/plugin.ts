@@ -416,8 +416,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // but flag it as teardown first so the settling waitUntilExit does not
   // run the user-exit sequence: no resume marker, no disposeRootAndExit,
   // the process stays alive and the recomposed tree re-mounts the TUI.
+  // Hand back what the channel contributed to host registries on the way out:
+  // the command registry scopes a registration to ITS own context, so the
+  // skill commands (issue #86) would survive this exact recompose and the
+  // re-mounted channel would find the names taken, freezing its menu.
   ctx.effect(() => () => {
     funnel.markTeardown()
+    channel.releaseContributions()
     instance?.unmount()
   })
 

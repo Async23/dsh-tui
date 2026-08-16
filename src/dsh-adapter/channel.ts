@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { assembleContextFor, installModelSelection, type Agent, type AgentHandle, type AgentStatus, type CreateAgentOptions, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { CommandRuntime } from '@deepseek-ai/dsh-commands'
-import { isUserInvocable, type SkillSummary } from '@deepseek-ai/dsh-skill'
+import { isUserInvocable, renderSkillContent, type SkillSummary } from '@deepseek-ai/dsh-skill'
 import type { LlmConfigurableProvider, LlmDiscoveredModel, LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import {
   createUserMessage,
@@ -22,7 +22,7 @@ import { renderContextSections, renderPrompt } from '@deepseek-ai/dsh-system-pro
 import { loadBaselineInstructions } from '@deepseek-ai/dsh-agent-instructions'
 import type { Context } from '@deepseek-ai/cordis'
 import { extname, isAbsolute, join } from 'node:path'
-import { completeCommands, LOCAL_COMMANDS, type CommandCompletion, type CommandCompletionNode, type LocalCommand } from '../commands.js'
+import { completeCommands, isLocalCommandName, LOCAL_COMMANDS, parseCommandName, type CommandCompletion, type CommandCompletionNode, type LocalCommand } from '../commands.js'
 import { clearResumeTarget, forgetSession, readLastUsed, readResumeTarget, touchSession, type SessionRecord, writeResumeTarget } from '../sessionHistory.js'
 import { appendSessionTitle, deleteSessionLog, ensureLegacySessionEventTypes, readSessionTitleFromLog, sessionsRoots } from './compat/index.js'
 import { writeActivityFrames } from '../activityPrefs.js'
@@ -162,6 +162,12 @@ export interface ChatRow {
    *  exempt from the next fold pass so a restore is not instantly undone. */
   restored?: boolean
 }
+
+/**
+ * Delay before re-reading a skill catalog that reported an incomplete
+ * observation (a provider whose directory watcher is still warming).
+ */
+const SKILL_COMMAND_RETRY_MS = 800
 
 /** Running token totals across the session's assistant messages. */
 export interface TokenUsage {
@@ -496,6 +502,18 @@ export interface Channel {
    *  the service is absent). */
   listSubagents(): Promise<string[]>
   /**
+   * Dispose the host-registry entries this channel registered (skill slash
+   * commands).
+   *
+   * `commandService.register` binds the registration to ITS own context, not
+   * the caller's, so the entries outlive this channel unless released: after a
+   * launcher recompose the stale registrations would still answer, but the
+   * fresh channel would see the names taken and stop managing them, freezing
+   * the menu. The plugin calls this from its teardown effect, where the real
+   * cordis context lives.
+   */
+  releaseContributions(): void
+  /**
    * The live agent's session event log (immutable snapshot, replaced on
    * every append — dsh-session caches the frozen array) — the `/trace`
    * trajectory view's data source. Screens already re-render on `version`
@@ -681,6 +699,8 @@ export interface ChannelState {
   doctorInfo(): string[]
   /** Subagent rows (CC's /agents). */
   listSubagents(): Promise<string[]>
+  /** See {@link Channel.releaseContributions}. */
+  releaseContributions(): void
   /** Live session event log (see the public Channel type, `/trace`). */
   traceEvents(): readonly SessionEvent[]
 }
@@ -1706,6 +1726,7 @@ export function createChannel(
       bindAgent()
       refreshCommandList()
       void refreshLoadedContext()
+      void refreshSkillCommands()
       // The forked session (rewind) becomes the most recently used.
       touchSession(childId)
       state.emit()
@@ -1843,6 +1864,7 @@ export function createChannel(
       bindAgent()
       refreshCommandList()
       void refreshLoadedContext()
+      void refreshSkillCommands()
       // Keep the `--resume` launcher contract pointing at the same session.
       writeResumeTarget(sessionId)
       // The resumed session is now the most recently used.
@@ -1977,6 +1999,7 @@ export function createChannel(
       bindAgent()
       refreshCommandList()
       void refreshLoadedContext()
+      void refreshSkillCommands()
       clearResumeTarget()
       // The brand-new session becomes the most recently used.
       touchSession(handle.agent.id)
@@ -2153,6 +2176,7 @@ export function createChannel(
       bindAgent()
       refreshCommandList()
       void refreshLoadedContext()
+      void refreshSkillCommands()
       // The model-switched fork becomes the most recently used.
       touchSession(childId)
       state.emit()
@@ -2798,6 +2822,9 @@ export function createChannel(
         return [t('subagent-query-failed', { err: error instanceof Error ? error.message : String(error) })]
       }
     },
+    releaseContributions() {
+      releaseSkillCommands()
+    },
     traceEvents() {
       // Immutable per-append snapshot (dsh-session caches the frozen array);
       // reads follow agent swaps (/resume /rewind /new) automatically.
@@ -2918,6 +2945,11 @@ export function createChannel(
           ...(descriptions === undefined ? {} : { descriptions }),
           tag: descriptor.input?.hint,
           external: true,
+          // Skills reach the registry as ordinary commands, so the menu would
+          // lose the marker HelpMenu uses to keep them out of the chrome list.
+          // This channel registered them and is the authority on which names
+          // are skills.
+          ...(skillCommands.has(descriptor.name) ? { skill: true } : {}),
         })
       }
     }
@@ -2989,8 +3021,152 @@ export function createChannel(
   }
   ctx.on('commands/change', refreshCommandList)
   ctx.on('skills/change', refreshCommandList)
+
+  /**
+   * The view a skill-catalog read must be taken through, as ONE value.
+   *
+   * The registry is host-plane but scope-LAYERED: a provider mounted by an
+   * agent preset's standing composition files into that preset's layer, and a
+   * read taken without the scope sees only the host layer. Passing the pair
+   * together keeps a read from being taken half-scoped.
+   *
+   * @param target - the agent whose view is wanted.
+   */
+  const skillViewOptions = (target: Agent): { scope: Agent; cwd: string } => ({
+    scope: target,
+    cwd: state.cwd,
+  })
+
+  /** The skill registry as the given agent sees it, or undefined when a boot
+   *  mounts none. `serviceForAgent` resolves through the agent's mount and
+   *  falls back to the host context. */
+  const skillRegistryFor = (target: Agent) =>
+    serviceForAgent<{
+      snapshot(options?: { scope?: unknown; cwd?: string }): Promise<{
+        skills: readonly SkillSummary[]
+        complete: boolean
+      }>
+      get(name: string, options?: { scope?: unknown; cwd?: string; signal?: AbortSignal }): Promise<unknown>
+    }>(ctx, target, 'skills')
+
+  /**
+   * Skill commands this channel owns, by skill name. The value keeps the
+   * description the command was registered with so an edited SKILL.md
+   * re-registers instead of leaving a stale menu entry.
+   */
+  const skillCommands = new Map<string, { dispose: () => void; description: string }>()
+  /** Skill names the registry refused (name taken, or invalid) — warn once. */
+  const skillCommandsRefused = new Set<string>()
+  /** Pending re-read after an incomplete catalog observation. */
+  let skillCommandsRetry: ReturnType<typeof setTimeout> | undefined
+
+  /**
+   * Publish every user-invocable skill as a slash command (issue #86).
+   *
+   * The completion menu already lists these skills, but a menu entry is not a
+   * command: nothing dispatches it, so typing the name and pressing Enter does
+   * nothing. Registering through the host command registry is what makes them
+   * runnable, and buys three things the TUI would otherwise reimplement:
+   * `register` emits `commands/change`, so the menu merge folds the entry in
+   * on its own; Enter dispatches through the normal command path, so the
+   * invocation is logged as a paired `command/run`/`command/done` like every
+   * other command; and the handler runs host-side, so invoking a skill is
+   * DETERMINISTIC — the body is injected here, instead of sending `/name` to
+   * the model and depending on it to recognize the text and reach for its
+   * skill loader.
+   *
+   * `userInvocable` covers "human-facing command catalogs AND loaders", so
+   * discovery alone would honor half the flag.
+   */
+  const refreshSkillCommands = async (): Promise<void> => {
+    if (commandService === undefined) return
+    const target = agent
+    const registry = skillRegistryFor(target)
+    if (registry === undefined) return
+    let observation
+    try {
+      observation = await registry.snapshot(skillViewOptions(target))
+    } catch (error) {
+      ctx.logger.warn('skill commands: catalog read failed: %o', error)
+      return
+    }
+    if (target !== agent) return
+    // A provider still warming its watcher reports an incomplete observation;
+    // re-read once so a cold start cannot leave the menu permanently short.
+    if (!observation.complete && skillCommandsRetry === undefined) {
+      skillCommandsRetry = setTimeout(() => {
+        skillCommandsRetry = undefined
+        void refreshSkillCommands()
+      }, SKILL_COMMAND_RETRY_MS)
+    }
+    const wanted = new Map<string, string>(
+      observation.skills
+        .filter(skill => isUserInvocable(skill))
+        // A name the TUI's own command grammar cannot parse would show in the
+        // menu and then fail to dispatch when typed; ask the real parser
+        // instead of restating its pattern here.
+        .filter(skill => parseCommandName(`/${skill.name}`)?.name === skill.name)
+        // Built-in locals win a name collision, exactly as they do over
+        // plugin-registered commands in refreshCommandList.
+        .filter(skill => !isLocalCommandName(skill.name))
+        .map(skill => [skill.name, skill.description] as const),
+    )
+    for (const [name, entry] of skillCommands) {
+      if (wanted.get(name) === entry.description) continue
+      entry.dispose()
+      skillCommands.delete(name)
+    }
+    for (const [name, description] of wanted) {
+      if (skillCommands.has(name) || skillCommandsRefused.has(name)) continue
+      // Another plugin already owns this name (plan/goal/…): leave it alone.
+      if (commandService.find(target, name) !== undefined) continue
+      try {
+        const dispose = commandService.register({
+          name,
+          description,
+          // The injected body is the payload; recording the (empty) raw input
+          // would only duplicate the command name into the session log.
+          recordInput: false,
+          handler: async ({ agent: invoker, signal }) => {
+            const view = { ...skillViewOptions(invoker), signal }
+            const skill = await skillRegistryFor(invoker)?.get(name, view)
+            if (skill === undefined || !isUserInvocable(skill as SkillSummary)) {
+              return { kind: 'error', text: t('skill-unavailable', { name }) }
+            }
+            // The official user-explicit invocation shape (dsh-skill's
+            // SkillInvocationSource): the rendered body rides as instructions
+            // the model follows, and transcript consumers present it from the
+            // source metadata instead of re-parsing model-facing text.
+            invoker.followup(createUserMessage({
+              content: [{ type: 'text', text: renderSkillContent(skill as never) }],
+              source: { kind: 'skill-invocation', name, form: 'instructions' },
+            }))
+            // Silent success: the agent visibly starts working on the skill,
+            // which is the feedback (CC shows no banner either).
+            return { kind: 'success' }
+          },
+        })
+        skillCommands.set(name, { dispose, description })
+      } catch (error) {
+        skillCommandsRefused.add(name)
+        ctx.logger.warn(`skill commands: "${name}" not registrable: %o`, error)
+      }
+    }
+  }
+  ctx.on('skills/change', () => {
+    void refreshSkillCommands()
+  })
+  /** See {@link Channel.releaseContributions}. */
+  const releaseSkillCommands = (): void => {
+    if (skillCommandsRetry !== undefined) clearTimeout(skillCommandsRetry)
+    skillCommandsRetry = undefined
+    for (const entry of skillCommands.values()) entry.dispose()
+    skillCommands.clear()
+  }
+
   refreshCommandList()
   void refreshLoadedContext()
+  void refreshSkillCommands()
 
   let nextRowId = 0
   /** The leaf's bash executor (dsh-bash-local in the example leaf) — the DSH
