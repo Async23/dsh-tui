@@ -1980,6 +1980,10 @@ export declare function writeLangPref(lang: Lang, dir?: string): boolean;
  * Guess the user's language from the OS locale (`LC_ALL`, `LC_MESSAGES`,
  * `LANG`), defaulting to `zh`. Only consulted when nothing else (env var,
  * cordis.yml `lang`, persisted `/lang` choice) pinned a language.
+ * The POSIX/C locale means "no locale selected" and conventionally maps to
+ * English — importantly it is what CI runners (LANG=C.UTF-8) report, so
+ * tests asserting English UI copy stay deterministic. An absent locale
+ * variable (typical on Windows) still defaults to `zh`.
  */
 export declare function detectLocaleLang(): Lang;
 /**

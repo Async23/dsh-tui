@@ -3690,7 +3690,7 @@ ${output}
     // provider/default behavior, so seeding never pins an effort the route
     // did not ask for; applyPreferredEffort below still upgrades the seed
     // when the user has a persisted preference the route offers.
-    if (agent.options.model === undefined && state.provider !== '' && state.model !== '') {
+    if (agent.options?.model === undefined && state.provider !== '' && state.model !== '') {
       selection.current = { provider: state.provider, model: state.model }
     }
     void applyPreferredEffort()

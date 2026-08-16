@@ -709,6 +709,10 @@ export function writeLangPref(lang: Lang, dir: string = PREFS_DIR): boolean {
  * Guess the user's language from the OS locale (`LC_ALL`, `LC_MESSAGES`,
  * `LANG`), defaulting to `zh`. Only consulted when nothing else (env var,
  * cordis.yml `lang`, persisted `/lang` choice) pinned a language.
+ * The POSIX/C locale means "no locale selected" and conventionally maps to
+ * English — importantly it is what CI runners (LANG=C.UTF-8) report, so
+ * tests asserting English UI copy stay deterministic. An absent locale
+ * variable (typical on Windows) still defaults to `zh`.
  */
 export function detectLocaleLang(): Lang {
   const raw =
@@ -719,6 +723,7 @@ export function detectLocaleLang(): Lang {
   const locale = raw.split('.')[0]?.toLowerCase() ?? ''
   if (locale.startsWith('zh')) return 'zh'
   if (locale.startsWith('en')) return 'en'
+  if (locale === 'c' || locale === 'posix') return 'en'
   return 'zh'
 }
 
