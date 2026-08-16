@@ -171,10 +171,12 @@ recently created terminal; closing a terminal ends only that session.
 session id into the terminal env via `DSH_TUI_RESUME_SESSION` and deliberately
 does NOT pass `--resume`: this profile's `cordis.patch.yml` reads that env at
 boot (`sessionId: !!js process.env.DSH_TUI_RESUME_SESSION ?? ...`, unchanged in
-0.7.0) and the TUI resumes the session. Passing `--resume` would make the
-launcher (`bin/dsh-tui.js`) overwrite the env from `~/.dsh-tui/resume.txt` —
-that is the "resume last session" path; the two do not interfere (verified in
-the 0.7.0 launcher source).
+0.7.0) and the TUI resumes the session. Passing a bare `--resume` (or
+`-c`/`--continue`) would make the launcher (`bin/dsh-tui.js`) overwrite the
+env from `~/.dsh-tui/resume.txt` — that is the "resume last session" path; the
+two do not interfere (verified in the 0.7.0 launcher source). CLI users can
+also use **`dsh-tui --resume <id>`** or `--resume=<id>` (new in 0.7.0) to
+resume a specific session — same effect as the extension's env channel.
 
 **Sidebar session history**:
 - Data sources: session logs under `~/.dsh/sessions` (zstd JSONL), the

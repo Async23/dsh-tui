@@ -153,8 +153,10 @@ terminal.show()
 `DSH_TUI_RESUME_SESSION` 环境变量注入终端环境，并**刻意不传 `--resume`**：
 本 profile 的 `cordis.patch.yml` 在启动时读取该 env（`sessionId: !!js
 process.env.DSH_TUI_RESUME_SESSION ?? ...`，0.7.0 未变），TUI 随即恢复该会话。
-若传 `--resume`，启动器（`bin/dsh-tui.js`）会用 `~/.dsh-tui/resume.txt` 覆盖
-env——那是"恢复上次会话"的路径，两者互不干扰（已读 0.7.0 启动器源码确认）。
+若传裸 `--resume`（或 `-c`/`--continue`），启动器（`bin/dsh-tui.js`）会用
+`~/.dsh-tui/resume.txt` 覆盖 env——那是"恢复上次会话"的路径，两者互不干扰
+（已读 0.7.0 启动器源码确认）。CLI 用户也可直接用 **`dsh-tui --resume <id>`**
+或 `--resume=<id>`（0.7.0 新增）恢复指定会话，效果与扩展的 env 通道一致。
 
 **侧边栏会话历史**：
 - 数据源：`~/.dsh/sessions` 的会话日志（zstd 压缩的 JSONL）+ dsh-storage
