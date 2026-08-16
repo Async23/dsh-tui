@@ -117,13 +117,11 @@ seam.
   pnpm install --frozen-lockfile
   ```
 
-- `pnpm-lock.yaml` is the CI lockfile. `package-lock.json` is tracked for npm
-  consumers but currently trails the package version; do not use it as the
-  dependency source of truth or rewrite it opportunistically.
-- When intentionally changing dependencies, update `pnpm-lock.yaml`, inspect
-  the full lockfile diff, and avoid unrelated upgrades. Touch
-  `package-lock.json` only when the task explicitly includes npm-install
-  compatibility.
+- `pnpm-lock.yaml` is the single lockfile. npm consumers do not read a
+  dependency's lockfile, so `package-lock.json` has been removed (follow-up of
+  #173).
+- When intentionally changing dependencies, update `pnpm-lock.yaml` with
+  `pnpm add`, inspect the full lockfile diff, and avoid unrelated upgrades.
 - `@deepseek-ai/cordis` and `@deepseek-ai/dsh-invariants` are both peer and dev
   dependencies so the package can type-check locally. Keep those declarations
   compatible when changing their versions.

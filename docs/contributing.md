@@ -92,10 +92,10 @@ Cordis config
 - 支持 Node `^22.19 || >=24`；CI 用 Node 24。
 - CI 与发布用 pnpm 11；开发也请用 pnpm。
 - 干净检出安装：`pnpm install --frozen-lockfile`。
-- `pnpm-lock.yaml` 是 CI 锁文件。`package-lock.json` 为 npm 用户跟踪但当前
-  落后于包版本；不要把它当作依赖真源，也不要顺手改写。
-- 有意改依赖时：更新 `pnpm-lock.yaml`，检查完整 lockfile diff，避免无关升级。
-  只有任务明确包含 npm-install 兼容性时才动 `package-lock.json`。
+- `pnpm-lock.yaml` 是唯一锁文件。npm 消费方不读依赖包的 lockfile，
+  `package-lock.json` 已移除（见 #173 后续处理）。
+- 有意改依赖时：用 `pnpm add` 更新 `pnpm-lock.yaml`，检查完整 lockfile diff，
+  避免无关升级。
 - `@deepseek-ai/cordis` 与 `@deepseek-ai/dsh-invariants` 同时是 peer 与 dev
   依赖，便于本地类型检查；改版本时保持这两组声明兼容。
 - 不要暴露、持久化或打印凭证。交互启动读取 `DEEPSEEK_API_KEY`；诊断可以
