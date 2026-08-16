@@ -69,6 +69,23 @@ export function isProgressReportingAvailable(): boolean {
 }
 
 /**
+ * True when running inside a JetBrains IDE terminal (JediTerm). The IDE
+ * injects `TERMINAL_EMULATOR=JetBrains-JediTerm` into the pty environment of
+ * its local terminal sessions and sets no TERM_PROGRAM, so this is the only
+ * reliable local-JediTerm marker; it is also not forwarded over SSH by
+ * default (sshd only sends TERM), matching the local-terminal scope of the
+ * behaviors it gates.
+ *
+ * JediTerm's emulation diverges from xterm.js in exactly the places the
+ * renderer cares about (DEC 2026 support, DECSTBM semantics), so it is
+ * detected explicitly rather than left to TERM/TERM_PROGRAM fallbacks.
+ * @returns true when the process runs in a JetBrains IDE terminal.
+ */
+export function isJetBrainsIdeTerminal(): boolean {
+  return process.env.TERMINAL_EMULATOR === 'JetBrains-JediTerm'
+}
+
+/**
  * Checks if the terminal supports DEC mode 2026 (synchronized output).
  * When supported, BSU/ESU sequences prevent visible flicker during redraws.
  * @returns true when the terminal supports DEC 2026.
@@ -94,6 +111,14 @@ export function isSynchronizedOutputSupported(): boolean {
   ) {
     return true
   }
+
+  // JetBrains IDE terminals (JediTerm) implement DEC 2026 synchronized
+  // output; TERM_PROGRAM is unset there (only TERMINAL_EMULATOR is), so the
+  // env list above never matches. Frames wrapped in BSU/ESU land atomically
+  // in JediTerm's reworked block renderer — the same guarantee VS Code gets
+  // via TERM_PROGRAM=vscode — which keeps its partial-update reflow from
+  // scrambling continuously-updated screens.
+  if (isJetBrainsIdeTerminal()) return true
 
   // kitty sets TERM=xterm-kitty or KITTY_WINDOW_ID
   if (term?.includes('kitty') || process.env.KITTY_WINDOW_ID) return true
@@ -246,6 +271,24 @@ export function hasCursorUpViewportYankBug(): boolean {
  * so callers can pass a sync-skip hint gated to specific modes.
  */
 export const SYNC_OUTPUT_SUPPORTED = isSynchronizedOutputSupported()
+
+/**
+ * Whether the DECSTBM hardware-scroll optimization may be used to paint
+ * ScrollBox scrolls. Called once per frame — the same env reads as the
+ * SYNC_OUTPUT_SUPPORTED gate, so the extra cost is a single comparison.
+ *
+ * JediTerm is explicitly excluded even though it implements DEC 2026: its
+ * scroll-region (DECSTBM) + CSI S/T handling deviates from xterm and, when
+ * driven per-frame by a diffing renderer, corrupts the screen progressively
+ * as content scrolls (the "JetBrains terminal slowly garbles" bug class).
+ * The diff engine falls back to repainting the shifted rows cell-by-cell,
+ * which every terminal renders identically. Same gate as upstream Claude
+ * Code, which hard-disables DECSTBM on JetBrains terminals.
+ * @returns true when DECSTBM scroll optimization is safe on this terminal.
+ */
+export function isDecstbmSafe(): boolean {
+  return SYNC_OUTPUT_SUPPORTED && !isJetBrainsIdeTerminal()
+}
 
 /**
  * Render forensics: when DSH_TUI_RENDER_LOG names a file path, every painted

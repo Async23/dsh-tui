@@ -29,6 +29,7 @@ import {
   SGR_RESET,
   setScrollRegion,
 } from './termio/csi.js'
+import { isJetBrainsIdeTerminal } from './terminal.js'
 import { LINK_END, link as oscLink } from './termio/osc.js'
 
 type State = {
@@ -552,9 +553,60 @@ export class LogUpdate {
       )
     }
 
-    return scrollPatch.length > 0
+    let result = scrollPatch.length > 0
       ? [...scrollPatch, ...screen.diff]
       : screen.diff
+
+    // JetBrains IDE terminals (JediTerm) in main-screen (inline) mode:
+    // append a visible-frame rewrite to the incremental diff.
+    //
+    // JediTerm's reworked block renderer (the default terminal in JetBrains
+    // IDEs 2025.2+) repaints a view row only when its model cells change,
+    // and it re-renders between writes. The incremental diff above writes
+    // only the cells that changed since the previous frame — so a row the
+    // block renderer misrendered mid-frame (partial reflow) is never
+    // touched again, and the garbage persists and accumulates as the
+    // transcript streams and scrolls: the "works in VS Code, slowly garbles
+    // in JetBrains" symptom. xterm.js-family terminals (VS Code) repaint
+    // the fixed grid on every write, so the same byte stream is clean
+    // there; the model-level state is identical on both (verified by
+    // replaying captured frame bytes through the IDE's bundled JediTerm
+    // emulator against xterm.js) — the divergence is purely the view
+    // layer's incremental repaint.
+    //
+    // The rewrite runs AFTER the incremental writes instead of replacing
+    // them: the growth path's CR+LF writes are what scroll scrolled-off
+    // rows into the terminal's native scrollback (inline mode's whole
+    // point). A pure full-repaint mode would never emit those scrolls and
+    // the transcript above the viewport would vanish. Appending a repaint
+    // anchored at the visible frame start (CR + CUU(visibleRows) + ED0 +
+    // frame tail) overwrites every application cell, forcing the block
+    // renderer to a correct full repaint without touching scrollback or
+    // shell output above a short frame. The appended slice lands its
+    // row-ending CR+LFs inside the viewport so nothing extra scrolls. The
+    // anchor prefixes SGR_RESET + link('') so the ED0's BCE fill uses the
+    // default background and any hyperlink the incremental writes left open
+    // is closed first. Frames that took a full-reset path already repaint
+    // everything and are skipped. A one-row viewport has no separate park
+    // row, so it keeps the original incremental output. Alt-screen is
+    // unaffected: its per-frame CSI H anchor + BSU/ESU atomic frames already
+    // keep the block renderer consistent.
+    if (
+      !altScreen &&
+      isJetBrainsIdeTerminal() &&
+      prev.viewport.height > 1 &&
+      !result.some(patch => patch.type === 'clearTerminal')
+    ) {
+      logForDebugging(
+        `JetBrains inline frame: append viewport repaint (height=${next.screen.height}, viewport=${prev.viewport.height})`,
+      )
+      result = [
+        ...result,
+        ...viewportRepaintPatches(prev, next, stylePool, true, 'frame-end'),
+      ]
+    }
+
+    return result
   }
 }
 
@@ -657,6 +709,35 @@ function repaintViewportInPlace(
   next: Frame,
   stylePool: StylePool,
 ): Diff {
+  return viewportRepaintPatches(
+    prev,
+    next,
+    stylePool,
+    false,
+    'viewport-bottom',
+  )
+}
+
+/**
+ * Patches that rewrite the visible viewport in place, then paint the frame
+ * tail top-to-bottom. See repaintViewportInPlace for the layout rationale.
+ *
+ * When these patches are APPENDED to an incremental diff (rather than being
+ * the whole frame), the incremental writes may have left an SGR style and/or
+ * an OSC 8 hyperlink open; `resetPrefix` then prepends SGR_RESET + link('')
+ * so the ED0 BCE fill and the slice's style/hyperlink transitions start from
+ * a clean state. In that path the physical cursor is at the frame end, so a
+ * short frame must move up only its visible row count. Moving up V-1 rows
+ * would clamp at the terminal top, erase shell history above the application,
+ * and relocate the application to the top of the viewport.
+ */
+function viewportRepaintPatches(
+  prev: Frame,
+  next: Frame,
+  stylePool: StylePool,
+  resetPrefix: boolean,
+  origin: 'viewport-bottom' | 'frame-end',
+): Diff {
   const viewportHeight = prev.viewport.height
   const height = next.screen.height
   // The bottom viewport row stays reserved for the cursor park; content
@@ -664,13 +745,20 @@ function repaintViewportInPlace(
   // steady state, where the park LF materializes one row below the frame).
   const contentRows = Math.min(height, viewportHeight - 1)
   const startY = height - contentRows
-  // CR + up(V-1): from the parked bottom row to the viewport top — stays
-  // inside the viewport, so conhost's CUU-into-scrollback yank bug can't
-  // trigger. Erase down from there (BCE fill — the SGR reset at the head
-  // of every frame buffer guarantees the default background). The erase
-  // also blanks the park row, so no stale prompt/status pixels survive
-  // below short content.
-  const anchor = '\r' + cursorUp(viewportHeight - 1) + eraseToEndOfScreen()
+  // A standalone recovery starts at the parked physical bottom row and must
+  // reach the viewport top. An appended repaint starts at next.cursor (the
+  // frame end), so moving up contentRows reaches the actual visible-frame
+  // start for both short and overflowing frames without crossing into shell
+  // history. Erase down from there (BCE fill — the SGR reset guarantees the
+  // default background). The erase also blanks the park row, so no stale
+  // prompt/status pixels survive below short content.
+  const rowsToStart =
+    origin === 'viewport-bottom' ? viewportHeight - 1 : contentRows
+  const anchor =
+    (resetPrefix ? SGR_RESET + LINK_END : '') +
+    '\r' +
+    cursorUp(rowsToStart) +
+    eraseToEndOfScreen()
   const screen = new VirtualScreen({ x: 0, y: startY }, next.viewport.width)
   renderFrameSlice(screen, next, startY, height, stylePool)
   return [{ type: 'stdout', content: anchor }, ...screen.diff]
