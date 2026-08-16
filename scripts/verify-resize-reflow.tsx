@@ -7,18 +7,33 @@
  * under it stay laid out for the old one — the session title truncates
  * mid-word and right-aligned content stops in the middle of the line.
  *
- * The mechanism is that a resize invalidates the renderer's model of the
- * screen in a way a width change alone does not describe. In inline mode the
- * previous frame is still physical text in the terminal, and the terminal
- * *reflows* it on resize: lines that were wrapped at the old width unwrap at
- * the new one, so the frame that the renderer believes is N rows tall now
- * occupies a different number of physical rows. Every subsequent cursor-
- * relative move is measured from a row that is no longer there.
+ * Two independent mechanisms turned out to sit behind that, one per axis of
+ * the resize, and this file caught both:
  *
- * The oracle is final-state equivalence, which needs no theory of the bug:
+ * 1. **Stale measurements.** A resize invalidates every cached measurement in
+ *    the tree, because each was taken against a width that no longer exists —
+ *    yet nothing is dirty in the reconciler's sense, since no props changed.
+ *    `markDirty` walks *upward* from a changed node, so it cannot express
+ *    this; the invalidation has to run down to the leaves. Without it the text
+ *    nodes keep answering with their old sizes and any row that distributes
+ *    space by flex arbitration comes out assembled from two layouts.
+ * 2. **A top-anchored repaint that overflows.** The full reset blanks the
+ *    viewport, homes the cursor and paints downward, but painted the whole
+ *    frame regardless of height. Every row ends in CR+LF and the bottom row is
+ *    reserved for the cursor park, so once the frame is as tall as the
+ *    viewport the last row is carried off the bottom. Narrowing at a fixed row
+ *    count is what makes a frame reach full height — content wraps onto more
+ *    rows while the row count stays put — which is why that direction lost the
+ *    status hint and widening never did.
+ *
+ * The oracle is final-state equivalence, which needs no theory of the bug and
+ * is why both were found rather than only the one that was being looked for:
  * drive a resize, then build the same state fresh at the new size, and demand
- * the two screens match byte for byte. Anything the resize path forgot shows
- * up as a diff.
+ * the two screens match. Anything the resize path forgot shows up as a diff.
+ *
+ * It also disproved a third, very plausible theory — that `renderNodeToOutput`
+ * was blitting cells out of a previous screen laid out at the old geometry.
+ * Disabling the blit source entirely left every case failing exactly as before.
  *
  * The earlier version of this check passed while the bug was live, because it
  * sized the emulator to the widest case up front — so no line ever reflowed.
@@ -28,6 +43,12 @@
  * Run: node --import tsx/esm scripts/verify-resize-reflow.tsx
  */
 process.env.FORCE_COLOR = '3'
+// Asserts Chinese UI copy, so it pins the language rather than inheriting the
+// ambient one — the same rule the English-asserting scripts follow since
+// fb87339. `activeLang` resolves at import from env → persisted pref → OS
+// locale, none of which a CI runner or another developer's machine is obliged
+// to agree with.
+process.env.DSH_TUI_LANG = 'zh'
 
 const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render }, { Chat }, { QuestionStore }] =
   await Promise.all([
@@ -276,34 +297,17 @@ async function equivalence(from: [number, number], to: [number, number]): Promis
   )
 }
 
-// Widen (the reported case: maximizing the window), narrow, and both axes at
-// once. Widening is the one that reflows previously wrapped lines back onto
-// fewer physical rows, which is where a stale row count does the most damage.
-// Widening is the reported case (maximizing the window) and the one that
-// reflows previously wrapped lines back onto fewer physical rows.
+// Both directions on both axes. Widening is the reported case (maximizing the
+// window) and the one that reflows previously wrapped lines back onto fewer
+// physical rows. Narrowing at a FIXED row count is the one that makes the
+// frame reach full viewport height — content wraps onto more rows while the
+// row count stays put — which is the case a top-anchored repaint overflows.
 await equivalence([90, 30], [150, 30])
-await equivalence([100, 24], [170, 40])
-// Narrowing while the terminal also gains rows: the frame grows taller (more
-// wrapping) and there is room for it.
+await equivalence([150, 30], [90, 30])
+await equivalence([150, 30], [110, 30])
 await equivalence([150, 30], [90, 36])
-
-// Known residual, deliberately not asserted — narrowing the width at a FIXED
-// row count: [150,30]→[90,30], [150,30]→[110,30], [170,40]→[100,24].
-//
-// Layout is correct there (the status fields agree on the new width, which is
-// what this file was written for); what is wrong is vertical bookkeeping. The
-// frame lands one row lower than a fresh render and a divider row from the
-// previous frame survives above it, so the bottom chrome row is pushed off the
-// viewport. That is the inline anchor/erase accounting behind the shrink-frame
-// family (#38/#39/#19/#10) reached through the resize entry point — a separate
-// mechanism from the stale-measurement one fixed here, in the code path with
-// the worst history in this renderer. It gets its own change and its own
-// verification rather than riding along with this one.
-console.log(
-  '\nnot asserted (known residual): narrowing at a fixed row count — ' +
-    '150x30→90x30, 150x30→110x30, 170x40→100x24; ' +
-    'layout is correct, the frame is anchored one row low and keeps a stale divider.',
-)
+await equivalence([100, 24], [170, 40])
+await equivalence([170, 40], [100, 24])
 
 console.log(failed === 0 ? '\nAll resize reflow checks passed.' : `\n${failed} check(s) failed.`)
 process.exit(failed === 0 ? 0 : 1)

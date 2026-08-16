@@ -21,6 +21,12 @@
  * Run: node --import tsx/esm scripts/verify-trace-scene.tsx
  */
 process.env.FORCE_COLOR = '3'
+// Asserts Chinese UI copy, so it pins the language rather than inheriting the
+// ambient one — the same rule the English-asserting scripts follow since
+// fb87339. `activeLang` resolves at import from env → persisted pref → OS
+// locale, none of which a CI runner or another developer's machine is obliged
+// to agree with.
+process.env.DSH_TUI_LANG = 'zh'
 
 const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render }, { TrajectoryScene }, { Chat }, { QuestionStore }] =
   await Promise.all([
