@@ -1987,10 +1987,11 @@ export declare function writeLangPref(lang: Lang, dir?: string): boolean;
  */
 export declare function detectLocaleLang(): Lang;
 /**
- * Resolve the startup language: the persisted `/lang` choice, else the OS
- * locale guess, else `zh` (the original hard-coded language). The env var /
- * config precedence lives in plugin.apply (see {@link resolveStartupLang}
- * consumers).
+ * Resolve the startup language: `DSH_TUI_LANG` when it holds a valid value
+ * (pinned at process start — the repro/verify scripts rely on this for
+ * deterministic UI copy), else the persisted `/lang` choice, else the OS
+ * locale guess, else `zh` (the original hard-coded language). The
+ * cordis.yml `lang` precedence lives in plugin.apply.
  */
 export declare function resolveStartupLang(): Lang;
 export {};

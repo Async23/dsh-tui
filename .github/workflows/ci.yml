@@ -12,6 +12,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Repro/verify scripts assert English UI copy; pin the language so the
+      # result never depends on the runner's locale variables.
+      DSH_TUI_LANG: en
     steps:
       - uses: actions/checkout@v4
 

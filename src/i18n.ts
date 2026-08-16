@@ -715,10 +715,12 @@ export function writeLangPref(lang: Lang, dir: string = PREFS_DIR): boolean {
  * variable (typical on Windows) still defaults to `zh`.
  */
 export function detectLocaleLang(): Lang {
+  // `||` (not `??`): an EMPTY locale variable means "unset" and must fall
+  // through to the next one — runners and shells sometimes export LC_ALL=''.
   const raw =
-    process.env.LC_ALL ??
-    process.env.LC_MESSAGES ??
-    process.env.LANG ??
+    process.env.LC_ALL ||
+    process.env.LC_MESSAGES ||
+    process.env.LANG ||
     ''
   const locale = raw.split('.')[0]?.toLowerCase() ?? ''
   if (locale.startsWith('zh')) return 'zh'
@@ -728,11 +730,14 @@ export function detectLocaleLang(): Lang {
 }
 
 /**
- * Resolve the startup language: the persisted `/lang` choice, else the OS
- * locale guess, else `zh` (the original hard-coded language). The env var /
- * config precedence lives in plugin.apply (see {@link resolveStartupLang}
- * consumers).
+ * Resolve the startup language: `DSH_TUI_LANG` when it holds a valid value
+ * (pinned at process start — the repro/verify scripts rely on this for
+ * deterministic UI copy), else the persisted `/lang` choice, else the OS
+ * locale guess, else `zh` (the original hard-coded language). The
+ * cordis.yml `lang` precedence lives in plugin.apply.
  */
 export function resolveStartupLang(): Lang {
+  const envLang = process.env.DSH_TUI_LANG
+  if (isLang(envLang)) return envLang
   return readLangPref() ?? detectLocaleLang()
 }
