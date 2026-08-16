@@ -2058,7 +2058,7 @@ export function Chat({
 
 /**
  * The pinned prompt header shown above the ScrollBox while the user has
- * scrolled up (ported from the leak's FullscreenLayout.StickyPromptHeader).
+ * scrolled up (mirroring Claude Code's FullscreenLayout.StickyPromptHeader).
  * Fixed at 1 row so the ScrollBox never shifts when the text changes.
  */
 function StickyPromptHeader({
