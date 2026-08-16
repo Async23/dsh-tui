@@ -17,14 +17,23 @@ import { runSideQuestion, wrapSideQuestion } from './sideQuestion.js'
 type SideQuestionLlm = {
   stream(options: object): AsyncIterable<StreamChunk>
 }
-import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { renderContextSections, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { loadBaselineInstructions } from '@deepseek-ai/dsh-agent-instructions'
 import type { Context } from '@deepseek-ai/cordis'
 import { extname, isAbsolute, join } from 'node:path'
 import { completeCommands, isLocalCommandName, LOCAL_COMMANDS, parseCommandName, type CommandCompletion, type CommandCompletionNode, type LocalCommand } from '../commands.js'
-import { clearResumeTarget, forgetSession, readLastUsed, readResumeTarget, touchSession, type SessionRecord, writeResumeTarget } from '../sessionHistory.js'
-import { appendSessionTitle, deleteSessionLog, ensureLegacySessionEventTypes, readSessionTitleFromLog, sessionsRoots } from './compat/index.js'
+import { clearResumeTarget, forgetSession, readResumeTarget, touchSession, writeResumeTarget } from '../sessionHistory.js'
+import { appendSessionTitle, deleteSessionLog, ensureLegacySessionEventTypes, sessionsRoots } from './compat/index.js'
+import {
+  listSummaries,
+  locateSession,
+  noteBranch,
+  previewSession,
+  type PreviewEntry,
+  type SessionSource,
+  type SessionSummary,
+} from './sessions/index.js'
 import { writeActivityFrames } from '../activityPrefs.js'
 import { readEffortPref, writeEffortPref } from '../effortPrefs.js'
 import { readModelPref, writeModelPref } from '../modelPrefs.js'
@@ -468,8 +477,11 @@ export interface Channel {
   providerSetup(): ProviderSetupHost | undefined
   /** Top-level entries of the session cwd for `@` file completion. */
   listFiles(): Promise<readonly string[]>
-  /** Recent sessions recorded by the DSH persistence backend (for `/resume`). */
-  listSessions(): Promise<readonly SessionRecord[]>
+  /** Every session the persistence backend stores, classified and unfiltered
+   *  — the browser (`/resume`) decides which of them a given view shows. */
+  listSessions(): Promise<readonly SessionSummary[]>
+  /** Trailing exchanges of a persisted session, for the browser's preview. */
+  previewSession(sessionId: string): Promise<readonly PreviewEntry[]>
   /** Mark a session for `dsh-tui --resume` on the next launch. */
   setResumeTarget(sessionId: string): void
   /** Rename the current session (CC's /rename): appends a `session/title`
@@ -677,7 +689,9 @@ export interface ChannelState {
   /** `/provider` wizard capabilities (see the public Channel type). */
   providerSetup(): ProviderSetupHost | undefined
   listFiles(): Promise<readonly string[]>
-  listSessions(): Promise<readonly SessionRecord[]>
+  listSessions(): Promise<readonly SessionSummary[]>
+  /** Trailing exchanges of a persisted session (see the public Channel type). */
+  previewSession(sessionId: string): Promise<readonly PreviewEntry[]>
   setResumeTarget(sessionId: string): void
   /** Rename the current session (see the public Channel type). */
   renameSession(title: string): void
@@ -926,19 +940,8 @@ function coalesceReplayEvents(events: readonly SessionEvent[]): SessionEvent[] {
 /** Buffer below the context window at which CC warns (autoCompact.ts). */
 const CONTEXT_WARNING_BUFFER_TOKENS = 20_000
 
-/** How many newest sessions resolve their title from the first user message
- *  (persistence.load reads the whole log — depth caps the picker latency). */
-const SESSION_TITLE_DEPTH = 20
-/** Picker title cap, in characters. */
-const SESSION_TITLE_LIMIT = 40
-
-/** One-line session title: whitespace folded, capped with an ellipsis. */
-function shortenTitle(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length <= SESSION_TITLE_LIMIT
-    ? flat
-    : `${flat.slice(0, SESSION_TITLE_LIMIT - 1)}…`
-}
+/** How many trailing exchanges the browser's preview pane asks for. */
+const PREVIEW_ENTRIES = 8
 
 /** Resolve once a `turn/end` event newer than `fromSeq` lands in the session
  *  log (Agent.cancel closes the turn asynchronously), or when the timeout
@@ -2492,64 +2495,19 @@ export function createChannel(
       return listFilesDeep(fs, state.cwd)
     },
     async listSessions() {
-      // DSH's own session index: the persistence backend materializes one
-      // entry per durable session log (headers carry cwd + createdAt).
-      const persistence = ctx.get('sessionPersistence') as
-        | {
-          list(signal?: AbortSignal): Promise<readonly SessionHeader[]>
-          load(id: SessionId): Promise<{ events: readonly SessionEvent[] }>
-        }
-        | undefined
+      // Every stored session, classified and unfiltered. Which of them a
+      // surface shows — this project only, conversations only, sub-agent runs
+      // folded away — is a view decision, and keeping it out of here is what
+      // lets the browser toggle those views without re-reading a single log.
+      const persistence = ctx.get('sessionPersistence') as SessionSource | undefined
       if (!persistence) return []
-      try {
-        const headers = await persistence.list()
-        // 按工作目录隔离（Claude Code 的项目维度）：/resume 只列出本会话
-        // 目录启动的会话，别的项目的会话不出现在选择器里。
-        const local = headers.filter(header =>
-          sessionCwdMatches(state.cwd, header.cwd ?? ''),
-        )
-        // MRU ordering: DSH headers carry only createdAt, so dsh-tui keeps its
-        // own last-used timestamps (touchSession on resume/submit/new) and
-        // falls back to createdAt for sessions never touched in this install.
-        const lastUsed = readLastUsed()
-        const records = local
-          .map(header => ({
-            id: header.id,
-            // Titles load lazily below (first user message); until then the
-            // cwd basename stands in (matching the status line), with a
-            // short id when absent.
-            title: basename(header.cwd ?? '') || `session ${String(header.id).slice(0, 8)}`,
-            cwd: header.cwd ?? '',
-            createdAt: header.createdAt,
-            updatedAt: lastUsed[header.id] ?? header.createdAt,
-          }))
-          .sort((a, b) => b.updatedAt - a.updatedAt)
-        // Title = the session's session/title event (auto: first prompt;
-        // manual: /rename), else its FIRST user message — the picker's most
-        // useful label. Read via the tolerant compat log reader instead of
-        // persistence.load: the backend validates every event against
-        // KNOWN_SESSION_EVENT_TYPES and throws the whole load on an unmarked
-        // an unregistered third-party type, which would otherwise leave the
-        // affected session titled with the cwd
-        // basename. An unreadable log keeps the basename fallback.
-        const empty = new Set<string>()
-        for (const record of records.slice(0, SESSION_TITLE_DEPTH)) {
-          const info = readSessionTitleFromLog(String(record.id))
-          if (info === undefined) continue // keep the basename fallback
-          if (!info.hasUserMessage) {
-            // Launch artifact — a session with no user message holds no
-            // conversation to resume, so drop it from the picker (its
-            // createdAt-only updatedAt would otherwise pin it near the
-            // top forever, one per dsh-tui launch).
-            empty.add(record.id)
-            continue
-          }
-          if (info.title !== undefined) record.title = shortenTitle(info.title)
-        }
-        return records.filter(record => !empty.has(record.id))
-      } catch {
-        return []
-      }
+      return listSummaries(persistence)
+    },
+    async previewSession(sessionId) {
+      const persistence = ctx.get('sessionPersistence') as SessionSource | undefined
+      if (!persistence) return []
+      const path = await locateSession(persistence, sessionId)
+      return path === undefined ? [] : previewSession(path, PREVIEW_ENTRIES)
     },
     setResumeTarget(sessionId) {
       writeResumeTarget(sessionId)
@@ -2585,12 +2543,10 @@ export function createChannel(
         return true
       }
       if (appendSessionTitle(sessionId, title) !== 'appended') return false
-      // listSessions resolves persisted titles only for the MRU top
-      // SESSION_TITLE_DEPTH; a rename does not change MRU by itself, so a
-      // session beyond the window would keep showing the cwd-basename
-      // fallback (in the next picker AND after restart) even though the
-      // title event is durable. A rename IS user interaction with the
-      // session — touching it pulls it into the title window.
+      // The append changed the log, so the next listing sees a new revision,
+      // re-derives, and reads back the very title event just written — no
+      // second path to the same answer. Touching it is about ordering, not
+      // titles: a rename is user interaction, so the row belongs at the top.
       touchSession(sessionId)
       return true
     },
@@ -3958,6 +3914,11 @@ ${output}
         const branch = result.stdout.text.trim()
         if (branch !== '') {
           state.gitBranch = branch
+          // Note it against the session too. A session log records no branch,
+          // and nothing can reconstruct one after the fact, so the browser can
+          // only show a branch for sessions this install actually used — which
+          // is exactly what the column claims.
+          noteBranch(agent.session.id, branch)
           state.emit()
         }
       })
@@ -3972,7 +3933,7 @@ ${output}
   return state
 }
 
-/** Path basename for the resume-list title (`C:/a/b` → `b`). */
+/** Trailing path segment (`C:/a/b` → `b`). */
 function basename(path: string): string {
   const parts = path.split(/[\\/]/)
   return parts[parts.length - 1] ?? path
