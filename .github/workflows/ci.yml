@@ -180,6 +180,11 @@ jobs:
       # skills/change 实时增删，读取失败保留 last-good。
       - run: node scripts/verify-skill-commands.mjs
 
+      # 轨迹投影回归（issue #80 演进）：增量折叠与全量折叠在每个切分点终态
+      # 等价（机械 oracle）、六类括号配对、增广事件守卫的全变异模糊测试、
+      # 未知事件前向兼容、连发折叠边界、无 chunk 的步不伪造 TTFT。
+      - run: node scripts/verify-trace-projection.mjs
+
       # effort 配置链路回归（issue #51）：cordis 配置的 effort 必须进入实际
       # 请求配置，而不是只做状态栏启动显示（≤0.3.5 的 display-only 行为）。
       - run: node --import tsx/esm scripts/repro-effort.tsx
@@ -224,8 +229,11 @@ jobs:
       # 线）。注意必须走 tsx——脚本直接 import src/customTheme.ts。
       - run: node --import tsx/esm scripts/verify-themes.mjs
 
-      # /trace 轨迹视图回归（issue #80）：事件装配配对耗时 + 组件渲染/滚动。
-      - run: node --import tsx/esm scripts/repro-trace.tsx
+      # 轨迹场景回归（issue #80 演进，取代 repro-trace）：xterm headless 驱动
+      # 真实场景——账本行/耗时/光标、窗口滚动、检视窗跟随光标且高度恒定、
+      # 查询过滤、时序⇄热点切换，以及备用屏进出后主屏逐字节还原、
+      # scrollback 零增量、动效帧只含 SGR。
+      - run: node --import tsx/esm scripts/verify-trace-scene.tsx
 
       # /provider 向导回归：catalog/custom 两分支的 profile 形状、凭据回滚
       # （覆盖时恢复旧 key 而非误删）、env shadow 跳过、rc.6 兼容守卫、

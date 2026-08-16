@@ -951,6 +951,10 @@ declare const dict: {
         readonly zh: "自动补全";
         readonly en: "autocomplete";
     };
+    readonly 'logo-tip-trace': {
+        readonly zh: "会话轨迹";
+        readonly en: "trajectory";
+    };
     readonly 'logo-tip-prefix': {
         readonly zh: "提示：";
         readonly en: "Tip: ";
@@ -1230,10 +1234,6 @@ declare const dict: {
     readonly 'hint-history-search': {
         readonly zh: "↑/↓ 选择 · **Enter** 确认 · Esc 取消";
         readonly en: "↑/↓ to navigate · **Enter** to select · Esc to cancel";
-    };
-    readonly 'hint-trace': {
-        readonly zh: "**↑/↓ PgUp/PgDn g/G** 滚动 · f 过滤 · Esc/q 关闭";
-        readonly en: "**↑/↓ PgUp/PgDn g/G** to scroll · f to filter · Esc/q to close";
     };
     readonly 'hint-expand-ctrl-o': {
         readonly zh: "（ctrl+o 展开）";
@@ -1904,37 +1904,93 @@ declare const dict: {
         readonly zh: "缓存 ";
         readonly en: "cache ";
     };
-    readonly 'trace-title': {
+    readonly 'traj-title': {
         readonly zh: "轨迹";
-        readonly en: "Trace";
+        readonly en: "Trajectory";
     };
-    readonly 'trace-subtitle': {
-        readonly zh: "会话事件时间线 · 过滤：{{filter}} · {{count}} 条";
-        readonly en: "Session event timeline · filter: {{filter}} · {{count}} entries";
+    readonly 'traj-totals': {
+        readonly zh: "{{turns}} 轮 · {{steps}} 步";
+        readonly en: "{{turns}} turns · {{steps}} rows";
     };
-    readonly 'trace-empty': {
-        readonly zh: "暂无轨迹事件";
-        readonly en: "No trace events yet";
+    readonly 'traj-errors': {
+        readonly zh: "{{n}} 错";
+        readonly en: "{{n}} failed";
     };
-    readonly 'trace-filter-all': {
-        readonly zh: "全部";
-        readonly en: "all";
+    readonly 'traj-retries': {
+        readonly zh: "{{n}} 重试";
+        readonly en: "{{n}} retries";
     };
-    readonly 'trace-filter-tool': {
+    readonly 'traj-matches': {
+        readonly zh: "{{n}}/{{total}} 匹配";
+        readonly en: "{{n}}/{{total}} matched";
+    };
+    readonly 'traj-tab-timeline': {
+        readonly zh: "时序";
+        readonly en: "Timeline";
+    };
+    readonly 'traj-tab-hotspot': {
+        readonly zh: "热点";
+        readonly en: "Hotspot";
+    };
+    readonly 'traj-hot-tools': {
         readonly zh: "工具";
-        readonly en: "tools";
+        readonly en: "Tools";
     };
-    readonly 'trace-filter-thinking': {
-        readonly zh: "思考";
-        readonly en: "thinking";
+    readonly 'traj-hot-model': {
+        readonly zh: "模型";
+        readonly en: "Model";
     };
-    readonly 'trace-filter-message': {
-        readonly zh: "消息";
-        readonly en: "messages";
+    readonly 'traj-hot-turns': {
+        readonly zh: "轮次";
+        readonly en: "Turns";
     };
-    readonly 'trace-filter-progress': {
-        readonly zh: "进度";
-        readonly en: "progress";
+    readonly 'traj-sort-duration': {
+        readonly zh: "按耗时";
+        readonly en: "by duration";
+    };
+    readonly 'traj-sort-count': {
+        readonly zh: "按次数";
+        readonly en: "by count";
+    };
+    readonly 'traj-sort-tokens': {
+        readonly zh: "按 token";
+        readonly en: "by tokens";
+    };
+    readonly 'traj-proj-sequence': {
+        readonly zh: "序号等宽";
+        readonly en: "even";
+    };
+    readonly 'traj-proj-time': {
+        readonly zh: "真实墙钟";
+        readonly en: "wall-clock";
+    };
+    readonly 'traj-proj-compressed': {
+        readonly zh: "压缩空闲";
+        readonly en: "compressed";
+    };
+    readonly 'traj-hint-timeline': {
+        readonly zh: "**↑/↓** 移动 · **←/→** 视图 · **[ ]** 跳错 · **{ }** 跳轮 · **/** 查询 · **m** 投影 · **enter** 详情 · **q** 退出";
+        readonly en: "**↑/↓** move · **←/→** view · **[ ]** failures · **{ }** turns · **/** query · **m** projection · **enter** detail · **q** exit";
+    };
+    readonly 'traj-hint-hotspot': {
+        readonly zh: "**↑/↓** 移动 · **←/→** 视图 · **t** 排序 · **enter** 回时序定位 · **q** 退出";
+        readonly en: "**↑/↓** move · **←/→** view · **t** sort · **enter** locate in timeline · **q** exit";
+    };
+    readonly 'traj-hint-query': {
+        readonly zh: "**tool:** **kind:** **turn:** **err:** **run:** **>10s** **tok>1k** · 裸词全文 · **enter** 确认 · **esc** 清除";
+        readonly en: "**tool:** **kind:** **turn:** **err:** **run:** **>10s** **tok>1k** · bare word = full text · **enter** apply · **esc** clear";
+    };
+    readonly 'traj-hint-expanded': {
+        readonly zh: "**j/k** 翻页 · **enter/esc** 收起 · **q** 退出";
+        readonly en: "**j/k** page · **enter/esc** collapse · **q** exit";
+    };
+    readonly 'traj-empty': {
+        readonly zh: "暂无轨迹事件";
+        readonly en: "No trajectory events yet";
+    };
+    readonly 'traj-hint-failure': {
+        readonly zh: "{{key}} 看完整轨迹";
+        readonly en: "{{key}} for the full trajectory";
     };
 };
 export type I18nKey = keyof typeof dict;

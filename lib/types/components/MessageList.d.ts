@@ -2,7 +2,7 @@ import React from 'react';
 import { type ScrollBoxHandle } from '../ui.js';
 import type { ChatRow } from '../dsh-adapter/channel.js';
 import type { DOMElement } from '../ink/dom.js';
-export declare function MessageList({ rows, expanded, expandedRows, selectedId, onToggleRow, model, showAll, onToggleAll, onLoadOlder, thinkingVisible, registerRowRef, scrollHandle, forceMountRowId, newSinceRowId, onUnseenCount, }: {
+export declare function MessageList({ rows, expanded, expandedRows, selectedId, onToggleRow, model, showAll, onToggleAll, onLoadOlder, thinkingVisible, registerRowRef, scrollHandle, forceMountRowId, newSinceRowId, onUnseenCount, failureHintRowId, failureHint, }: {
     rows: readonly ChatRow[];
     expanded: boolean;
     expandedRows: ReadonlySet<number>;
@@ -26,6 +26,14 @@ export declare function MessageList({ rows, expanded, expandedRows, selectedId, 
     newSinceRowId?: number | null;
     /** Reports how many new rows still sit below the viewport bottom edge. */
     onUnseenCount?: (count: number) => void;
+    /**
+     * Row id that should carry the trajectory footnote — the newest unseen
+     * failure, or null. Exactly one row ever carries it: repeating the pointer
+     * under every historical failure is the clutter this design avoids.
+     */
+    failureHintRowId?: number | null;
+    /** Footnote text, e.g. `ctrl+t for the full trajectory`. */
+    failureHint?: string;
 }): React.JSX.Element;
 /**
  * The header block pinned above the transcript: the DeepSeek pixel whale

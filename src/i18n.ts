@@ -286,6 +286,7 @@ const dict = {
   'logo-tip-model': { zh: '切换模型', en: 'switch model' },
   'logo-tip-help': { zh: '查看命令', en: 'view commands' },
   'logo-tip-tab': { zh: '自动补全', en: 'autocomplete' },
+  'logo-tip-trace': { zh: '会话轨迹', en: 'trajectory' },
   'logo-tip-prefix': { zh: '提示：', en: 'Tip: ' },
 
   // ── components/PromptInput.tsx ──────────────────────────────────────
@@ -370,7 +371,6 @@ const dict = {
   'hint-rewind-back': { zh: '**Enter** 回退 · Esc 返回', en: '**Enter** to rewind · Esc to back' },
   'hint-adjust-done': { zh: '**←/→** 调整 · Enter/Esc 完成', en: '**←/→** to adjust · Enter/Esc to done' },
   'hint-history-search': { zh: '↑/↓ 选择 · **Enter** 确认 · Esc 取消', en: '↑/↓ to navigate · **Enter** to select · Esc to cancel' },
-  'hint-trace': { zh: '**↑/↓ PgUp/PgDn g/G** 滚动 · f 过滤 · Esc/q 关闭', en: '**↑/↓ PgUp/PgDn g/G** to scroll · f to filter · Esc/q to close' },
   'hint-expand-ctrl-o': { zh: '（ctrl+o 展开）', en: '(ctrl+o to expand)' },
 
   // ── components/ModelPicker.tsx / ThemePicker.tsx / ActivityPicker.tsx / EffortSlider.tsx ──
@@ -594,15 +594,41 @@ const dict = {
   // ── screens/StatusLine.tsx ───────────────────────────────────────────
   'status-cache-label': { zh: '缓存 ', en: 'cache ' },
 
-  // ── components/TraceView.tsx (/trace, issue #80) ─────────────────────
-  'trace-title': { zh: '轨迹', en: 'Trace' },
-  'trace-subtitle': { zh: '会话事件时间线 · 过滤：{{filter}} · {{count}} 条', en: 'Session event timeline · filter: {{filter}} · {{count}} entries' },
-  'trace-empty': { zh: '暂无轨迹事件', en: 'No trace events yet' },
-  'trace-filter-all': { zh: '全部', en: 'all' },
-  'trace-filter-tool': { zh: '工具', en: 'tools' },
-  'trace-filter-thinking': { zh: '思考', en: 'thinking' },
-  'trace-filter-message': { zh: '消息', en: 'messages' },
-  'trace-filter-progress': { zh: '进度', en: 'progress' },
+  // ── screens/TrajectoryScene.tsx（issue #80 演进：全屏轨迹场景）──────────
+  'traj-title': { zh: '轨迹', en: 'Trajectory' },
+  'traj-totals': { zh: '{{turns}} 轮 · {{steps}} 步', en: '{{turns}} turns · {{steps}} rows' },
+  'traj-errors': { zh: '{{n}} 错', en: '{{n}} failed' },
+  'traj-retries': { zh: '{{n}} 重试', en: '{{n}} retries' },
+  'traj-matches': { zh: '{{n}}/{{total}} 匹配', en: '{{n}}/{{total}} matched' },
+  'traj-tab-timeline': { zh: '时序', en: 'Timeline' },
+  'traj-tab-hotspot': { zh: '热点', en: 'Hotspot' },
+  'traj-hot-tools': { zh: '工具', en: 'Tools' },
+  'traj-hot-model': { zh: '模型', en: 'Model' },
+  'traj-hot-turns': { zh: '轮次', en: 'Turns' },
+  'traj-sort-duration': { zh: '按耗时', en: 'by duration' },
+  'traj-sort-count': { zh: '按次数', en: 'by count' },
+  'traj-sort-tokens': { zh: '按 token', en: 'by tokens' },
+  'traj-proj-sequence': { zh: '序号等宽', en: 'even' },
+  'traj-proj-time': { zh: '真实墙钟', en: 'wall-clock' },
+  'traj-proj-compressed': { zh: '压缩空闲', en: 'compressed' },
+  'traj-hint-timeline': {
+    zh: '**↑/↓** 移动 · **←/→** 视图 · **[ ]** 跳错 · **{ }** 跳轮 · **/** 查询 · **m** 投影 · **enter** 详情 · **q** 退出',
+    en: '**↑/↓** move · **←/→** view · **[ ]** failures · **{ }** turns · **/** query · **m** projection · **enter** detail · **q** exit',
+  },
+  'traj-hint-hotspot': {
+    zh: '**↑/↓** 移动 · **←/→** 视图 · **t** 排序 · **enter** 回时序定位 · **q** 退出',
+    en: '**↑/↓** move · **←/→** view · **t** sort · **enter** locate in timeline · **q** exit',
+  },
+  'traj-hint-query': {
+    zh: '**tool:** **kind:** **turn:** **err:** **run:** **>10s** **tok>1k** · 裸词全文 · **enter** 确认 · **esc** 清除',
+    en: '**tool:** **kind:** **turn:** **err:** **run:** **>10s** **tok>1k** · bare word = full text · **enter** apply · **esc** clear',
+  },
+  'traj-hint-expanded': {
+    zh: '**j/k** 翻页 · **enter/esc** 收起 · **q** 退出',
+    en: '**j/k** page · **enter/esc** collapse · **q** exit',
+  },
+  'traj-empty': { zh: '暂无轨迹事件', en: 'No trajectory events yet' },
+  'traj-hint-failure': { zh: '{{key}} 看完整轨迹', en: '{{key}} for the full trajectory' },
 } as const
 
 export type I18nKey = keyof typeof dict
