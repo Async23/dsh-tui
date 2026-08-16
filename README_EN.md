@@ -101,6 +101,7 @@ For migration from the former `dsh-cc-tui` package and `cc-tui` profile, see
 | [Interaction and commands](docs/interaction.en.md) | Keyboard, mouse, questionnaires, slash commands, session workflows |
 | [Architecture and limitations](docs/architecture.en.md) | Runtime path, rendering, persistence, security boundary, known limitations |
 | [Contributing](docs/contributing.en.md) | Contribution workflow, repository map, build artifacts, verification matrix, change rules |
+| [Plugin development](docs/plugins.en.md) | Plugin seams (session events / slots / skills / themes / prompt sections), contract, conventions, listing |
 
 The complete bilingual index is [`docs/README.md`](docs/README.md).
 
@@ -142,6 +143,38 @@ pnpm smoke
 `pnpm build` compiles `src/` into the checked-in `lib/types/` output. Source
 changes must include regenerated artifacts, and rendering, questionnaire, or
 tool-card changes require the relevant regression scripts.
+
+## Plugin Ecosystem
+
+Want to build a plugin or extension for dsh-TUI? Join the ecosystem:
+
+- **Plugin development guide**: [`docs/plugins.en.md`](docs/plugins.en.md)
+  (seams, contract, conventions, and verification checklist)
+- **Organization**: [dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem)
+  (home of community plugins and templates)
+- **Template repository**: [plugin-template](https://github.com/dsh-tui-ecosystem/plugin-template)
+  (start from the template and ship a plugin in minutes)
+- **Reference implementation**: `dsh-working-activity` (live working-status
+  line with dual outlets: TUI prompt slot + `activity/status` session events)
+
+The core repository is never migrated; community plugins live in their own
+repos. The organization only curates and endorses — plugin authors keep full
+ownership of their repositories.
+
+## Community
+
+- **Ecosystem organization**: [dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem) —
+  the home of community plugins, templates, and the curated list. Come ship a
+  plugin, pitch an idea, or just hang out 🐋
+- **Chat groups** (Chinese-language): usage questions, plugin ideas, and
+  feature wishes are all welcome.
+
+| WeChat group | QQ group (ID 572549239) |
+| :---: | :---: |
+| <img src="screenshots/wechat-group.jpg" alt="dsh-TUI community WeChat group QR code" width="200"> | <img src="screenshots/qq-group.png" alt="dsh-TUI community QQ group QR code" width="200"> |
+
+> The WeChat QR code expires roughly every 7 days; if it stops working, use
+> the QQ group (572549239) or open an issue to nudge us for a refresh.
 
 ## Permissions and Security Boundary
 
