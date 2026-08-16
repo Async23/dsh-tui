@@ -134,7 +134,7 @@ macOS 自带 Terminal.app 会自行消费 `⌘` 快捷键，请继续使用 `Ctr
 
 | 分组 | 命令 |
 |---|---|
-| 会话 | `/new` 新会话 · `/resume` 切换当前工作区内的会话 · `/rename` 重命名会话 · `/workspace resume|rename|open` 管理工作区 · `/clear` 清屏 · `/compact` 压缩 · `/export` 导出 Markdown · `/trace` 轨迹时间线 |
+| 会话 | `/new` 新会话 · `/resume` 切换当前工作区内的会话 · `/rename` 重命名会话 · `/workspace resume|rename|open` 管理工作区 · `/clear` 清屏 · `/compact` 压缩 · `/export` 导出 Markdown · `/trace` 轨迹场景（亦可 `Ctrl+T`） |
 | 状态 | `/status` 会话信息 · `/cost` token 用量 · `/doctor` 环境自检 · `/config` 配置来源 · `/init` 创建 AGENTS.md |
 | 模型 | `/model` 选择器 · `/thinking` 思考显示 · `/tokens` token 明细 · `/theme` 主题选择器 · `/lang` 中英界面切换 |
 | 账号/策略 | `/provider` 添加模型提供方 · `/login` 凭证状态 · `/logout` 登出说明 · `/permissions` 权限说明 · `/add-dir` 文件策略范围 · `/hooks` · `/mcp` · `/memory` |
@@ -244,8 +244,9 @@ pnpm build
 pnpm smoke
 ```
 
-`pnpm build` 会把 `src/` 编译到已提交的 `lib/types/`。修改源码时必须同步生成产物；
-渲染、问卷和工具卡还需运行对应回归脚本。
+`lib/types/` 是忽略入库的生成目录；`pnpm build` 会从干净输出目录重新编译并运行
+构建门禁。npm Git URL 安装通过 `prepare` 生成同一套运行时。渲染、问卷和工具卡
+改动还需运行对应回归脚本。
 
 ## 插件生态
 

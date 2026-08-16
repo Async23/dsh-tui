@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-harness-tui/dsh-tui",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Claude Code style interactive TUI front door for DeepSeek Harness agents, built on the ported Ink core.",
   "license": "MIT",
   "repository": {
@@ -39,11 +39,10 @@
     },
     "./invariant": {
       "types": "./lib/types/dsh-adapter/invariant.d.ts",
-      "default": "./lib/invariant.js"
+      "default": "./lib/types/dsh-adapter/invariant.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json",
-    "./src/*": "./src/*"
+    "./package.json": "./package.json"
   },
   "files": [
     "bin",
@@ -56,12 +55,17 @@
     "node": "^22.19 || >=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node --import tsx/esm scripts/verify-adapter-boundary.ts && node --import tsx/esm scripts/verify-upstream-contract.ts && node --import tsx/esm scripts/verify-patch-surface.ts",
+    "clean": "node scripts/clean-lib.mjs",
+    "compile": "npm run clean && tsc -p tsconfig.json",
+    "prepare": "npm run compile",
+    "build": "npm run compile && npm run verify:build",
     "tui": "node --import tsx/esm scripts/run.ts",
     "smoke": "node --import tsx/esm scripts/smoke.tsx",
+    "verify:build": "npm run verify:boundary && npm run verify:contract && npm run verify:patch-surface",
     "verify:boundary": "node --import tsx/esm scripts/verify-adapter-boundary.ts",
     "verify:contract": "node --import tsx/esm scripts/verify-upstream-contract.ts",
     "verify:patch-surface": "node --import tsx/esm scripts/verify-patch-surface.ts",
+    "verify:package": "npm pack --dry-run --json --ignore-scripts | node scripts/verify-package.mjs",
     "verify:clipboard-image": "node --import tsx/esm scripts/verify-clipboard-image.ts"
   },
   "peerDependencies": {

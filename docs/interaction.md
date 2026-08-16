@@ -19,7 +19,7 @@
 | `Ctrl+C` | 工作时中断；空闲且有输入时清空；空输入时连续两次退出 |
 | `Ctrl+D` | 空闲时连续两次退出 |
 | `Ctrl+O` | 切换 transcript/verbose 详情，展开思考与完整工具参数/输出 |
-| `Ctrl+T` | 展开或折叠启动时的“已加载上下文”面板 |
+| `Ctrl+T` | 打开轨迹场景（等同 `/trace`）；场景内 `q`/`Esc` 返回对话 |
 | `Ctrl+R` | 打开输入历史搜索；重复按或 `Down` 移到下一项 |
 | `Ctrl+L` | 强制清理并重绘物理终端 |
 | `?` | 输入框为空时打开快捷键和命令帮助 |
@@ -192,7 +192,7 @@ transcript。
 
 | 分组 | 命令 |
 | --- | --- |
-| 会话 | `/new`、`/resume`、`/rename`、`/workspace resume|rename|open`、`/clear`、`/compact`、`/export`、`/btw`、`/trace` |
+| 会话 | `/new`、`/resume`、`/rename`、`/workspace resume|rename|open`、`/clear`、`/compact`、`/export`、`/btw`、`/trace`（轨迹场景，亦可 `Ctrl+T`） |
 | 状态 | `/status`、`/cost`、`/config`、`/doctor`、`/init`、`/agents` |
 | 模型与显示 | `/model`、`/effort`、`/thinking`、`/tokens`、`/activity`、`/preset`、`/theme`、`/lang` |
 | 账号与策略 | `/provider`、`/login`、`/logout`、`/permissions`、`/add-dir`、`/hooks`、`/mcp`、`/memory` |
