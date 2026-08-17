@@ -296,9 +296,11 @@ Want to build a plugin or extension for dsh-TUI? Join the ecosystem:
 - **Reference implementation**: `dsh-working-activity` (live working-status
   line with dual outlets: TUI prompt slot + `activity/status` session events)
 
-The core repository is never migrated; community plugins live in their own
-repos. The organization only curates and endorses — plugin authors keep full
-ownership of their repositories.
+The core repository remains independent; community plugins live in their own
+repos. The organization only maintains the listing and admission rules — it
+does not endorse or warrant the functionality, quality, or safety of community
+plugins. Plugin authors keep full ownership of their repositories and are
+responsible for their maintenance and security.
 
 ## Community
 
