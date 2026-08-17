@@ -62,8 +62,12 @@ function validatePlugin(manifest) {
   if (new Set(ids).size !== ids.length) throw new Error('$.contributes.commands: duplicate command id');
   const refs = [...manifest.requires.capabilities.required, ...manifest.requires.capabilities.optional, ...manifest.subscriptions.map((s) => ({name: s.event, ...s}))];
   for (const ref of refs) {
-    const known = registry.entries.find((entry) => entry.name === ref.name && entry.version === ref.version);
-    if (!known || known.schemaHash !== ref.schemaHash) throw new Error(`unknown contract or schema hash: ${ref.name}@${ref.version}`);
+    const sameName = registry.entries.filter((entry) => entry.name === ref.name);
+    if (sameName.length === 0) throw new Error(`unknown contract: ${ref.name}@${ref.version}`);
+    const known = sameName.find((entry) => entry.version === ref.version);
+    // A known name with an unregistered version is NOT a manifest defect —
+    // negotiation answers it with `unknown` (C-030 trigger (a)).
+    if (known && known.schemaHash !== ref.schemaHash) throw new Error(`schema hash mismatch: ${ref.name}@${ref.version}`);
   }
 }
 
@@ -79,6 +83,13 @@ function negotiate(manifest, host, grants = []) {
   const supported = new Map(host.contracts.map((c) => [`${c.name}@${c.version}`, c]));
   const required = manifest.requires.capabilities.required;
   const optional = manifest.requires.capabilities.optional;
+  // `unknown` outranks every other outcome (C-030 priority): a referenced
+  // version outside the registry cannot be judged — answering rejected here
+  // would pretend we KNOW it is incompatible.
+  const unjudgable = [...required, ...optional].filter((r) =>
+    registry.entries.some((entry) => entry.name === r.name) &&
+    !registry.entries.some((entry) => entry.name === r.name && entry.version === r.version));
+  if (unjudgable.length) return {decision: 'unknown', reasonCode: 'UNKNOWN_CONTRACT', unknownContracts: unjudgable.map((x) => `${x.name}@${x.version}`)};
   const missingRequired = required.filter((r) => {
     const h = supported.get(`${r.name}@${r.version}`);
     return !h || h.schemaHash !== r.schemaHash;
@@ -100,6 +111,23 @@ function negotiate(manifest, host, grants = []) {
 }
 
 verifyRegistry();
+
+// C-040: every contract profile must answer the SPEC-WRITING-RULES §5
+// ten-point capability boundary, not just exist at a pinned hash.
+function verifyContractProfiles() {
+  const REQUIRED_KEYS = ['name', 'version', 'kind', 'caller', 'permissions', 'errors', 'concurrency', 'timeout', 'cleanup', 'privacyClass', 'securityBoundary'];
+  for (const entry of registry.entries) {
+    const profile = load(entry.schema);
+    for (const key of REQUIRED_KEYS) assert.ok(key in profile, `${entry.name}: contract profile missing "${key}" (SPEC-WRITING-RULES §5)`);
+    if (entry.kind === 'capability') {
+      assert.ok('operations' in profile || ('input' in profile && 'output' in profile), `${entry.name}: capability profile missing an input/output surface`);
+    }
+    if (entry.kind === 'event') assert.ok('envelope' in profile, `${entry.name}: event profile missing envelope`);
+    assert.equal(profile.securityBoundary, false, `${entry.name}: trusted-in-process v0.1 must declare securityBoundary:false`);
+  }
+}
+verifyContractProfiles();
+
 const cases = [
   validate('valid plugin', load('conformance/fixtures/valid-plugin.json'), schemas.plugin, validatePlugin),
   validate('invalid service rejected', load('conformance/fixtures/invalid-plugin-unknown-service.json'), schemas.plugin, validatePlugin),
@@ -108,20 +136,43 @@ const cases = [
   validate('invalid privacy rejected', load('conformance/fixtures/invalid-message-privacy.json'), schemas.message),
   validate('valid ledger', load('conformance/fixtures/valid-ledger-record.json'), schemas.ledger),
   validate('valid claim', load('conformance/fixtures/valid-claim.json'), schemas.claim),
-  validate('valid host descriptor', load('registry/host-descriptor.tui.example.json'), schemas.host)
+  validate('valid host descriptor', load('registry/host-descriptor.tui.example.json'), schemas.host),
+  // C-030: an optional reference without a fallback is an invalid manifest.
+  validate('optional without fallback rejected', load('conformance/fixtures/invalid-plugin-optional-no-fallback.json'), schemas.plugin),
+  // C-002: `provides` is rejected outright in v0.1 (services live in RFC 0003).
+  validate('provides rejected', load('conformance/fixtures/invalid-plugin-provides.json'), schemas.plugin, validatePlugin),
+  // C-030: a known name with an unregistered version is a VALID manifest —
+  // the negotiator, not the validator, answers it with `unknown`.
+  validate('unregistered version is a valid manifest', load('conformance/fixtures/unknown-version-plugin.json'), schemas.plugin, validatePlugin)
 ];
-assert.equal(cases[0].pass, true, cases[0].error);
-assert.equal(cases[1].pass, false, 'unknown services must be rejected');
-assert.equal(cases[2].pass, false, 'duplicate command ids must be rejected');
-assert.equal(cases[3].pass, true, cases[3].error);
-assert.equal(cases[4].pass, false, 'unknown privacy classes must be rejected');
-assert.equal(cases[5].pass, true, cases[5].error);
-assert.equal(cases[6].pass, true, cases[6].error);
-assert.equal(cases[7].pass, true, cases[7].error);
+const expectCase = (name, expected) => {
+  const found = cases.find((c) => c.name === name);
+  assert.ok(found, `case not found: ${name}`);
+  assert.equal(found.pass, expected, `${name}: ${found.error ?? `expected pass=${expected}`}`);
+};
+expectCase('valid plugin', true);
+expectCase('invalid service rejected', false);
+expectCase('duplicate command rejected', false);
+expectCase('valid message', true);
+expectCase('invalid privacy rejected', false);
+expectCase('valid ledger', true);
+expectCase('valid claim', true);
+expectCase('valid host descriptor', true);
+expectCase('optional without fallback rejected', false);
+expectCase('provides rejected', false);
+expectCase('unregistered version is a valid manifest', true);
 const compatible = negotiate(load('conformance/fixtures/valid-plugin.json'), load('registry/host-descriptor.tui.example.json'));
 assert.equal(compatible.decision, 'compatible');
 const waiting = negotiate(load('conformance/fixtures/waiting-authorization-plugin.json'), load('registry/host-descriptor.tui.example.json'));
 assert.equal(waiting.decision, 'waiting_authorization');
 const authorized = negotiate(load('conformance/fixtures/waiting-authorization-plugin.json'), load('registry/host-descriptor.tui.example.json'), ['messages.observe.read']);
 assert.equal(authorized.decision, 'compatible');
-console.log(JSON.stringify({suite: 'community-v0.1', cases, negotiation: {compatible, waiting, authorized}}, null, 2));
+// C-030: optional missing + declared fallback → compatible_degraded.
+const degraded = negotiate(load('conformance/fixtures/valid-plugin.json'), load('conformance/fixtures/host-no-observe.example.json'));
+assert.equal(degraded.decision, 'compatible_degraded');
+assert.deepEqual(degraded.missingOptional, ['messages.observe']);
+// C-030: a referenced version outside the registry → unknown (not rejected).
+const unknown = negotiate(load('conformance/fixtures/unknown-version-plugin.json'), load('registry/host-descriptor.tui.example.json'));
+assert.equal(unknown.decision, 'unknown');
+assert.equal(unknown.reasonCode, 'UNKNOWN_CONTRACT');
+console.log(JSON.stringify({suite: 'community-v0.1', cases, negotiation: {compatible, waiting, authorized, degraded, unknown}}, null, 2));

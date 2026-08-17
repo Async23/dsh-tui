@@ -47,7 +47,7 @@ Manifest MUST 符合 `schemas/dsh-plugin.schema.json`，并包含：
 - 相对包根的 `entry`；
 - license 和 source repository。
 
-artifact 若被用于 Verified/Attested claim，MUST 使用 SHA-256 digest，并绑定被验证的发布产物字节范围。digest 不证明发布者身份；签名或 attestation 是独立能力。
+artifact 若被用于任何 conformance claim，MUST 使用 SHA-256 digest，并绑定被验证的发布产物字节范围。digest 不证明发布者身份；签名或 attestation 是独立能力。
 
 ## 3. Host Descriptor
 
@@ -78,12 +78,18 @@ Capability 和 event 名称 MUST 来自 `registry/registry-0.1.json`；权限名
 Decision MUST 是机器可读对象，`decision` 只能为：
 
 - `compatible`：required contracts 和所需授权均满足；
-- `compatible_degraded`：required 满足，optional 缺失，且 manifest 提供 fallback；
+- `compatible_degraded`：required 满足，optional 缺失，且每个缺失的 optional 都声明了 fallback；
 - `waiting_authorization`：contract 可用但当前授权未授予；
 - `rejected`：required contract/schemaHash 不可用，或声明非法；
 - `unknown`：引用的 contract 版本或 registry 版本无法判断。
 
 required 缺失或 schemaHash 不匹配 MUST `rejected`，不得静默降级。optional 缺失只可 `compatible_degraded`，且必须返回缺失项。权限不足优先返回 `waiting_authorization`，不得伪装成 compatible。
+
+**fallback 是 optional 引用的必填字段**：它声明缺失该 capability 时的降级行为。没有 fallback 的 optional 声明是非法声明（`INVALID_MANIFEST`），不进入协商——"可选"必须有书面的降级答案，否则宿主无从判断降级是否安全。
+
+**`unknown` 的触发条件只有两种**：(a) 引用的 contract 名字存在于 registry、但请求的 version 不在 registry 中；(b) registry 本身的版本高于协商器支持的版本，协商结果无从判断。注意区分：引用的 contract **名字**不在 registry 属于非法声明（`INVALID_MANIFEST` → `rejected`），只有 version 层面的无法判断才是 `unknown`。
+
+一个 manifest 同时命中多种情况时，决策优先级为：`unknown` > `rejected` > `waiting_authorization` > `compatible_degraded` > `compatible`——无法判断优先于拒绝，拒绝优先于待授权，不得用较低优先级的结果掩盖较高优先级的问题。
 
 标准错误码至少包括 `REQUIRED_CONTRACT_UNAVAILABLE`、`PERMISSION_NOT_GRANTED`、`UNKNOWN_CONTRACT`、`DUPLICATE_CONTRIBUTION_ID`、`INVALID_MANIFEST`。
 

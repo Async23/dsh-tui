@@ -52,17 +52,19 @@ cleanup 失败 MUST 进入可重试状态并展示残留资源；未完成清理
 
 ### TUI-CLAIM-001 验证声明
 
-任何 TUI claim MUST 绑定 `conformance-claim.schema.json` 所需的 community spec version、Host Descriptor digest、artifact digest、suite version、evidence level、result 和测试时间。不得将 Listed、Verified 或 Reproducible 表述为 Secure、官方认证或无漏洞。
+任何 TUI claim MUST 绑定 `conformance-claim.schema.json` 所需的 community spec version、Host Descriptor digest、artifact digest、suite version、evidence level、result 和测试时间。不得将 Declared、Verified 或 Reproducible 表述为 Secure、官方认证或无漏洞。
 
 ## 2. 分级模型
 
 兼容性、验证和限制是三个独立维度，不是一个互斥枚举：
 
 - `compatibilityDecision`：`compatible` / `compatible_degraded` / `waiting_authorization` / `rejected` / `unknown`；
-- `verificationLevel`：`Listed` / `Parsed` / `Negotiated` / `Tested` / `Observed` / `Attested`；
+- `verificationLevel`：`Declared` / `Parsed` / `Negotiated` / `Tested` / `Observed` / `Attested`（与 `conformance/README.md` 的 evidence ladder 一致，claim 中机器可读）；
 - `restrictions[]`：例如 `headless-only`、`remote-unsupported`、`experimental-contract`。
 
-市场可以为用户显示组合状态，但不得把 `Listed` 自动升级为 `Verified`，也不得把任何等级升级为 `Secure`。
+**"TUI Verified"** 在本文中是市场展示标签，不是独立 evidence level：它表示 `verificationLevel ≥ Tested` 且绑定的 claim 未过期、未撤销。本文 TUI-PKG-001、TUI-OBS-001、TUI-OBS-002 和 §4 中的 "Verified" 均按此定义解读。
+
+市场可以为用户显示组合状态，但不得把 `Declared` 自动升级为 `Verified`，也不得把任何等级升级为 `Secure`。
 
 ## 3. v0.1 Command 和交互边界
 
