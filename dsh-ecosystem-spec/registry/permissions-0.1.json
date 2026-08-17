@@ -1,0 +1,9 @@
+{
+  "registryVersion":"0.1",
+  "permissions":[
+    {"name":"storage.local.read","default":"deny","revocable":true,"scope":"plugin namespace"},
+    {"name":"storage.local.write","default":"deny","revocable":true,"scope":"plugin namespace"},
+    {"name":"commands.invoke","default":"allow","revocable":true,"scope":"declared command id"},
+    {"name":"messages.observe.read","default":"deny","revocable":true,"scope":"message observation scope"}
+  ]
+}

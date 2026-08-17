@@ -1,0 +1,16 @@
+{
+  "specVersion":"community-v0.1",
+  "requirements":[
+    {"id":"C-001","schema":"schemas/dsh-plugin.schema.json","fixtures":["valid-plugin.json","invalid-plugin-unknown-service.json"],"test":"manifest discovery and schema validation","failureDisplay":"INVALID_MANIFEST"},
+    {"id":"C-002","schema":"schemas/dsh-plugin.schema.json","fixtures":["invalid-plugin-unknown-service.json"],"test":"requires.services rejected","failureDisplay":"INVALID_MANIFEST"},
+    {"id":"C-010","schema":"schemas/host-descriptor.schema.json","fixtures":["registry/host-descriptor.tui.example.json"],"test":"Host Descriptor validation","failureDisplay":"UNKNOWN_HOST_DESCRIPTOR"},
+    {"id":"C-020","schema":"registry/registry-0.1.json","fixtures":[],"test":"registry contract hash verification","failureDisplay":"UNKNOWN_CONTRACT"},
+    {"id":"C-030","schema":null,"fixtures":["valid-plugin.json"],"test":"negotiation decision matrix","failureDisplay":"machine-readable decision and reasonCode"},
+    {"id":"C-040","schema":"registry/contracts/storage.local-0.1.json","fixtures":[],"test":"contract profile completeness","failureDisplay":"CONTRACT_INVALID"},
+    {"id":"C-041","schema":"registry/contracts/commands-0.1.json","fixtures":[],"test":"duplicate contribution rejection","failureDisplay":"DUPLICATE_CONTRIBUTION_ID"},
+    {"id":"C-042","schema":"schemas/messages-observe-envelope.schema.json","fixtures":["valid-message.json","invalid-message-privacy.json"],"test":"event envelope and privacy enum validation","failureDisplay":"INVALID_EVENT_ENVELOPE"},
+    {"id":"C-050","schema":null,"fixtures":[],"test":"lifecycle transition model","failureDisplay":"LIFECYCLE_VIOLATION"},
+    {"id":"C-060","schema":"schemas/effect-ledger-record.schema.json","fixtures":["valid-ledger-record.json"],"test":"ledger record validation","failureDisplay":"LEDGER_RECORD_INVALID"},
+    {"id":"C-070","schema":null,"fixtures":[],"test":"required trust disclosure review","failureDisplay":"TRUST_DISCLOSURE_REQUIRED"}
+  ]
+}
