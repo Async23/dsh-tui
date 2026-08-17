@@ -21,8 +21,10 @@
 
 - `spec/community-consensus-v0.1.md`：Community v0.1 core contract；只以本文及其 normative assets 为准。
 - `spec/tui-admission-v0.1.md`：TUI 市场准入 policy；只约束 TUI 生态，不倒灌 Community contract。
-- `rfc/0002-0004`：延期或实验 RFC；不是 Community v0.1 core。
+- `rfc/0002-0005`：延期或实验 RFC；不是 Community v0.1 core。
 - `schemas/`、`registry/`、`conformance/fixtures/`、`conformance/tests/`：机器可执行资产，与规范文本共同定义可验证行为。
+- schema `$id` / `$schema` 中的 `https://dsh.community/` 是**不可解析的占位命名空间**，仅作标识符使用，不要求 HTTP 可获取。
+- `registry/host-descriptor.tui.example.json` 是协商测试用的示例（`hostVersion` 为示意值），不构成 dsh-TUI 任一真实发布版本的 Host Descriptor 声明。
 
 参考实现、TUI 本身或任何单一宿主只能提供 evidence，不能因为实现存在就成为标准或自我认证。
 

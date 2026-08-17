@@ -86,6 +86,21 @@
 **Exit criteria:** 每一档都有机器可读证据、失败原因、市场展示和迁移测试，人工判断不能替代证据。  
 **Rollback plan:** 降低市场展示等级并撤销无证据 claim，不删除插件 artifact 或历史证据。
 
+## TUI-PROP-009 Lightweight UI Contributions（Host-Rendered + Scene Components）
+
+**Status:** Experimental
+**Reason for TUI-specific scope:** TUI-PROP-006 的跨端 vnode 路线是重量级契约；实践中已验证存在两档更轻、且足以覆盖绝大多数插件 UI 需求的方式。本提案把两档都定义为契约，按插件与宿主渲染管线的耦合度排列：
+
+- **Track A — host-rendered contributions**：宿主拥有布局**和**渲染，插件只提供消毒后的数据（托管对话框的标题/选项、键控状态行文本、纯文本条目渲染）。互操作关键不是组件模型，而是**消毒契约**。
+- **Track B — scene components（in-process）**：宿主只拥有外框（全屏场景的进入/退出/生命周期），插件提供**组件**在宿主渲染器内自行渲染（TUI 的全屏场景接缝即此档）。互操作关键是**运行时注入契约**：组件必须使用宿主注入的 React 与 UI kit——插件自带第二份 React 时 hooks 必死（invalid-hook-call），且跨 React 大版本编译的元素 symbol 不被宿主 reconciler 接受；宿主注入的 props（React、ui kit、会话 channel、close）即组件的全部合法依赖。
+
+Track B 仍假设插件与宿主同进程同渲染器（trusted-in-process 的直接推论），不解决跨端问题——跨端声明式 UI 仍是 PROP-006 的领地。三档耦合度递增：数据（A）< 进程内组件（B）< 跨端 vnode（PROP-006）。
+**Community dependency:** v0.1 static contribution 和 effect ownership；与 PROP-006 互补（轻量两档先落地，vnode 档服务跨端场景）。
+**Experimental capability name:** `x-ccch1mneyyy.tui.host-rendered-ui`（Track A）、`x-ccch1mneyyy.tui.scene-components`（Track B）
+**Entry criteria:** Track A——消毒契约写成规范性文本：C0/C1 控制字符剥离、按终端 cell（而非字符数）限宽并带省略号、每类贡献的条目数/行数上限、非标量字段的丢弃或强转规则、非法输入警告拒绝而非抛异常；每类贡献（dialog/status/entry renderer）定义数据 schema 与宿主渲染所有权声明。Track B——注入 props 的稳定 contract（React/ui kit/channel/close）、场景注册-打开-关闭-释放生命周期、宿主 React 版本兼容规则（同大版本要求、hooks 与元素必须来自宿主 React）。
+**Exit criteria:** Track A——同一贡献数据在两个 presentation adapter 上渲染结果一致且不破坏布局；消毒规则有共享 fixture（含敌意输入：控制字符、全宽字符、超长文本、非字符串字段）。Track B——同一插件场景在两个宿主 React 小版本间行为一致；违反注入契约（插件自带 React）有确定性报错而非渲染时崩溃。
+**Rollback plan:** 停止加载对应 track 的 contributions，释放其 ledger 资源；flat commands 不受影响。
+
 ## 边界
 
 上述提案不能把 `provides`、command tree、cross-platform UI、sandbox 或远程 Presentation 快照变成 Community v0.1 的隐式依赖。

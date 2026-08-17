@@ -59,6 +59,8 @@ artifact 若被用于任何 conformance claim，MUST 使用 SHA-256 digest，并
 
 `runtimeGenerationId` 是 v0.1 的基础 scope 标识：宿主创建新的独立插件运行环境时生成新的 ID；同一 generation 内的 activation instance 不得因 Presentation attach/detach 自动改变。Runtime/Presentation 的完整分层仍归 RFC 0002。
 
+对 trusted-in-process 宿主，粒度定义如下：一个 runtime generation 对应**一次完整的插件运行时生命周期**——宿主进程启动、或全体插件的整体重载，生成新 ID；单个插件的 activate/deactivate 不产生新 generation。
+
 ## 4. Registry
 
 ### C-020 权威注册表
@@ -145,6 +147,8 @@ TUI 和其他宿主 MUST 在安装、授权和市场展示中明确该事实。�
 ## 10. 明确延期
 
 以下内容不属于 Community v0.1 core：`before-*` 修改/取消事件、完整 Runtime/Presentation/Invocation/Transport/Control 分层、command tree、plugin-to-plugin service、完整 provenance、按需激活、sandbox、跨端声明式 UI、`net.*`/`fs.*`/session write、market certification、lockfile/modpack。
+
+其中 `before-*` 修改/取消事件由 RFC 0005（Decision Events）认领。即使实现走在标准前面，也必须先遵守其方向性约束：**拦截类事件的订阅必须显式授权、默认拒绝**——否则权限模型落地时，已成事实的插件会全部卡在授权上。
 
 ## 11. Candidate 验收
 

@@ -40,6 +40,10 @@ Community Consensus 与 TUI Admission 使用以下术语：
 
 只放机器可读 contract 的注册与生命周期规则。
 
+### `adapters/`
+
+只放 Adapter Note：某一宿主/运行时版本（如 dsh/Cordis 的具体版本）与公共 contract 的适配细节。Adapter Note 不改变标准语义，不被其他宿主要求遵守。
+
 ## 3. 禁止越权写法
 
 任何文档不得使用以下含义不清的句子：
