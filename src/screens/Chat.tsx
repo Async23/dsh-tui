@@ -1894,6 +1894,16 @@ export function Chat({
     } else if (isMod(key) && input === 'o') {
       // Leaving transcript mode (Ctrl+O) — search was already handled above.
       setExpanded(previous => !previous)
+      // The toggle rewrites every thinking row's layout at once. The
+      // ordinary scroll-based diff pushes rows into terminal scrollback on
+      // each expand and nothing removes them on collapse — rapid toggling
+      // drifts the virtual↔scrollback mapping until writes misland
+      // (garbled transcript, duplicated rows). Re-anchor the next frame:
+      // in-place viewport repaint, nothing added to scrollback. Lookup
+      // falls back to the only live instance for embedders whose stdout
+      // isn't process.stdout (test harnesses).
+      const ink = instances.get(process.stdout) ?? instances.values().next().value
+      ink?.reanchorViewport()
     } else if (input === '/' && !key.ctrl && !key.meta && !key.super) {
       // `/` in transcript mode (Ctrl+O expanded, CC's REPL semantics:
       // search is active on the transcript screen where `/` isn't a command).
