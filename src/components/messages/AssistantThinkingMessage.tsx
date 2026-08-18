@@ -4,16 +4,23 @@ import { t } from '../../i18n.js'
 import { StreamingMarkdown } from '../StreamingMarkdown.js'
 import { formatDuration } from '../../cc/format.js'
 
+/** Preview body rows — a FIXED row count (kimicode-style constant-height
+ *  ticker). Ink's truncate slices the whole string across newlines as one
+ *  logical line, so a single joined Text collapses to 1-2 rows whenever
+ *  the combined width passes the terminal width, then bounces back as
+ *  lines shift. One Text per row, each truncated to the width and padded
+ *  to exactly this many rows, keeps the block height stream-independent. */
+const PREVIEW_ROWS = 3
+
 type Props = {
   thinking: string
   /** Adds the top margin between messages (CC: addMargin). */
   addMargin: boolean
   /** True when Ctrl+O transcript/verbose mode is on — show the full text. */
   verbose: boolean
-  /** Streaming compact mode (thinkingFold=preview): a 2-3 line live ticker
-   *  of the model's latest reasoning lines instead of the full block —
-   *  kimicode-style. Each source line truncates to the width so the block
-   *  is at most 3 screen rows tall. */
+  /** Streaming compact mode (thinkingFold=preview): a 3-row live ticker of
+   *  the model's latest reasoning lines instead of the full block —
+   *  kimicode-style constant height; the block never resizes mid-stream. */
   preview?: boolean
   /** Thinking wall-clock duration once the reasoning block settled (ms). */
   durationMs?: number
@@ -46,12 +53,22 @@ export function AssistantThinkingMessage({
       : ''
 
   if (preview) {
-    // Live ticker: the model's last few reasoning lines, dimmed, each
-    // truncated to the width — a bounded 2-3 row block that follows the
-    // stream. The folded summary takes over when the step settles.
+    // Live ticker: the model's last few reasoning lines, dimmed, one Text
+    // per row so each truncates to the width independently, padded to a
+    // constant PREVIEW_ROWS-tall block that follows the stream. The folded
+    // summary takes over when the step settles. The LAST row truncates
+    // from the start (leading ellipsis) so the newest tokens — which grow
+    // at the line's end — stay visible while the line is longer than the
+    // width.
     const lines = thinking.split('\n')
-    const visible = lines.slice(-3)
+    const visible = lines.slice(-PREVIEW_ROWS)
     const clipped = lines.length > visible.length
+    // Pad with single spaces — an empty-string Text renders with zero
+    // height in ink, so '' padding would not hold the row open.
+    const rows = Array.from(
+      { length: PREVIEW_ROWS },
+      (_, i) => visible[i] ?? ' ',
+    )
     return (
       <Box
         flexDirection="column"
@@ -62,10 +79,17 @@ export function AssistantThinkingMessage({
         <Text dimColor italic>
           ∴ {t('thinking-label')}{duration}…
         </Text>
-        <Box paddingLeft={2}>
-          <Text dimColor italic wrap="truncate">
-            {clipped ? `…${visible.join('\n')}` : visible.join('\n')}
-          </Text>
+        <Box flexDirection="column" paddingLeft={2}>
+          {rows.map((line, i) => (
+            <Text
+              key={i}
+              dimColor
+              italic
+              wrap={i === rows.length - 1 ? 'truncate-start' : 'truncate'}
+            >
+              {i === 0 && clipped ? `…${line}` : line}
+            </Text>
+          ))}
         </Box>
       </Box>
     )
