@@ -423,16 +423,23 @@ export class LogUpdate {
     // an additional row out of view at the end of the previous frame. Without
     // this, the diff loop treats that row as reachable — but the cursor clamps
     // at viewport top, causing writes to land 1 row off and garbling the output.
+    // Unreachable frame rows = terminal scrollback. Two contributors, take
+    // the MAX, never the sum: after an anchored shrink repaint the pad rows
+    // ARE the scrollback (heights undercount while H < V); once growth
+    // scrolls the blank band away, the heights formula takes over (summing
+    // would overcount and skip REACHABLE viewport rows — changes inside
+    // the viewport would never paint, scrambling the layout on mid-frame
+    // edits like Ctrl+O expansion).
     const viewportY = Math.max(
-      0,
-      (growing
+      this.state.anchoredPad,
+      growing
         ? Math.max(
             0,
             prev.screen.height - prev.viewport.height + cursorRestoreScroll,
           )
         : Math.max(prev.screen.height, next.screen.height) -
           next.viewport.height +
-          cursorRestoreScroll) + this.state.anchoredPad,
+          cursorRestoreScroll,
     )
 
     // Rows above viewportY live in terminal scrollback and are skipped by the
