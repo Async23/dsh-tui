@@ -51,12 +51,13 @@ import { modeDisplayName, resolveSessionModes, type SessionModeSpec } from '../s
 import type { SpinnerMode } from '../components/Spinner/spinnerMode.js'
 import { ActivityTracker, type ActivityState } from 'dsh-working-activity/status'
 import { attachSessionToWorkspace } from './workspace.js'
-import { createLocalWorkspaceRuntime, type TuiWorkspaceCommand, type TuiWorkspaceCommandResult, type TuiWorkspaceTarget } from './workspaces.js'
-import type { TuiCommandTreeRuntime } from './command-trees.js'
-import type { TuiSettingsSection, TuiSettingsSectionsRuntime } from './settings-sections.js'
+import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime, type TuiWorkspaceCommand, type TuiWorkspaceCommandResult, type TuiWorkspaceTarget } from './workspaces.js'
+import { getHostCommandTrees } from './command-trees.js'
+import { getHostSettingsSections, type TuiSettingsSection, type TuiSettingsSectionsRuntime } from './settings-sections.js'
 import type { SettingsHost } from './settingsEditor.js'
-import type { TuiSceneDescriptor, TuiSceneRuntime } from './scenes.js'
-import type { TuiRendererRuntime } from './renderers.js'
+import { getHostSceneRuntime, type TuiSceneDescriptor, type TuiSceneRuntime } from './scenes.js'
+import { getHostRenderers, type TuiRendererRuntime } from './renderers.js'
+import { getHostMessageObserver, type TuiMessageObserverRuntime } from './message-observer.js'
 import { dispatchTuiDecision, dispatchTuiNotification, normalizeCancelDecision } from './extension-events.js'
 import { installDecisionGuard } from './decision-guard.js'
 import { commandOwner } from './command-attribution.js'
@@ -1265,13 +1266,15 @@ export function createChannel(
   // messages.observe broker (optional service, C-042): mounted by the
   // dsh-tui-plugin-host row; absent the row, publish is a no-op and nothing
   // else changes (soft degradation, #183).
-  const messageObserver = ctx.get('tuiMessageObserver')
+  const messageObserver = getHostMessageObserver(
+    ctx.get('tuiMessageObserver') as TuiMessageObserverRuntime | undefined,
+  )
   // Workspace registry runtime (optional service, issue #183): mounted by
   // the bundle patch's dsh-tui-workspaces row; absent the row (stale patch
   // or a bare embedder), degrade to the local-only runtime. plugin.ts owns
   // the degraded-boot warning for profile launches.
-  const workspaceService = ctx.get('tuiWorkspaces') ?? createLocalWorkspaceRuntime()
-  const commandTrees = ctx.get('tuiCommandTrees') as TuiCommandTreeRuntime | undefined
+  const workspaceService = getHostWorkspaceRuntime(ctx.get('tuiWorkspaces')) ?? createLocalWorkspaceRuntime()
+  const commandTrees = getHostCommandTrees(ctx.get('tuiCommandTrees'))
   // The `/settings` screen reads its host on EVERY render, so the host must
   // be a stable object: a fresh literal per call would re-fire the screen's
   // host-keyed effects endlessly (render → new host → effect → state →
@@ -1282,11 +1285,14 @@ export function createChannel(
   // Plugin scene runtime (optional service, same degradation rule as
   // tuiWorkspaces/tuiCommandTrees): mounted by the bundle patch's
   // dsh-tui-scenes row; absent the row, `pluginScene` simply stays undefined.
-  const sceneRuntime = ctx.get('tuiScenes') as TuiSceneRuntime | undefined
+  const sceneRuntime = getHostSceneRuntime(ctx.get('tuiScenes') as TuiSceneRuntime | undefined)
+  const settingsSectionsRuntime = getHostSettingsSections(
+    ctx.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined,
+  )
   // Custom-entry text renderers (optional service, dsh-tui-extensions row):
   // absent the row, unknown plugin event types stay invisible in the
   // transcript, exactly as before the seam existed.
-  const rendererRuntime = ctx.get('tuiRenderers') as TuiRendererRuntime | undefined
+  const rendererRuntime = getHostRenderers(ctx.get('tuiRenderers') as TuiRendererRuntime | undefined)
   // Shift+Tab session-mode cycle: cordis.yml `modes` wins; absent/empty/
   // atom-less → the built-in default/plan/full cycle (sessionModes.ts).
   const { modes: sessionModes, dropped: droppedModeIds } = resolveSessionModes(options.modes)
@@ -3001,12 +3007,10 @@ export function createChannel(
       return settingsHostCache
     },
     settingsSections(): readonly TuiSettingsSection[] {
-      const sections = ctx.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined
-      return sections?.list() ?? []
+      return settingsSectionsRuntime?.list() ?? []
     },
     subscribeSettingsSections(listener: () => void): () => void {
-      const sections = ctx.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined
-      return sections?.subscribe(listener) ?? (() => {})
+      return settingsSectionsRuntime?.subscribe(listener) ?? (() => {})
     },
     providerSetup(): ProviderSetupHost | undefined {
       // The `/provider` wizard's runtime surface, over the dsh-base seams:
