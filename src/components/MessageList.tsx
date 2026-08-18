@@ -125,7 +125,7 @@ export function MessageList({
   }
 
   // --- layout virtualization ---------------------------------------------
-  const { columns } = useTerminalSize()
+  const { columns, rows: termRows } = useTerminalSize()
   // Measured row heights, remembered after a row unmounts so virtualization
   // can compute total content height. Bounded: row ids grow monotonically
   // and rows are never removed from the transcript (foldRows keeps the
@@ -190,6 +190,15 @@ export function MessageList({
   // back to the real bottom: a self-sustaining ping-pong that blanks the
   // transcript mid-stream.
   if (sticky && visibleRows.length > 0) {
+    // Sticky (follow-bottom): the viewport shows the TAIL of the content —
+    // mount exactly the tail window the floor walk covers, not everything
+    // from the scrollTop scan. Main-screen ScrollBox reports its viewport
+    // as the CONTENT height (the terminal itself is the scroller), so both
+    // the scan and an unclamped floor walk mount EVERY row in long
+    // sessions — and React's commit traverses every fiber of every mounted
+    // row per frame (measured as the dominant long-session stall). The
+    // user only ever sees terminal rows: clamp the walk-back coverage to
+    // the TERMINAL viewport plus overscan.
     start = Math.min(start, visibleRows.length - 1)
     // Blank-band guard: sticky scrollTop tracks the renderer's FRESH Yoga
     // scrollHeight, while these offsets use per-row heights measured one to
@@ -197,15 +206,15 @@ export function MessageList({
     // deeper through the underestimated offsets than the real viewport does,
     // unmounting rows that are still on screen (visible spacer band). Walk
     // backwards from the tail with the known heights and mount at least one
-    // viewport plus overscan of content above it, so the window can never
-    // open a gap inside what the user is looking at.
-    let covered = viewport + OVERSCAN_LINES
+    // terminal viewport plus overscan of content above it, so the window
+    // can never open a gap inside what the user is looking at.
+    let covered = Math.min(viewport, termRows) + OVERSCAN_LINES
     let floor = visibleRows.length - 1
     while (floor > 0 && covered > 0) {
       covered -= heightOf(visibleRows[floor])
       floor--
     }
-    start = Math.min(start, floor + 1)
+    start = floor + 1
   }
   if (forceMountRowId !== undefined && forceMountRowId !== null) {
     const idx = visibleRows.findIndex(row => row.id === forceMountRowId)
