@@ -4078,6 +4078,26 @@ ${output}
     return reasoning
   }
 
+  /** Fold the live reasoning preview the moment the model moves PAST
+   *  thinking — the answer's first text token or a tool call — not at
+   *  `assistant/message` (end of step). A long reply pushes the thinking
+   *  block into terminal scrollback long before the message seals, and
+   *  scrollback rows cannot be repainted (the cursor cannot reach them),
+   *  so a late fold leaves a stale unfolded preview frozen above the
+   *  window — the user scrolls up and the thinking looks "not folded".
+   *  Folding while the block still sits in the live window keeps the
+   *  shrink inside the diff engine's reachable region. Preview mode only
+   *  (`full` holds every block open until turn settle by design). */
+  const foldLiveReasoning = (where: string): void => {
+    if (reasoning === undefined || state.thinkingFold !== 'preview') return
+    const duration = Math.max(0, Date.now() - reasoningStart)
+    reasoning.durationMs = duration
+    reasoning.streaming = false
+    sealedReasoning.push(reasoning)
+    reasoning = undefined
+    logForDebugging(`thinking: folded at ${where} (${duration}ms)`)
+  }
+
   const settleStreaming = (): void => {
     if (streaming !== undefined) streaming.streaming = false
     streaming = undefined
@@ -4237,6 +4257,10 @@ ${output}
         const chunk = event.data.chunk
         if (chunk.type === 'text-delta') {
           if (chunk.text) {
+            // Fold the thinking preview while it is still in the live
+            // window (see foldLiveReasoning) — before this text grows the
+            // transcript and pushes the block into scrollback.
+            foldLiveReasoning('first text token')
             ensureStreaming(event.seq).text += chunk.text
             state.responseChars += chunk.text.length
           }
@@ -4276,12 +4300,13 @@ ${output}
         }
         streaming = undefined
         if (reasoning !== undefined) {
-          // Seal here; fold NOW in preview mode (the default: holding
-          // every finished step's reasoning expanded until turn/end meant a
-          // 35-step turn laid out 34 full thinking blocks live — the
-          // dominant cost of long multi-step turns; CC folds per step too).
-          // `full` mode (/settings opt-in) keeps the block expanded until
-          // turn settle — settleStreaming folds the sealed rows then.
+          // Backstop fold: reasoning whose step ended with no text token
+          // and no tool call (foldLiveReasoning handles those earlier —
+          // while the block is still in the repaintable live window;
+          // here a long reply may already have pushed it into scrollback,
+          // where the shrink cannot be repainted). `full` mode
+          // (/settings opt-in) keeps the block expanded until turn settle
+          // — settleStreaming folds the sealed rows then.
           reasoning.durationMs = Math.max(0, Date.now() - reasoningStart)
           if (state.thinkingFold === 'preview') reasoning.streaming = false
           sealedReasoning.push(reasoning)
@@ -4354,6 +4379,10 @@ ${output}
         // by the TUI once the batch is answered; tool/result for a call with
         // no card is a no-op below.
         if (event.data.name === 'ask_user_question') break
+        // Reasoning that led to a tool call is done thinking — fold the
+        // preview now, before the tool card grows the transcript past it
+        // (see foldLiveReasoning).
+        foldLiveReasoning('tool call')
         const card: ChatRow = {
           id: nextRowId,
           kind: 'tool',
