@@ -1,7 +1,7 @@
 import React from 'react'
 import { Box, Text } from '../../ui.js'
 import { t } from '../../i18n.js'
-import { Markdown } from '../Markdown.js'
+import { StreamingMarkdown } from '../StreamingMarkdown.js'
 import { formatDuration } from '../../cc/format.js'
 
 type Props = {
@@ -66,7 +66,10 @@ export function AssistantThinkingMessage({
         ∴ {t('thinking-label')}{duration}…
       </Text>
       <Box paddingLeft={2}>
-        <Markdown dimColor>{thinking}</Markdown>
+        {/* StreamingMarkdown: the live thinking text grows per token — the
+          incremental stable-prefix + tail budget keeps the per-frame layout
+          cost at O(new content) instead of re-laying out the whole block. */}
+        <StreamingMarkdown dimColor>{thinking}</StreamingMarkdown>
       </Box>
     </Box>
   )

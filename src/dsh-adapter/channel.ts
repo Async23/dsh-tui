@@ -4260,10 +4260,14 @@ ${output}
         }
         streaming = undefined
         if (reasoning !== undefined) {
-          // Seal, don't fold: the per-step duration settles here, but the
-          // row keeps streaming=true (expanded) until turn/end — WebUI
-          // keepOpen parity. The next step's reasoning opens a fresh row.
+          // Seal AND fold: the per-step duration settles here and the row
+          // folds to its `∴ Thinking · 12s` summary immediately — holding
+          // every finished step's reasoning expanded until turn/end meant a
+          // 35-step turn laid out 34 full thinking blocks live (the
+          // dominant cost of long multi-step turns; CC folds per step too).
+          // The next step's reasoning opens a fresh, expanded row.
           reasoning.durationMs = Math.max(0, Date.now() - reasoningStart)
+          reasoning.streaming = false
           sealedReasoning.push(reasoning)
           logForDebugging(`thinking: step sealed (${reasoning.durationMs}ms), expanded until turn/end`)
         }
