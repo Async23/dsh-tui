@@ -1126,48 +1126,44 @@ function restoreToolResult(row: ChatRow, event: SessionEvent<'tool/result'>): vo
 
 
 /**
- * Coalesce runs of same-type assistant/chunk deltas into single synthetic
- * events for REPLAY only. A streamed turn logs one event per token (~100k
- * events in long sessions); replaying them one at a time costs per-chunk
- * string growth on every row (quadratic in the turn's length). Merging is
- * outcome-identical: ensureStreaming/ensureReasoning only read chunk.type
- * and the concatenated text, and the row's seq comes from the run's FIRST
- * chunk (the fork boundary rewindTo derives from it). Parts join once —
- * no quadratic concat. Live events never go through this.
+ * Prepare durable events for REPLAY (resume / rewind / model-switch fork):
+ * drop settled `assistant/chunk` stream deltas — the sealed
+ * `assistant/message` events carry the full text and reasoning blocks, so
+ * per-token chunks add nothing to the replayed transcript while costing a
+ * per-chunk renderEvent pass (a real 4.5MB session logs ~19k chunks against
+ * ~30 messages). The trailing chunk run AFTER the last message belongs to an
+ * unfinished step (crash-orphaned turn) and is kept, so a resumed session
+ * still shows its partial content. Storage-level packed rows
+ * (`text-chunks`/`reasoning-chunks`/`tool-call-chunks`) are dropped the
+ * same way — defensive: the jsonl reader expands them, but a future
+ * direct-pass path must not resurrect them. Replay-side tps sampling is
+ * lost with the chunks (a live metric; lastUsage comes from the message's
+ * own usage). Live events never go through this.
  */
-function coalesceReplayEvents(events: readonly SessionEvent[]): SessionEvent[] {
-  type ChunkEvent = Extract<SessionEvent, { type: 'assistant/chunk' }>
-  const out: SessionEvent[] = []
-  let run: { event: ChunkEvent; type: string; parts: string[] } | null = null
-  const flush = (): void => {
-    if (run === null) return
-    const chunk = run.event.data.chunk
-    out.push({
-      ...run.event,
-      data: { ...run.event.data, chunk: { ...chunk, text: run.parts.join('') } },
-    } as ChunkEvent)
-    run = null
-  }
+function prepareReplayEvents(events: readonly SessionEvent[]): SessionEvent[] {
+  let lastMessageSeq = -1
   for (const event of events) {
-    if (
-      event.type === 'assistant/chunk' &&
-      (event.data.chunk.type === 'text-delta' || event.data.chunk.type === 'reasoning-delta')
-    ) {
-      if (run !== null && run.type === event.data.chunk.type) {
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- durable replay data may lack text
-        run.parts.push(event.data.chunk.text ?? '')
-        continue
-      }
-      flush()
-      // oxlint-disable-next-line typescript/no-unnecessary-condition -- durable replay data may lack text
-      run = { event, type: event.data.chunk.type, parts: [event.data.chunk.text ?? ''] }
-      continue
-    }
-    flush()
-    out.push(event)
+    if (event.type === 'assistant/message') lastMessageSeq = event.seq
   }
-  flush()
-  return out
+  return events.filter(event => {
+    if (event.type === 'assistant/message') return true
+    if (event.type === 'assistant/chunk') {
+      // Keep only the in-flight tail (no message sealed after it).
+      return lastMessageSeq < 0 || event.seq > lastMessageSeq
+    }
+    // Storage-level packed rows: not in the SessionEvent union (they exist
+    // only in the durable JSON), so compare through a widened view — the
+    // defensive drop is exactly for data the static type doesn't know.
+    const packedType = (event as { type: string }).type
+    if (
+      packedType === 'text-chunks' ||
+      packedType === 'reasoning-chunks' ||
+      packedType === 'tool-call-chunks'
+    ) {
+      return false
+    }
+    return true
+  })
 }
 
 /** Buffer below the context window at which CC warns (autoCompact.ts). */
@@ -2241,7 +2237,7 @@ export function createChannel(
         thinking: 0,
         tools: 0,
       }
-      for (const event of coalesceReplayEvents(seed)) renderEvent(event)
+      for (const event of prepareReplayEvents(seed)) renderEvent(event)
       // Rebind subscriptions to the new agent, then free the old one.
       const oldHandle = currentHandle
       const sourceSessionId = String(agent.session.id)
@@ -2418,7 +2414,7 @@ export function createChannel(
         thinking: 0,
         tools: 0,
       }
-      for (const event of coalesceReplayEvents(handle.agent.session.events)) renderEvent(event)
+      for (const event of prepareReplayEvents(handle.agent.session.events)) renderEvent(event)
       settleStreaming()
       // Rebind subscriptions to the resumed agent, then free the old one.
       const oldHandle = currentHandle
@@ -2738,7 +2734,7 @@ export function createChannel(
         thinking: 0,
         tools: 0,
       }
-      for (const event of coalesceReplayEvents(seed)) renderEvent(event)
+      for (const event of prepareReplayEvents(seed)) renderEvent(event)
       settleStreaming()
       const oldHandle = currentHandle
       agent = handle.agent
@@ -4288,6 +4284,26 @@ ${output}
       }
       case 'assistant/message': {
         const text = textOf(event.data.message.content)
+        // Replay without chunk deltas (prepareReplayEvents drops settled
+        // ones): rebuild the reasoning row from the sealed message's
+        // reasoning blocks. Live streaming never reaches this — chunks
+        // created and hold the live row. Pushed BEFORE the assistant row
+        // so the transcript order matches the live stream; settled
+        // (folded) immediately, durationMs unknown without a live clock.
+        if (reasoning === undefined) {
+          const reasoningText = event.data.message.content
+            .map(block => (block.type === 'reasoning' ? block.text : ''))
+            .join('')
+          if (reasoningText !== '') {
+            state.rows.push({
+              id: nextRowId,
+              kind: 'reasoning',
+              text: reasoningText,
+              seq: event.seq,
+            })
+            nextRowId += 1
+          }
+        }
         // Reasoning/tool-only steps emit no text: creating an assistant row
         // anyway leaves an empty `●` bullet in the transcript. A pre-existing
         // streaming row always has text (ensureStreaming is only reached on
@@ -4587,7 +4603,7 @@ ${output}
   }
 
   // Replay the durable transcript first, then follow live events.
-  for (const event of coalesceReplayEvents(agent.session.events)) renderEvent(event)
+  for (const event of prepareReplayEvents(agent.session.events)) renderEvent(event)
   settleStreaming()
   // Attached to an idle agent: any replayed turn/start belongs to a previous
   // session run, so the spinner must not come up on boot.
