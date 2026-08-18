@@ -2061,6 +2061,7 @@ export function Chat({
           onToggleRow={toggleRowExpanded}
           model={channel.model}
           diffLayout={channel.diffLayout}
+          thinkingFold={channel.thinkingFold}
           showAll={showAllMessages}
           thinkingVisible={thinkingVisible}
           onToggleAll={() =>{  setShowAllMessages(previous => !previous) }}

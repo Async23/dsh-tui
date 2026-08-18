@@ -10,6 +10,11 @@ type Props = {
   addMargin: boolean
   /** True when Ctrl+O transcript/verbose mode is on — show the full text. */
   verbose: boolean
+  /** Streaming compact mode (thinkingFold=preview): a 2-3 line live ticker
+   *  of the model's latest reasoning lines instead of the full block —
+   *  kimicode-style. Each source line truncates to the width so the block
+   *  is at most 3 screen rows tall. */
+  preview?: boolean
   /** Thinking wall-clock duration once the reasoning block settled (ms). */
   durationMs?: number
   /** Message-selection mode highlight. */
@@ -28,6 +33,7 @@ export function AssistantThinkingMessage({
   thinking,
   addMargin,
   verbose,
+  preview = false,
   durationMs,
   isSelected = false,
   onClick,
@@ -38,6 +44,32 @@ export function AssistantThinkingMessage({
     durationMs !== undefined && durationMs >= 1000
       ? ` · ${formatDuration(durationMs)}`
       : ''
+
+  if (preview) {
+    // Live ticker: the model's last few reasoning lines, dimmed, each
+    // truncated to the width — a bounded 2-3 row block that follows the
+    // stream. The folded summary takes over when the step settles.
+    const lines = thinking.split('\n')
+    const visible = lines.slice(-3)
+    const clipped = lines.length > visible.length
+    return (
+      <Box
+        flexDirection="column"
+        marginTop={addMargin ? 1 : 0}
+        backgroundColor={isSelected ? 'messageActionsBackground' : undefined}
+        onClick={onClick}
+      >
+        <Text dimColor italic>
+          ∴ {t('thinking-label')}{duration}…
+        </Text>
+        <Box paddingLeft={2}>
+          <Text dimColor italic wrap="truncate">
+            {clipped ? `…${visible.join('\n')}` : visible.join('\n')}
+          </Text>
+        </Box>
+      </Box>
+    )
+  }
 
   if (!verbose) {
     return (

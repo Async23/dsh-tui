@@ -343,6 +343,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     // Edit/Write diff presentation (schema default 'auto'); the /settings
     // screen edits this key live through the dsh-tui namespace.
     diffLayout: config.diffLayout,
+    thinkingFold: config.thinkingFold,
     handle,
   })
   // Register the dsh-tui settings namespace so the /settings screen can
@@ -354,6 +355,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       settingsNamespace('dsh-tui'),
       Schema.object({
         diffLayout: Schema.union(['auto', 'split', 'unified']).default('auto'),
+        thinkingFold: Schema.union(['preview', 'full']).default('preview'),
         // No default on purpose: an unset `lang` keeps the field showing
         // the effective language (see the section's format below) and lets
         // cordis.yml / lang.json keep their precedence.
@@ -374,9 +376,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         writeLangPref(value.lang)
       }
     }
-    const apply = (next: { diffLayout?: 'auto' | 'split' | 'unified'; lang?: 'zh' | 'en' }): void => {
+    // thinkingFold rides the same namespace: /settings writes it live and
+    // the channel picks it up at the next step seal.
+    const applyThinkingFold = (value: { thinkingFold?: 'preview' | 'full' }): void => {
+      channel.setThinkingFold(value.thinkingFold ?? config.thinkingFold ?? 'preview')
+    }
+    const apply = (next: { diffLayout?: 'auto' | 'split' | 'unified'; lang?: 'zh' | 'en'; thinkingFold?: 'preview' | 'full' }): void => {
       applyLayout(next)
       applyLang(next)
+      applyThinkingFold(next)
     }
     apply(scope.get())
     scope.watch(next => {
@@ -424,6 +432,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
             { value: 'auto', label: 'Auto (by width)', descriptions: { zh: '自动（按宽度）' } },
             { value: 'split', label: 'Side-by-side', descriptions: { zh: '双栏对照' } },
             { value: 'unified', label: 'Unified', descriptions: { zh: '统一式' } },
+          ],
+        },
+        {
+          path: ['thinkingFold'],
+          label: 'Thinking display',
+          descriptions: { zh: '思考块展示' },
+          hint: 'Streaming thinking shows a 2-3 line live preview and each step folds when it settles; Full keeps thinking expanded until the turn ends.',
+          hintDescriptions: { zh: '流式时思考显示 2-3 行动态预览，每步落定后折叠；展开模式保持思考展开直到整轮结束。' },
+          kind: 'select',
+          options: [
+            { value: 'preview', label: 'Preview (2-3 lines)', descriptions: { zh: '预览（2-3 行）' } },
+            { value: 'full', label: 'Full until turn end', descriptions: { zh: '展开至轮末' } },
           ],
         },
       ],

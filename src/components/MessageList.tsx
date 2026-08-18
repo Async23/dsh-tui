@@ -49,6 +49,7 @@ export function MessageList({
   onToggleRow,
   model,
   diffLayout = 'auto',
+  thinkingFold = 'preview',
   showAll,
   onToggleAll,
   onLoadOlder,
@@ -69,6 +70,8 @@ export function MessageList({
   model: string
   /** Edit/Write diff presentation preference (forwarded to tool cards). */
   diffLayout?: 'auto' | 'split' | 'unified'
+  /** Thinking-block display mode from channel (`preview`/`full`). */
+  thinkingFold?: 'preview' | 'full'
   showAll: boolean
   onToggleAll: () => void
   /** Restore folded-away older rows from the session log (CC-style "load
@@ -344,6 +347,7 @@ export function MessageList({
               expanded={expanded}
               model={model}
               diffLayout={diffLayout}
+              thinkingFold={thinkingFold}
               background={rowBackground(row.id)}
               toolCallId={tool?.callId}
               toolName={tool?.name}
@@ -393,6 +397,7 @@ type MemoRowProps = {
   model: string
   /** Edit/Write diff presentation preference (forwarded to tool cards). */
   diffLayout: 'auto' | 'split' | 'unified'
+  thinkingFold: 'preview' | 'full'
   background: 'messageActionsBackground' | 'userMessageBackgroundHover' | undefined
   // ToolRow, flattened: the channel writes status/result fields in place,
   // so passing the object itself would make mutations invisible to memo.
@@ -433,6 +438,7 @@ function TranscriptRow({
   expanded,
   model,
   diffLayout,
+  thinkingFold,
   background,
   toolCallId,
   toolName,
@@ -524,6 +530,12 @@ function TranscriptRow({
           <AssistantThinkingMessage
             thinking={text}
             addMargin={addMargin}
+            preview={
+              streaming &&
+              thinkingFold === 'preview' &&
+              !expanded &&
+              !isExpanded
+            }
             // Streaming reasoning shows expanded live, then folds
             // automatically once the turn settles (unless Ctrl+O or a
             // single-row expansion keeps it open).

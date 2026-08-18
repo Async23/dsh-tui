@@ -463,6 +463,9 @@ export interface Channel {
   readonly activityFrames: string | undefined
   /** Edit/Write diff presentation preference (`auto`/`split`/`unified`). */
   readonly diffLayout: 'auto' | 'split' | 'unified'
+  /** Thinking-block display (`preview` = 2-3 line live stream + fold per
+   *  step; `full` = expanded until turn end). */
+  readonly thinkingFold: 'preview' | 'full'
   /** Whether the in-process working-activity line is shown (config.activity). */
   readonly activityEnabled: boolean
   /** Whether the segmented context bar row shows in the status footer
@@ -792,8 +795,12 @@ export interface ChannelState {
   activityFrames: string | undefined
   /** Diff presentation preference (see the public Channel type). */
   diffLayout: 'auto' | 'split' | 'unified'
+  /** Thinking-block display (see the public Channel type). */
+  thinkingFold: 'preview' | 'full'
   /** Apply a diff-layout change (see the public Channel type). */
   setDiffLayout(layout: 'auto' | 'split' | 'unified'): void
+  /** Apply a thinking-display change (see the public Channel type). */
+  setThinkingFold(mode: 'preview' | 'full'): void
   /** Working-activity display switch (see the public Channel type). */
   activityEnabled: boolean
   /** Context bar row switch (see the public Channel type). */
@@ -1220,6 +1227,9 @@ export function createChannel(
     /** Edit/Write diff presentation; default `auto` (side-by-side ≥110
      *  columns, unified below). */
     diffLayout?: 'auto' | 'split' | 'unified'
+    /** Thinking-block display; default `preview` (2-3 line live preview,
+     *  fold per step) — `full` keeps thinking expanded until turn end. */
+    thinkingFold?: 'preview' | 'full'
     /** Show the segmented context bar row in the status footer; default on
      *  (cordis.yml `contextBar: false` hides it, issue #29). */
     contextBar?: boolean
@@ -1877,6 +1887,7 @@ export function createChannel(
     workingActivity: undefined,
     activityFrames: options.activityFrames,
     diffLayout: options.diffLayout ?? 'auto',
+    thinkingFold: options.thinkingFold ?? 'preview',
     activityEnabled: options.activity !== false,
     contextBarEnabled: options.contextBar !== false,
     agentPreset: options.agentPreset,
@@ -2799,6 +2810,11 @@ export function createChannel(
     setDiffLayout(layout) {
       if (layout === state.diffLayout) return
       state.diffLayout = layout
+      state.emit()
+    },
+    setThinkingFold(mode) {
+      if (mode === state.thinkingFold) return
+      state.thinkingFold = mode
       state.emit()
     },
     setActivityFrames(name) {
@@ -4260,14 +4276,14 @@ ${output}
         }
         streaming = undefined
         if (reasoning !== undefined) {
-          // Seal AND fold: the per-step duration settles here and the row
-          // folds to its `∴ Thinking · 12s` summary immediately — holding
+          // Seal here; fold NOW in preview mode (the default: holding
           // every finished step's reasoning expanded until turn/end meant a
-          // 35-step turn laid out 34 full thinking blocks live (the
+          // 35-step turn laid out 34 full thinking blocks live — the
           // dominant cost of long multi-step turns; CC folds per step too).
-          // The next step's reasoning opens a fresh, expanded row.
+          // `full` mode (/settings opt-in) keeps the block expanded until
+          // turn settle — settleStreaming folds the sealed rows then.
           reasoning.durationMs = Math.max(0, Date.now() - reasoningStart)
-          reasoning.streaming = false
+          if (state.thinkingFold === 'preview') reasoning.streaming = false
           sealedReasoning.push(reasoning)
           logForDebugging(`thinking: step sealed (${reasoning.durationMs}ms), expanded until turn/end`)
         }
