@@ -325,6 +325,14 @@ export interface ChannelGoal {
   blockedReason?: { code: string; message: string }
 }
 
+/** The observable outcome of adopting a persisted session. */
+export type ResumeResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: 'working' }
+  | { readonly ok: false; readonly reason: 'unavailable' }
+  | { readonly ok: false; readonly reason: 'cancelled' }
+  | { readonly ok: false; readonly reason: 'failed'; readonly error: string }
+
 /** Secret-free credential metadata for configuration and status surfaces. */
 export interface CredentialStatus {
   configured: boolean
@@ -563,7 +571,7 @@ export interface Channel {
    */
   promptRewind(row: ChatRow): Promise<{ modes: readonly TuiRewindMode[] } | 'cancel' | null>
   /** Switch the live agent to a persisted session, replaying its history. */
-  resumeTo(sessionId: string): Promise<boolean>
+  resumeTo(sessionId: string): Promise<ResumeResult>
   /** Start a fresh conversation (`/new`): a brand-new agent + session, the
    *  transcript cleared, the resume marker forgotten. */
   newSession(): Promise<boolean>
@@ -841,7 +849,7 @@ export interface ChannelState {
   /** @internal rewind decision prompt (see the public Channel.promptRewind). */
   promptRewind(row: ChatRow): Promise<{ modes: readonly TuiRewindMode[] } | 'cancel' | null>
   /** Switch the live agent to a persisted session, replaying its history. */
-  resumeTo(sessionId: string): Promise<boolean>
+  resumeTo(sessionId: string): Promise<ResumeResult>
   /** Start a fresh conversation (`/new`). */
   newSession(): Promise<boolean>
   listWorkspaces(): Promise<readonly TuiWorkspaceTarget[]>
@@ -2267,13 +2275,13 @@ export function createChannel(
       notifySessionSwitched('rewind', String(childId), sourceSessionId)
       return row.text
     },
-    async resumeTo(sessionId: string): Promise<boolean> {
+    async resumeTo(sessionId: string): Promise<ResumeResult> {
       // Switch the live agent to a persisted session: /resume picker Enter
       // loads the history immediately (the `--resume` launcher path keeps
       // resolving through DSH_TUI_RESUME_SESSION at boot).
       if (state.working) {
         state.notify(t('resume-while-working'), { color: 'warning' })
-        return false
+        return { ok: false, reason: 'working' }
       }
       const agents = ctx.get('agents') as
         | {
@@ -2286,12 +2294,12 @@ export function createChannel(
         | undefined
       if (!agents) {
         state.notify(t('resume-unavailable'), { color: 'error' })
-        return false
+        return { ok: false, reason: 'unavailable' }
       }
       // Plugin veto point (tui/session-switch): before any read of the
       // target — a veto leaves the live session and its transcript
       // untouched.
-      if (await sessionSwitchVetoed('resume', sessionId)) return false
+      if (await sessionSwitchVetoed('resume', sessionId)) return { ok: false, reason: 'cancelled' }
       let handle: AgentHandle
       // Compat boundary: register vouched-for legacy event types (e.g.
       // activity/status from pre-#143 logs) in every reachable dsh-session
@@ -2324,7 +2332,7 @@ export function createChannel(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         state.notify(t('resume-failed', { err: message }), { color: 'error', timeoutMs: 8000 })
-        return false
+        return { ok: false, reason: 'failed', error: message }
       }
       try {
         // `/resume` is an explicit adoption of this persisted conversation.
@@ -2412,7 +2420,7 @@ export function createChannel(
       void oldHandle?.dispose().catch(() => {})
       clearStagedImages()
       notifySessionSwitched('resume', sessionId, previousSessionId)
-      return true
+      return { ok: true }
     },
     async newSession(): Promise<boolean> {
       // `/new` — start a fresh conversation: brand-new agent + session, the
