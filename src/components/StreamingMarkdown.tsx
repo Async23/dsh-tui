@@ -56,16 +56,10 @@ export function StreamingMarkdown({
   children: string
   dimColor?: boolean
 }): React.ReactNode {
-  // The stable prefix is kept per-BLOCK: each finalized markdown block
-  // renders through its own memoized <Markdown>, so a prefix advance
-  // (block completed) re-renders only the NEW block — not the whole
-  // finished prefix (marked re-parse + re-wrap of everything before it;
-  // the long-message streaming stall). Block strings keep their identity
-  // across renders; only the active/growing block re-renders, in the
-  // suffix below.
-  const blocksRef = React.useRef<string[]>([])
-  // Joined copy kept ONLY as the reset validator (text replaced?) — the
-  // render path uses blocksRef so per-block memoization holds.
+  // The stable prefix is kept as ONE string identity across renders: a
+  // fresh substring per render would break Markdown's React.memo and
+  // re-layout the entire finished transcript tail on every token. The
+  // identity only changes when a new block boundary advances the prefix.
   const prefixRef = React.useRef('')
   const cutRef = React.useRef(0)
 
@@ -73,7 +67,6 @@ export function StreamingMarkdown({
 
   // Reset if text was replaced (defensive; normally unmount handles this)
   if (!stripped.startsWith(prefixRef.current)) {
-    blocksRef.current = []
     prefixRef.current = ''
     cutRef.current = 0
   }
@@ -89,30 +82,18 @@ export function StreamingMarkdown({
   }
   let advance = 0
   for (let i = 0; i < lastContentIdx; i++) {
-    // Merge a following space token into its block so per-block rendering
-    // reproduces the single-Markdown flow (the blank separator belongs to
-    // the block before it, not the layout).
-    let raw = tokens[i]!.raw
-    const next = tokens[i + 1]
-    if (next !== undefined && next.type === 'space' && i + 1 < lastContentIdx) {
-      raw += next.raw
-      i++
-    }
-    advance += raw.length
-    blocksRef.current.push(raw)
+    advance += tokens[i].raw.length
   }
   if (advance > 0) {
     prefixRef.current = stripped.substring(0, boundary + advance)
   }
 
-  const stableBlocks = blocksRef.current
-  const unstableSuffix = clipSuffixTail(stripped.substring(prefixRef.current.length), cutRef)
+  const stablePrefix = prefixRef.current
+  const unstableSuffix = clipSuffixTail(stripped.substring(stablePrefix.length), cutRef)
 
   return (
-    <Box flexDirection="column">
-      {stableBlocks.map((block, i) => (
-        <Markdown key={i} dimColor={dimColor}>{block}</Markdown>
-      ))}
+    <Box flexDirection="column" gap={1}>
+      {stablePrefix && <Markdown dimColor={dimColor}>{stablePrefix}</Markdown>}
       {unstableSuffix && <Markdown dimColor={dimColor} cacheTokens={false}>{unstableSuffix}</Markdown>}
     </Box>
   )
