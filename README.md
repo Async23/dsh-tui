@@ -149,6 +149,20 @@ macOS 自带 Terminal.app 会自行消费 `⌘` 快捷键，请继续使用 `Ctr
 | 其它 | `/agents` 子代理列表 · `/update` 自动更新并重启 · `/vim` · `/terminal-setup` · `/connect` · `/help` · `/exit` |
 | 注册表 | `/plan` `/goal`（DSH 命令注册表插件，随插件自动并入 `/` 菜单） |
 
+## 插件生态
+
+想为 dsh-TUI 做插件/扩展？欢迎加入生态！
+
+- **接口与兼容性协定**：[终端交互生态插件准入规范与实施标准](https://github.com/T-Auto/dsh-ecosystem-spec)
+- **插件开发指南**：[`docs/plugins.md`](docs/plugins.md)（接缝、契约、规范与验证清单）
+- **生态组织**：[dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem)（社区插件与模板的家）
+- **模板仓库**：[plugin-template](https://github.com/dsh-tui-ecosystem/plugin-template)（从模板起步，5 分钟出一个插件）
+- **参考实现**：`dsh-working-activity`（实时工作状态行：TUI 槽位 + `activity/status` 会话事件双出口）
+
+核心仓库不迁移、社区插件独立成仓。组织只维护收录列表与准入规范，不对社区插件
+的功能、质量或安全作背书或担保；插件作者对自己的仓库保持完全所有权，并自行承担
+维护与安全责任。
+
 ## 文档
 
 | 主题 | 内容 |
@@ -256,18 +270,7 @@ pnpm smoke
 构建门禁。npm Git URL 安装通过 `prepare` 生成同一套运行时。渲染、问卷和工具卡
 改动还需运行对应回归脚本。
 
-## 插件生态
 
-想为 dsh-TUI 做插件/扩展？欢迎加入生态：
-
-- **插件开发指南**：[`docs/plugins.md`](docs/plugins.md)（接缝、契约、规范与验证清单）
-- **生态组织**：[dsh-tui-ecosystem](https://github.com/dsh-tui-ecosystem)（社区插件与模板的家）
-- **模板仓库**：[plugin-template](https://github.com/dsh-tui-ecosystem/plugin-template)（从模板起步，5 分钟出一个插件）
-- **参考实现**：`dsh-working-activity`（实时工作状态行：TUI 槽位 + `activity/status` 会话事件双出口）
-
-核心仓库不迁移、社区插件独立成仓。组织只维护收录列表与准入规范，不对社区插件
-的功能、质量或安全作背书或担保；插件作者对自己的仓库保持完全所有权，并自行承担
-维护与安全责任。
 
 ## 社区
 
