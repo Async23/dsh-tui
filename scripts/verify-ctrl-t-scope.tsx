@@ -1,11 +1,14 @@
 /**
  * Ctrl+T ownership regression.
  *
- * Loaded-context details use the one-shot `/context` command. Ctrl+T has one
- * stable meaning throughout the session: open the trajectory scene.
+ * Ctrl+T has one stable meaning throughout the session: open the trajectory
+ * scene. The startup loaded-context panel (visible only while the transcript
+ * is still empty) owns Ctrl+P instead: the key toggles the collapsed summary
+ * between the one-liner and the grouped details. The one-shot `/context`
+ * command stays available in both states.
  *
- * These checks pin both empty- and non-empty-transcript states so another
- * context-sensitive shortcut does not creep back in.
+ * These checks pin both empty- and non-empty-transcript states so a
+ * context-sensitive shortcut does not creep in the wrong direction.
  *
  * Run: node --import tsx/esm scripts/verify-ctrl-t-scope.tsx
  */
@@ -182,11 +185,13 @@ async function mount(harness: ReturnType<typeof makeHarness>, channel: Record<st
 }
 
 const CTRL_T = '\x14'
+const CTRL_P = '\x10'
 const isScene = (text: string): boolean => /✦\s*轨迹/.test(text)
 const panelHeader = (text: string): string =>
   text.split('\n').find(line => line.includes('已加载上下文')) ?? ''
 
-// ── empty transcript: summary is informational; Ctrl+T still means trace ───
+// ── empty transcript: the panel is collapsed; Ctrl+P toggles it, Ctrl+T
+//    still opens the trajectory ────────────────────────────────────────────
 {
   const harness = makeHarness(100, 30)
   const localReports: Array<{ title: string; lines: readonly string[] }> = []
@@ -197,9 +202,21 @@ const panelHeader = (text: string): string =>
   await sleep(500)
 
   const summary = harness.screen()
-  check('the startup context summary is on screen', /已加载上下文/.test(summary))
-  check('the summary points to /context', panelHeader(summary).includes('/context'), panelHeader(summary).trim())
-  check('the summary does not claim Ctrl+T', !panelHeader(summary).includes('Ctrl+T'), panelHeader(summary).trim())
+  check('the startup context panel is on screen', /已加载上下文/.test(summary))
+  check('the collapsed panel claims Ctrl+P', panelHeader(summary).includes('Ctrl+P'), panelHeader(summary).trim())
+
+  harness.stdin.write(CTRL_P)
+  await sleep(500)
+  const expanded = harness.screen()
+  check('Ctrl+P expands the panel before the first message', expanded.includes('你是 dsh'),
+    expanded.split('\n')[0]?.trim() ?? '')
+  check('the expanded details still point to /context', expanded.includes('/context'),
+    expanded.split('\n').filter(line => line.includes('/context')).join(' | '))
+
+  harness.stdin.write(CTRL_P)
+  await sleep(500)
+  check('Ctrl+P collapses the panel again', !harness.screen().includes('你是 dsh'),
+    panelHeader(harness.screen()).trim())
 
   harness.stdin.write(CTRL_T)
   await sleep(500)
