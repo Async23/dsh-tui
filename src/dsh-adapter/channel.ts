@@ -2792,6 +2792,8 @@ export function createChannel(
       agent = handle.agent
       currentHandle = handle
       bindAgent()
+      // Model-switch quip rides the fresh tracker (pi parity).
+      activityTracker.onModelSwitch(model)
       refreshCommandList()
       void refreshLoadedContext()
       void refreshSkillCommands()
@@ -4820,6 +4822,8 @@ ${output}
           nightPhrases: featureOn(cfg, 'nightPhrases'),
         },
         customPhrases: cfg.customPhrases,
+        showTokPerSec: cfg.showTokPerSec,
+        workRemindAt: cfg.workRemindAt,
       },
       customActions: cfg.customActions,
     }
@@ -4941,6 +4945,14 @@ ${output}
         // publish never throws into this arm.
         messageObserver?.publish(session, event)
         activityTracker.onSessionEvent(event)
+        // Interrupt quip: an aborted/interrupted turn ends the round; the
+        // comeback copy shows on the next thinking rotation (pi parity).
+        if ((event as { type: string }).type === 'turn/end') {
+          const reason = (event.data as { reason?: { kind?: string } }).reason
+          if (reason?.kind === 'aborted' || reason?.kind === 'interrupted') {
+            activityTracker.onInterrupted()
+          }
+        }
         renderWorkingActivity()
         // Mode-affecting atoms fold into the Shift+Tab mode indicator the
         // moment they land (whether appended by cycleMode or by hand).
@@ -5010,6 +5022,8 @@ ${output}
           // only show a branch for sessions this install actually used — which
           // is exactly what the column claims.
           noteBranch(agent.session.id, branch)
+          // Feed the working line so git tools can show ` · git <branch>`.
+          activityTracker.onGitBranch(branch)
           state.emit()
         }
       })
