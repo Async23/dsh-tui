@@ -6,8 +6,8 @@
  * EffortInputBorder (self-drawn ╭─╮ / ╰─╯ rows; the top row carries the show)
  * in a headless xterm, one harness per scenario, and asserts:
  *
- * - **Every style runs over the row, deterministically** — the component
- *   accepts a fixed `style` prop here, so wave/aurora/pulse each get a run.
+ * - The sweep is a single wave style (the shipped shape); the math layer
+ *   below pins its contract directly.
  * - **Glyphs never change; only colours move.** The row's TEXT is
  *   byte-identical across frames (▁ × width, present at rest too) — the
  *   strongest form of the SGR-only rule, with no layout change at any
@@ -55,39 +55,30 @@ check('crest: 1 at the crest, 0 at one half-width out', math.crest(0) === 1 && m
 check('crest: beyond the half-width is silent, both directions',
   math.crest(1.5) === 0 && math.crest(-1) === 0 && math.crest(-2) === 0)
 check('easings: endpoints are exact',
-  math.easeInCubic(0) === 0 && math.easeInCubic(1) === 1
-  && math.easeOutCubic(0) === 0 && math.easeOutCubic(1) === 1
+  math.easeOutCubic(0) === 0 && math.easeOutCubic(1) === 1
   && math.easeInOutCubic(0) === 0 && math.easeInOutCubic(1) === 1)
 check('easings: clamped outside [0,1]',
-  math.easeInCubic(-1) === 0 && math.easeOutCubic(2) === 1 && math.easeInOutCubic(-3) === 0)
-check('envelope: zero outside the window',
-  math.envelope(0, 1, 0.25, 0.4) === 0 && math.envelope(1, 1, 0.25, 0.4) === 0)
-check('envelope: fully open in the middle', math.envelope(0.5, 1, 0.25, 0.4) === 1)
-check('envelope: ramp sides bind, not max',
-  math.envelope(0.1, 1, 0.25, 0.4) < 0.45 && Math.abs(math.envelope(0.1, 1, 0.25, 0.4) - 0.4) < 0.01)
+  math.easeOutCubic(2) === 1 && math.easeInOutCubic(-3) === 0)
 check('line colors: exactly one entry per column',
-  math.ignitionLineColors({ style: 'wave', elapsedMs: 300, width: 40, onLight: false }).length === 40)
+  math.ignitionLineColors({ elapsedMs: 300, width: 40, onLight: false }).length === 40)
 check('line colors: empty before start and after the end',
-  math.ignitionLineColors({ style: 'wave', elapsedMs: 0, width: 40, onLight: false }).length === 0
-  && math.ignitionLineColors({ style: 'wave', elapsedMs: math.IGNITION_TOTAL_MS.wave + 1, width: 40, onLight: false }).length === 0)
+  math.ignitionLineColors({ elapsedMs: 0, width: 40, onLight: false }).length === 0
+  && math.ignitionLineColors({ elapsedMs: math.SWEEP_TOTAL_MS + 1, width: 40, onLight: false }).length === 0)
 check('line colors: boundary guards (width 0, negative/NaN/at-total elapsed)',
-  math.ignitionLineColors({ style: 'wave', elapsedMs: 300, width: 0, onLight: false }).length === 0
-  && math.ignitionLineColors({ style: 'wave', elapsedMs: -5, width: 40, onLight: false }).length === 0
-  && math.ignitionLineColors({ style: 'wave', elapsedMs: Number.NaN, width: 40, onLight: false }).length === 0
-  && math.ignitionLineColors({ style: 'wave', elapsedMs: math.IGNITION_TOTAL_MS.wave, width: 40, onLight: false }).length === 0)
+  math.ignitionLineColors({ elapsedMs: 300, width: 0, onLight: false }).length === 0
+  && math.ignitionLineColors({ elapsedMs: -5, width: 40, onLight: false }).length === 0
+  && math.ignitionLineColors({ elapsedMs: Number.NaN, width: 40, onLight: false }).length === 0
+  && math.ignitionLineColors({ elapsedMs: math.SWEEP_TOTAL_MS, width: 40, onLight: false }).length === 0)
 check('line colors: single-column terminal yields one entry',
-  math.ignitionLineColors({ style: 'aurora', elapsedMs: 300, width: 1, onLight: false }).length === 1)
+  math.ignitionLineColors({ elapsedMs: 300, width: 1, onLight: false }).length === 1)
 check('line colors: every painted entry is a truecolor rgb() string',
   math
-    .ignitionLineColors({ style: 'pulse', elapsedMs: 200, width: 60, onLight: false })
+    .ignitionLineColors({ elapsedMs: 200, width: 60, onLight: false })
     .every(color => color === undefined || /^rgb\(\d+,\d+,\d+\)$/.test(String(color))))
 check('line colors: some columns are painted mid-wave',
   math
-    .ignitionLineColors({ style: 'wave', elapsedMs: 300, width: 80, onLight: false })
+    .ignitionLineColors({ elapsedMs: 300, width: 80, onLight: false })
     .some(color => color !== undefined))
-check('random style: never repeats the previous one',
-  Array.from({ length: 20 }, () => math.randomIgnitionStyle('wave')).every(style => style !== 'wave'))
-
 // --- Part B: three acts on the prompt border, then back to nothing --------
 const LEVELS = ['low', 'medium', 'high'] as const
 const COLS = 60

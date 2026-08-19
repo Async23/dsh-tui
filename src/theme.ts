@@ -483,22 +483,24 @@ let customThemeResolver: ((name: string) => Theme | undefined) | undefined
 
 /**
  * Whether the active theme's RESOLVED palette renders on a light background.
- * Keyed off the palette's own `background` colour, never the theme NAME —
- * `useTheme()` returns the literal `'auto'` for the auto theme and the file
- * name for custom themes, so name comparisons miss auto-with-light-terminal
- * and light custom palettes. Colour-pair variants (effort ignition hues)
- * consume this signal.
- * @param themeName - The theme name as `useTheme()` reports it.
- * @returns True when the resolved palette's background is light (same Rec.601
- *   luma test and dark-biased threshold as ThemeProvider's detector).
+ * Keyed off the resolved palette's IDENTITY for the built-ins (auto resolves
+ * to the shared light/dark instance, so this covers auto-with-light-terminal
+ * that theme-NAME comparisons miss) and off the ink-text luminance for
+ * custom themes (light palettes pair with dark ink). The palette's
+ * `background` field is a badge fill, not the terminal background — never a
+ * lightness signal. Colour-pair variants (effort ignition hues) consume this.
  */
 export function isLightThemeActive(themeName: ThemeName): boolean {
-  const background = getTheme(themeName).background
-  if (!background.startsWith('#') || background.length !== 7) return themeName === 'light'
-  const r = Number.parseInt(background.slice(1, 3), 16)
-  const g = Number.parseInt(background.slice(3, 5), 16)
-  const b = Number.parseInt(background.slice(5, 7), 16)
-  return 0.299 * r + 0.587 * g + 0.114 * b > 140
+  const theme = getTheme(themeName)
+  if (theme === lightTheme) return true
+  if (theme === darkTheme || theme === darkAnsiTheme) return false
+  // 自定义主题：按文本墨色亮度判定——浅底配深墨（ink）、深底配亮墨。
+  // 调色板的 background 字段是徽标填充色而非终端背景，不能作判据。
+  const ink = theme.text
+  const rgb = /^rgb\((\d+),(\d+),(\d+)\)$/.exec(ink)
+  if (rgb === null) return false
+  const [r, g, b] = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]
+  return 0.299 * r + 0.587 * g + 0.114 * b < 140
 }
 
 /**

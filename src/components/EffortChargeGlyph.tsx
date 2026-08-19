@@ -7,19 +7,19 @@
  * 不充能（充能只属于切换瞬间），离开最高档恢复原样的 dim 行为。
  *
  * 触发判定在渲染期做（React 官方的「props 变化即调整 state」模式，
- * 与 EffortIgnitionLine 同一模式）——放 effect 会晚一帧，effort 变化
+ * 与 EffortInputBorder 同一模式）——放 effect 会晚一帧，effort 变化
  * 的首帧以全亮闪现、下一帧才跌回暗端重来。充能只动颜色，glyph 恒为
  * `❯ `，SGR-only 规则天然成立。
  *
  * 时钟复用 Ink core 共享时钟，且只在充能未满的那 150ms 内订阅；稳态
  * 零定时器、零重渲染，前缀色取记忆化常量。
  */
-import React, { useContext, useEffect, useReducer, useRef, useState } from 'react'
+import React, { useContext, useEffect, useReducer, useState } from 'react'
 import { Text, useTheme } from '../ui.js'
 import { ClockContext } from '../ink/components/ClockContext.js'
 import { accentRamp } from '../trajectory/effortIgnition.js'
 import { rgbString } from '../trajectory/motion.js'
-import { interpolateColor, type RGBColor } from './Spinner/spinnerUtils.js'
+import { interpolateColor } from './Spinner/spinnerUtils.js'
 import { isLightThemeActive } from '../theme.js'
 
 /** 充能时长（ms）。 */
@@ -42,12 +42,11 @@ export function EffortChargeGlyph({
   const [chargeStartedAt, setChargeStartedAt] = useState<number | null>(null)
   const [prevEffort, setPrevEffort] = useState(effort)
   const [, forceRender] = useReducer((tick: number) => tick + 1, 0)
-  const steadyColor = useRef<RGBColor | null>(null)
 
   const topActive =
     effort !== undefined && levels !== undefined && levels.length > 1 && effort === levels[levels.length - 1]
 
-  // Render-phase trigger (same pattern as EffortIgnitionLine): switching from
+  // Render-phase trigger (same pattern as EffortInputBorder): switching from
   // an existing tier onto the top tier starts the charge NOW, not one effect
   // later — the first frame of the new effort must not flash fully lit.
   // Cold mounts enter the steady state directly; without a shared clock
@@ -76,10 +75,10 @@ export function EffortChargeGlyph({
   if (!topActive) return <Text dimColor={working}>❯ </Text>
   const ramp = accentRamp(isLightThemeActive(themeName))
   if (!charging) {
-    // Steady state: cache the resolved full-accent colour — every PromptInput
-    // re-render (each keystroke) reuses it without re-deriving the ramp.
-    if (steadyColor.current === null) steadyColor.current = ramp.full
-    const color = rgbString(steadyColor.current)
+    // Steady state re-derives on every render (two allocations + one blend
+    // per keystroke — negligible) instead of caching: a cached colour would
+    // go stale across a light/dark theme flip while the tier stays active.
+    const color = rgbString(ramp.full)
     return (
       <Text bold color={color} dimColor={working}>
         ❯{' '}

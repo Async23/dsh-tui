@@ -1619,12 +1619,19 @@ export function createChannel(
    *  top-tier-triggered UI (effort ignition): fire-and-forget on route
    *  changes (bind/model switch/resume); the /effort paths refresh it
    *  authoritatively via resolveEfforts. */
+  let effortLevelsGeneration = 0
   const refreshEffortLevels = (): void => {
     if (llmRuntime === undefined) return
+    // 代际保护：快速连续切路由时并发的 resolveModelInfo 可能乱序返回，
+    // 只有最新一代的解析才允许落表；落表后 emit 让 useSyncExternalStore
+    // 消费者立刻可见（否则要等下一次无关 emit）。
+    const generation = ++effortLevelsGeneration
     void llmRuntime
       .resolveModelInfo(state.provider, state.model)
       .then(info => {
+        if (generation !== effortLevelsGeneration) return
         state.effortLevels = (info.reasoning?.efforts ?? []).map(level => level.id)
+        state.emit()
       })
       .catch(() => {
         // Route metadata resolution is best-effort; a failure keeps the

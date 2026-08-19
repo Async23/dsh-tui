@@ -6,12 +6,12 @@
  * **同步**承载动画；档位字样由输入行尾的 EffortTierBadge 短暂显示
  * （见 PromptInput），动画全程行数恒定。切到最高思考强度档时：
  *
- *   1. 扫光 [0, 800ms)——一段蓝色光带沿顶/底边框同步自左向右扫过
+ *   1. 扫光 [0, 1s)——一段高亮彩色光带沿顶/底边框同步自左向右扫过
  *      （wave 波形逐列变色），期间输入框完全正常可用；
- *   2. 档位字样 [400ms, ~1000ms)——光带行至中段时，输入行尾浮现
- *      ` MAX`（当前档名大写，由暗渐亮加粗）；
- *   3. 渐隐 [1100, 1600ms)——字样连同光色一起向主题色淡出，末帧
- *      归零：静止时顶/底边框就是原主题色，内容区无任何附加物。
+ *   2. 档位字样 [600ms, ~1.1s)——光带行至中段时，输入行居中浮现
+ *      档名大写（由暗渐亮加粗、间距聚拢，见 EffortTierBadge）；
+ *   3. 渐隐 [1.5s, 2s)——字样连同光色一起向主题色淡出，末帧归零：
+ *      静止时顶/底边框就是原主题色，内容区无任何附加物。
  *
  * glyph 变化仅限字样行的出现/让位（一次性）；其余帧间变化全部是既
  * 有 `─` 的前景色。触发判定在渲染期做（props-变化-调整模式）；从
@@ -25,8 +25,6 @@ import { ClockContext } from '../ink/components/ClockContext.js'
 import type { Color } from '../ink/styles.js'
 import type { Theme } from '../theme.js'
 import { IGNITION_TIMELINE, ignitionLineColors } from '../trajectory/effortIgnition.js'
-
-const { sweepMs: SWEEP_MS, fadeEndMs: FADE_END_MS } = IGNITION_TIMELINE
 
 type Overlay = { label: string; startedAtMs: number }
 
@@ -100,18 +98,18 @@ export function EffortInputBorder({
     return clock.subscribe(() => forceRender(), /* keepAlive */ true)
   }, [overlay, clock])
   useEffect(() => {
-    if (overlay !== null && elapsedMs >= FADE_END_MS) setOverlay(null)
+    if (overlay !== null && elapsedMs >= IGNITION_TIMELINE.fadeEndMs) setOverlay(null)
   }, [overlay, elapsedMs])
 
   const midWidth = Math.max(0, columns - 2)
   const sweepColors =
-    overlay !== null && elapsedMs < SWEEP_MS && midWidth > 0
-      ? ignitionLineColors({ style: 'wave', elapsedMs, width: midWidth, onLight })
+    overlay !== null && elapsedMs < IGNITION_TIMELINE.sweepMs && midWidth > 0
+      ? ignitionLineColors({ elapsedMs, width: midWidth, onLight })
       : []
   // 顶/底共用的色段序列（同步）：扫光列取波形色，其余列回主题色。
   const runs: Array<{ glyph: string; color: keyof Theme | Color }> = []
   for (let index = 0; index < midWidth; index++) {
-    const color: keyof Theme | Color = sweepColors[index] ?? idleColor
+    const color = sweepColors[index] as keyof Theme | Color | undefined ?? idleColor
     const last = runs[runs.length - 1]
     if (last !== undefined && last.color === color) last.glyph += '─'
     else runs.push({ glyph: '─', color })
