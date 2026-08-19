@@ -482,6 +482,28 @@ export function getTheme(themeName: ThemeName): Theme {
 let customThemeResolver: ((name: string) => Theme | undefined) | undefined
 
 /**
+ * Whether the active theme's RESOLVED palette renders on a light background.
+ * Keyed off the resolved palette's IDENTITY for the built-ins (auto resolves
+ * to the shared light/dark instance, so this covers auto-with-light-terminal
+ * that theme-NAME comparisons miss) and off the ink-text luminance for
+ * custom themes (light palettes pair with dark ink). The palette's
+ * `background` field is a badge fill, not the terminal background — never a
+ * lightness signal. Colour-pair variants (effort ignition hues) consume this.
+ */
+export function isLightThemeActive(themeName: ThemeName): boolean {
+  const theme = getTheme(themeName)
+  if (theme === lightTheme) return true
+  if (theme === darkTheme || theme === darkAnsiTheme) return false
+  // 自定义主题：按文本墨色亮度判定——浅底配深墨（ink）、深底配亮墨。
+  // 调色板的 background 字段是徽标填充色而非终端背景，不能作判据。
+  const ink = theme.text
+  const rgb = /^rgb\((\d+),(\d+),(\d+)\)$/.exec(ink)
+  if (rgb === null) return false
+  const [r, g, b] = [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]
+  return 0.299 * r + 0.587 * g + 0.114 * b < 140
+}
+
+/**
  * Register the custom-theme resolver. Called once by ThemeProvider; the
  * resolver must return `undefined` for names it does not know so getTheme
  * falls back to `dark`.
