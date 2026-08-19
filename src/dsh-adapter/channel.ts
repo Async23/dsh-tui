@@ -452,6 +452,9 @@ export interface Channel {
   readonly contextWindow: number | undefined
   /** Reasoning effort of the latest request header, when the adapter sets one. */
   readonly reasoningEffort: string | undefined
+  /** The live route's reasoning-effort level ids, low → high (the last entry
+   *  is the top tier). Consumed by top-tier-triggered UI (effort ignition). */
+  readonly effortLevels: readonly string[] | undefined
   /** Usage of the most recent request (context share + cache hits come from
    *  this, not the running totals — each request's input IS the context). */
   readonly lastUsage:
@@ -789,6 +792,8 @@ export interface ChannelState {
   contextWindow: number | undefined
   /** Reasoning effort of the latest request header, when the adapter sets one. */
   reasoningEffort: string | undefined
+  /** The live route's reasoning-effort level ids, low → high. */
+  effortLevels: readonly string[] | undefined
   /** Usage of the most recent request (context share + cache hits). */
   lastUsage:
     | { input: number; output: number; cacheRead: number; cacheWrite: number }
@@ -1597,6 +1602,7 @@ export function createChannel(
     if (preferredEffort === undefined || llmRuntime === undefined) return
     try {
       const info = await llmRuntime.resolveModelInfo(state.provider, state.model)
+      state.effortLevels = (info.reasoning?.efforts ?? []).map(level => level.id)
       if (!info.reasoning?.efforts.some(effort => effort.id === preferredEffort)) return
       selection.current = {
         provider: state.provider,
@@ -1607,6 +1613,23 @@ export function createChannel(
       // Route metadata resolution is best-effort; a failure just leaves the
       // provider default in effect.
     }
+  }
+
+  /** Best-effort refresh of the live route's effort-level table for
+   *  top-tier-triggered UI (effort ignition): fire-and-forget on route
+   *  changes (bind/model switch/resume); the /effort paths refresh it
+   *  authoritatively via resolveEfforts. */
+  const refreshEffortLevels = (): void => {
+    if (llmRuntime === undefined) return
+    void llmRuntime
+      .resolveModelInfo(state.provider, state.model)
+      .then(info => {
+        state.effortLevels = (info.reasoning?.efforts ?? []).map(level => level.id)
+      })
+      .catch(() => {
+        // Route metadata resolution is best-effort; a failure keeps the
+        // previous table until the next /effort interaction clears it.
+      })
   }
 
   /** Resolve the live route's effort levels + adapter default through the
@@ -1623,6 +1646,7 @@ export function createChannel(
     if (llmRuntime === undefined) return 'unavailable'
     try {
       const info = await llmRuntime.resolveModelInfo(state.provider, state.model)
+      state.effortLevels = (info.reasoning?.efforts ?? []).map(level => level.id)
       return {
         efforts: info.reasoning?.efforts ?? [],
         defaultEffort: info.reasoning?.defaultEffort,
@@ -1874,6 +1898,7 @@ export function createChannel(
   }
 
   const state: ChannelState = {
+    effortLevels: undefined,
     version: 0,
     rows: [],
     status: 'starting',
@@ -2438,6 +2463,11 @@ export function createChannel(
       state.lastUsage = undefined
       state.workingActivity = undefined
       state.contextWindow = undefined
+      // Route changed: a stale tier table would let top-tier UI fire on the
+      // wrong level (or never fire on the real one); clear and re-resolve.
+      state.effortLevels = undefined
+      state.reasoningEffort = undefined
+      refreshEffortLevels()
       state.contextSegments = {
         system: 0,
         prompt: 0,
@@ -2596,6 +2626,11 @@ export function createChannel(
       state.workingActivity = undefined
       state.loadedContext = undefined
       state.contextWindow = undefined
+      // Route changed: a stale tier table would let top-tier UI fire on the
+      // wrong level (or never fire on the real one); clear and re-resolve.
+      state.effortLevels = undefined
+      state.reasoningEffort = undefined
+      refreshEffortLevels()
       state.contextSegments = {
         system: 0,
         prompt: 0,
@@ -2777,6 +2812,11 @@ export function createChannel(
       state.lastUsage = undefined
       state.workingActivity = undefined
       state.contextWindow = undefined
+      // Route changed: a stale tier table would let top-tier UI fire on the
+      // wrong level (or never fire on the real one); clear and re-resolve.
+      state.effortLevels = undefined
+      state.reasoningEffort = undefined
+      refreshEffortLevels()
       state.contextSegments = {
         system: 0,
         prompt: 0,
