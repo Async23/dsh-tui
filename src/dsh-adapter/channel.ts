@@ -51,6 +51,9 @@ import { modeDisplayName, resolveSessionModes, type SessionModeSpec } from '../s
 import { normalizeStatusBar, normalizeToolBackground, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import type { SpinnerMode } from '../components/Spinner/spinnerMode.js'
 import { ActivityTracker, type ActivityState } from 'dsh-working-activity/status'
+import type { TrackerConfig } from 'dsh-working-activity/status'
+import { featureOn } from 'dsh-working-activity/config'
+import { readActivityConfig } from '../activityPrefs.js'
 import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime, type TuiWorkspaceCommand, type TuiWorkspaceCommandResult, type TuiWorkspaceTarget } from './workspaces.js'
 import { getHostCommandTrees } from './command-trees.js'
@@ -4794,11 +4797,37 @@ ${output}
   // Live subscription list and activity timer, rebound to every replacement
   // agent so no status from the previous session can leak across a swap.
   let agentSubscriptions: Array<() => void> = []
-  let activityTracker = new ActivityTracker({
-    phrases: true,
-    detailLimit: 40,
-    showIdle: false,
-  })
+  /** Tracker knobs + custom actions from the persisted pi-style config
+   *  (`~/.dsh-tui/working-activity.json`); a missing file means lively
+   *  defaults (all eggs on). */
+  const activityPrefsSnapshot = (): {
+    config: TrackerConfig
+    customActions?: Readonly<Record<string, readonly string[]>>
+  } => {
+    const cfg = readActivityConfig()
+    if (cfg === undefined) {
+      return { config: { phrases: true, detailLimit: 40, showIdle: false } }
+    }
+    return {
+      config: {
+        phrases: featureOn(cfg, 'phrases'),
+        detailLimit: 40,
+        showIdle: false,
+        features: {
+          rareEggs: featureOn(cfg, 'rareEggs'),
+          weekend: featureOn(cfg, 'weekend'),
+          holidays: featureOn(cfg, 'holidays'),
+          nightPhrases: featureOn(cfg, 'nightPhrases'),
+        },
+        customPhrases: cfg.customPhrases,
+      },
+      customActions: cfg.customActions,
+    }
+  }
+  let activityTracker = (() => {
+    const prefs = activityPrefsSnapshot()
+    return new ActivityTracker(prefs.config, Date.now, prefs.customActions)
+  })()
   let activityTickTimer: NodeJS.Timeout | undefined
 
   const stopActivityTick = (): void => {
@@ -4821,11 +4850,8 @@ ${output}
   const bindAgent = (): void => {
     for (const dispose of agentSubscriptions) dispose()
     stopActivityTick()
-    activityTracker = new ActivityTracker({
-      phrases: true,
-      detailLimit: 40,
-      showIdle: false,
-    })
+    const prefs = activityPrefsSnapshot()
+    activityTracker = new ActivityTracker(prefs.config, Date.now, prefs.customActions)
     activityTracker.onAgentStatus(agent.status)
     renderWorkingActivity()
     activityTickTimer = setInterval(() => {
