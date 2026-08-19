@@ -1621,7 +1621,7 @@ export function createChannel(
    *  authoritatively via resolveEfforts. */
   let effortLevelsGeneration = 0
   const refreshEffortLevels = (): void => {
-    if (llmRuntime === undefined) return
+    if (llmRuntime === undefined || typeof llmRuntime.resolveModelInfo !== 'function') return
     // 代际保护：快速连续切路由时并发的 resolveModelInfo 可能乱序返回，
     // 只有最新一代的解析才允许落表；落表后 emit 让 useSyncExternalStore
     // 消费者立刻可见（否则要等下一次无关 emit）。
