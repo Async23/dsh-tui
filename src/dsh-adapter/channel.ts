@@ -4488,15 +4488,23 @@ ${output}
         // anyway leaves an empty `●` bullet in the transcript. A pre-existing
         // streaming row always has text (ensureStreaming is only reached on
         // non-empty text deltas), so only create one when text arrives.
-        const key = stepKey(event.data.turn, event.data.step)
-        const row = assistantRowsByStep.get(key) ?? streaming ??
+        // Key the step→row ledger only when the event carries a durable
+        // turn/step; a message without them must never collide onto a
+        // previous step's row (a bare `undefined:undefined` key would make
+        // every turn/step-less message reuse the FIRST one's assistant row).
+        const msgTurn = event.data.turn
+        const msgStep = event.data.step
+        const msgKey = msgTurn !== undefined && msgStep !== undefined
+          ? stepKey(msgTurn, msgStep)
+          : undefined
+        const row = (msgKey !== undefined ? assistantRowsByStep.get(msgKey) : undefined) ?? streaming ??
           (text
             ? ([...state.rows].reverse().find(candidate =>
                 candidate.kind === 'assistant' && candidate.seq === event.seq,
               ) ?? ensureStreaming(event.seq))
             : undefined)
         if (row !== undefined) {
-          assistantRowsByStep.set(key, row)
+          if (msgKey !== undefined) assistantRowsByStep.set(msgKey, row)
           row.time = event.time
           if (text) row.text = text
           row.streaming = false
