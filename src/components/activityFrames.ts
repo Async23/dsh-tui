@@ -53,6 +53,21 @@ export const FRAME_PRESETS: Record<string, FramePreset> = {
     frames: ['🐳→', '🐳↘', '🐳↓', '🐳↙', '🐳←', '🐳↖', '🐳↑', '🐳↗'],
     intervalMs: 150,
   },
+  // 鲸鱼吐泡泡：🐳 固定，泡泡从头顶冒出（大泡 ○ 先行、小泡 ∘ 跟上）向右飘走。
+  'whale-bubbles': {
+    frames: ['🐳  ', '🐳○ ', '🐳 ○', '🐳  ', '🐳∘ ', '🐳 ∘', '🐳  '],
+    intervalMs: 170,
+  },
+  // 时钟：12 个整点表盘循环（🕛 → 🕚），emoji 彩色渲染（同 moon8，不带 \uFE0E）。
+  clock: {
+    frames: ['🕛', '🕐', '🕑', '🕒', '🕓', '🕔', '🕕', '🕖', '🕗', '🕘', '🕙', '🕚'],
+    intervalMs: 300,
+  },
+  // 红绿灯：🔴 → 🟡 → 🟢 循环，一轮 1.2s，节奏从容。
+  traffic_lights: {
+    frames: ['🔴', '🟡', '🟢'],
+    intervalMs: 400,
+  },
   comet: {
     frames: ['●    ', ' ●   ', '  ●  ', '   ● ', '    ●', '   ● ', '  ●  ', ' ●   '],
     intervalMs: 160,
