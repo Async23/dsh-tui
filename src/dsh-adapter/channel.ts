@@ -3359,6 +3359,8 @@ export function createChannel(
           .compactNow(agent, signal)
           .then((result) => {
             state.notify(result ? t('compact-done') : t('compact-nothing'))
+            // Compaction quip rides the next thinking rotation (pi parity).
+            if (result) activityTracker.onCompact('done')
           })
           .catch((error: unknown) => {
             state.notify(
