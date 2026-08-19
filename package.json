@@ -114,7 +114,9 @@
     "verify:plugin-negotiation": "node --import tsx/esm scripts/verify-plugin-negotiation.ts",
     "verify:plugin-lifecycle": "node --import tsx/esm scripts/verify-plugin-lifecycle.ts",
     "verify:tips": "node --import tsx/esm scripts/verify-tips.tsx",
-    "verify:thinking-preview": "node --import tsx/esm scripts/verify-thinking-preview.tsx"
+    "verify:thinking-preview": "node --import tsx/esm scripts/verify-thinking-preview.tsx",
+    "sync:profile": "node scripts/sync-profile.mjs",
+    "sync:profile:check": "node scripts/sync-profile.mjs --check"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
