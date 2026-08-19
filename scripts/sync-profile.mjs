@@ -69,6 +69,9 @@ if (profileVersion !== pkg.version) {
 }
 
 const rels = (pkg.files ?? []).flatMap(entry => collectFiles(entry, root))
+// package.json 不在 files 里，但版本号必须跟随 worktree——否则 launcher
+// 每次启动都打印 profile 对齐提示（profile 旧于启动器）。
+if (!rels.includes('package.json')) rels.push('package.json')
 const changed = []
 for (const rel of rels) {
   const src = join(root, rel)
