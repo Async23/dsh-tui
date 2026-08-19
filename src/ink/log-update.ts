@@ -223,24 +223,14 @@ export class LogUpdate {
     // mutually exclusive anyway).
     if (this.state.reanchorPending && !altScreen) {
       this.state.reanchorPending = false
-      // An anchored layout is live: a plain in-place repaint would redraw
-      // the whole frame top-anchored, duplicating the scrollback originals
-      // the anchor just preserved, and dropping the pad would freeze the
-      // freshly drawn top rows as unreachable. Re-run the seam-aware
-      // anchored repaint instead — it keeps the bottom-anchored layout
-      // when the seam still matches (idle reanchor: prev ≈ next) and falls
-      // back to a top-anchored whole-frame repaint (pad 0) when the frame
-      // content changed meanwhile.
-      if (this.state.anchoredPad > 0 && next.screen.height < next.viewport.height) {
-        const { patches, anchoredPad } = shrinkAnchoredRepaint(
-          prev,
-          next,
-          stylePool,
-          this.state.anchoredPad,
-        )
-        this.state.anchoredPad = anchoredPad
-        return patches
-      }
+      // Plain in-place viewport repaint, and the anchored layout (if any)
+      // is superseded: pad 0. An earlier revision routed pad>0 frames
+      // through shrinkAnchoredRepaint here to preserve the anchored layout
+      // — empirically that occasionally painted nothing after alt-screen
+      // exits (verify-trace-scene's settle-gap check, ~15% flake), while
+      // the plain path is verified stable; a reanchor-with-pad is rare
+      // (idle gap right after a settle shrink) and its cost is one stale
+      // scrollback copy, not a lost paint.
       this.state.anchoredPad = 0
       return repaintViewportInPlace(prev, next, stylePool)
     }
