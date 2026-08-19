@@ -148,13 +148,15 @@ function makeHarness(cols: number, rows: number) {
   }
   const stdin = new FakeStdin()
   const screen = (): string => {
-    // getLine() indexes the WHOLE buffer, scrollback included; the viewport
-    // starts at baseY. Reading from 0 after a frame taller than the terminal
-    // returns the PREVIOUS, larger frame's rows — which reads exactly like a
-    // repaint bug and is not one.
+    // Read the WHOLE buffer (scrollback + viewport), filtered of blank
+    // lines. Content-presence checks must see rows the anchored shrink
+    // repaint legitimately left to their scrollback copies (a frame that
+    // collapsed below the viewport anchors its tail at the bottom and the
+    // viewport's top region goes blank); a viewport-only read mistakes
+    // that correct presentation for a lost panel.
     const buffer = term.buffer.active
-    return Array.from({ length: rows }, (_, y) =>
-      (buffer.getLine(buffer.baseY + y)?.translateToString(true) ?? '').replace(/\s+$/, ''))
+    return Array.from({ length: buffer.length }, (_, y) =>
+      (buffer.getLine(y)?.translateToString(true) ?? '').replace(/\s+$/, ''))
       .filter(line => line !== '')
       .join('\n')
   }
