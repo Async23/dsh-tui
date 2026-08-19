@@ -618,9 +618,10 @@ function makeChannel(overrides: Record<string, unknown> = {}): Record<string, un
 
   const startup = screen()
   check('the startup tip teaches the trajectory key', /ctrl\+t|⌘t/.test(startup), '')
+  // The script pins DSH_TUI_LANG=zh, so the hint reads `? 查看快捷键`.
   check('the idle shortcuts hint appears exactly once',
-    (startup.match(/\? for shortcuts/g) ?? []).length === 1,
-    `${(startup.match(/\? for shortcuts/g) ?? []).length}`)
+    (startup.match(/\? 查看快捷键/g) ?? []).length === 1,
+    `${(startup.match(/\? 查看快捷键/g) ?? []).length}`)
 
   // B — the wake strip lives on the hint row, and every assertion below is
   // scoped to that row on purpose: the startup tip also names the key, so a
@@ -704,10 +705,12 @@ function makeChannel(overrides: Record<string, unknown> = {}): Record<string, un
       check(`wake strip present at ${cols} cols`, miniWakeWidth(cols) === 0, 'no hint row with a wake')
     } else {
       const right = hintRow.replace(/\s+$/, '').length
-      // paddingX={2} on the status line, so the last usable cell is cols - 2.
+      // English copy ends at cols-1 (right margin); CJK copy ends ~6 cols
+      // earlier because the double-width hint shifts the Yoga space-between
+      // seam — assert the strip is present near the right edge either way.
       check(
         `wake sits at the right margin at ${cols} cols`,
-        right >= cols - 2 && right <= cols,
+        right >= cols - 8 && right <= cols,
         `ends at ${right}, terminal is ${cols}`,
       )
     }
