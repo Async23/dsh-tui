@@ -79,7 +79,13 @@ export function AssistantThinkingMessage({
         <Text dimColor italic>
           ∴ {t('thinking-label')}{duration}…
         </Text>
-        <Box flexDirection="column" paddingLeft={2}>
+        <Box
+          flexDirection="column"
+          paddingLeft={2}
+          height={PREVIEW_ROWS}
+          flexShrink={0}
+          overflow="hidden"
+        >
           {rows.map((line, i) => (
             <Text
               key={i}

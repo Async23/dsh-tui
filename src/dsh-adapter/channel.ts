@@ -48,8 +48,12 @@ import { homeDir, LEGACY_DATA_DIR } from '../utils/paths.js'
 import { extractMentions } from '../utils/mentions.js'
 import { t } from '../i18n.js'
 import { modeDisplayName, resolveSessionModes, type SessionModeSpec } from '../sessionModes.js'
+import { normalizeStatusBar, normalizeToolBackground, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import type { SpinnerMode } from '../components/Spinner/spinnerMode.js'
 import { ActivityTracker, type ActivityState } from 'dsh-working-activity/status'
+import type { TrackerConfig } from 'dsh-working-activity/status'
+import { featureOn } from 'dsh-working-activity/config'
+import { readActivityConfig } from '../activityPrefs.js'
 import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime, type TuiWorkspaceCommand, type TuiWorkspaceCommandResult, type TuiWorkspaceTarget } from './workspaces.js'
 import { getHostCommandTrees } from './command-trees.js'
@@ -466,6 +470,10 @@ export interface Channel {
   /** Thinking-block display (`preview` = 2-3 line live stream + fold per
    *  step; `full` = expanded until turn end). */
   readonly thinkingFold: 'preview' | 'full'
+  /** Live tool-card background treatment. */
+  readonly toolBackground: ToolBackground
+  /** Live status-footer visibility and compactness preferences. */
+  readonly statusBar: Readonly<StatusBarConfig>
   /** Whether the in-process working-activity line is shown (config.activity). */
   readonly activityEnabled: boolean
   /** Whether the segmented context bar row shows in the status footer
@@ -797,10 +805,18 @@ export interface ChannelState {
   diffLayout: 'auto' | 'split' | 'unified'
   /** Thinking-block display (see the public Channel type). */
   thinkingFold: 'preview' | 'full'
+  /** Tool-card background treatment (see the public Channel type). */
+  toolBackground: ToolBackground
+  /** Status-footer preferences (see the public Channel type). */
+  statusBar: StatusBarConfig
   /** Apply a diff-layout change (see the public Channel type). */
   setDiffLayout(layout: 'auto' | 'split' | 'unified'): void
   /** Apply a thinking-display change (see the public Channel type). */
   setThinkingFold(mode: 'preview' | 'full'): void
+  /** Apply a tool-card background change. */
+  setToolBackground(background: ToolBackground): void
+  /** Apply status-footer preference changes. */
+  setStatusBar(config: Partial<StatusBarConfig>): void
   /** Working-activity display switch (see the public Channel type). */
   activityEnabled: boolean
   /** Context bar row switch (see the public Channel type). */
@@ -1226,6 +1242,10 @@ export function createChannel(
     /** Thinking-block display; default `preview` (2-3 line live preview,
      *  fold per step) — `full` keeps thinking expanded until turn end. */
     thinkingFold?: 'preview' | 'full'
+    /** Tool-card background treatment; default `none`. */
+    toolBackground?: ToolBackground
+    /** Status-footer field visibility and compactness. */
+    statusBar?: Partial<StatusBarConfig>
     /** Show the segmented context bar row in the status footer; default on
      *  (cordis.yml `contextBar: false` hides it, issue #29). */
     contextBar?: boolean
@@ -1884,6 +1904,8 @@ export function createChannel(
     activityFrames: options.activityFrames,
     diffLayout: options.diffLayout ?? 'auto',
     thinkingFold: options.thinkingFold ?? 'preview',
+    toolBackground: normalizeToolBackground(options.toolBackground),
+    statusBar: normalizeStatusBar(options.statusBar),
     activityEnabled: options.activity !== false,
     contextBarEnabled: options.contextBar !== false,
     agentPreset: options.agentPreset,
@@ -2535,10 +2557,16 @@ export function createChannel(
       streaming = undefined
       reasoning = undefined
       // Stale sealed/thinking bookkeeping belongs to the OLD agent's rows;
-      // keep it out of the next turn's settle logs and revive cache.
+      // keep it out of the next turn's settle logs and revive cache. Event
+      // sequence numbers restart in the fresh session, so its dedupe ledgers
+      // must not retain the old session's sequence ids.
       sealedReasoning.length = 0
       lastReasoningRow = undefined
       toolCards.clear()
+      handledAssistantMessages.clear()
+      handledAssistantChunks.clear()
+      assistantRowsByStep.clear()
+      lastTextDelta.clear()
       nextRowId = 0
       state.rows.length = 0
       // Goal/todo/title are session-scoped; the replay re-derives them for
@@ -2566,6 +2594,7 @@ export function createChannel(
       state.tpsSamples = []
       state.lastUsage = undefined
       state.workingActivity = undefined
+      state.loadedContext = undefined
       state.contextWindow = undefined
       state.contextSegments = {
         system: 0,
@@ -2763,6 +2792,8 @@ export function createChannel(
       agent = handle.agent
       currentHandle = handle
       bindAgent()
+      // Model-switch quip rides the fresh tracker (pi parity).
+      activityTracker.onModelSwitch(model)
       refreshCommandList()
       void refreshLoadedContext()
       void refreshSkillCommands()
@@ -2834,6 +2865,21 @@ export function createChannel(
     setThinkingFold(mode) {
       if (mode === state.thinkingFold) return
       state.thinkingFold = mode
+      state.emit()
+    },
+    setToolBackground(background) {
+      const normalized = normalizeToolBackground(background)
+      if (normalized === state.toolBackground) return
+      state.toolBackground = normalized
+      state.emit()
+    },
+    setStatusBar(config) {
+      const next = normalizeStatusBar({ ...state.statusBar, ...config })
+      const changed = Object.keys(next).some(key =>
+        next[key as keyof StatusBarConfig] !== state.statusBar[key as keyof StatusBarConfig],
+      )
+      if (!changed) return
+      state.statusBar = next
       state.emit()
     },
     setActivityFrames(name) {
@@ -3313,6 +3359,8 @@ export function createChannel(
           .compactNow(agent, signal)
           .then((result) => {
             state.notify(result ? t('compact-done') : t('compact-nothing'))
+            // Compaction quip rides the next thinking rotation (pi parity).
+            if (result) activityTracker.onCompact('done')
           })
           .catch((error: unknown) => {
             state.notify(
@@ -4025,6 +4073,38 @@ ${output}
     | undefined
   /** Tool cards by callId, so tool/result can settle the running card. */
   const toolCards = new Map<string, ChatRow>()
+  /**
+   * Session events are delivered live and can also be replayed around a
+   * reconnect. A repeated sealed message must not create a second assistant
+   * row for the same durable sequence number.
+   */
+  const handledAssistantMessages = new Set<number>()
+  const handledAssistantChunks = new Set<number>()
+  const assistantRowsByStep = new Map<string, ChatRow>()
+  const lastTextDelta = new Map<ChatRow, string>()
+  const stepKey = (turn: number, step: number): string => `${turn}:${step}`
+
+  /** Append a stream delta idempotently. Providers normally send a pure
+   * delta, but reconnect/proxy paths can resend a cumulative prefix or a
+   * delta whose beginning overlaps the previous tail. Merge the overlap
+   * instead of blindly concatenating it into the visible transcript. */
+  const appendTextDelta = (row: ChatRow, delta: string): void => {
+    if (delta === '') return
+    if (lastTextDelta.get(row) === delta) return
+    lastTextDelta.set(row, delta)
+    if (delta.startsWith(row.text)) {
+      row.text = delta
+      return
+    }
+    const maxOverlap = Math.min(row.text.length, delta.length, 4096)
+    for (let size = maxOverlap; size > 0; size--) {
+      if (row.text.endsWith(delta.slice(0, size))) {
+        row.text += delta.slice(size)
+        return
+      }
+    }
+    row.text += delta
+  }
 
   /** The host-plane tools registry (dsh-tools). Resolved once; absent in
    *  bare embedders — every presenter call soft-fails to undefined and the
@@ -4078,11 +4158,21 @@ ${output}
     (content ?? []).find(block => block.type === 'text')?.text.trim() ?? ''
 
   const ensureStreaming = (seq?: number): ChatRow => {
-    if (streaming === undefined) {
-      streaming = { id: nextRowId, kind: 'assistant', text: '', streaming: true, ...seq !== undefined ? { seq } : {} }
-      nextRowId += 1
-      state.rows.push(streaming)
+    if (streaming !== undefined) return streaming
+    // A reconnect can replay the first delta after the sealed message was
+    // already observed. Reuse that durable row instead of opening a second
+    // assistant bubble for the same event sequence.
+    const existing = seq === undefined
+      ? undefined
+      : [...state.rows].reverse().find(row => row.kind === 'assistant' && row.seq === seq)
+    if (existing !== undefined) {
+      existing.streaming = true
+      streaming = existing
+      return existing
     }
+    streaming = { id: nextRowId, kind: 'assistant', text: '', streaming: true, ...seq !== undefined ? { seq } : {} }
+    nextRowId += 1
+    state.rows.push(streaming)
     return streaming
   }
 
@@ -4228,6 +4318,13 @@ ${output}
    *  using it would rebuild a second thinking block per step. */
   let replaying = false
   const replayEvents = (events: readonly SessionEvent[]): void => {
+    // Event sequence numbers restart with a replacement session; reset the
+    // idempotency ledger before replay so an old session cannot suppress a
+    // legitimate message in the new transcript.
+    handledAssistantMessages.clear()
+    handledAssistantChunks.clear()
+    assistantRowsByStep.clear()
+    lastTextDelta.clear()
     replaying = true
     try {
       for (const event of prepareReplayEvents(events)) renderEvent(event)
@@ -4316,6 +4413,8 @@ ${output}
         break
       }
       case 'assistant/chunk': {
+        if (handledAssistantChunks.has(event.seq)) break
+        handledAssistantChunks.add(event.seq)
         const chunk = event.data.chunk
         if (chunk.type === 'text-delta') {
           if (chunk.text) {
@@ -4323,12 +4422,19 @@ ${output}
             // window (see foldLiveReasoning) — before this text grows the
             // transcript and pushes the block into scrollback.
             foldLiveReasoning('first text token')
-            ensureStreaming(event.seq).text += chunk.text
-            state.responseChars += chunk.text.length
+            const key = stepKey(event.data.turn, event.data.step)
+            const row = assistantRowsByStep.get(key) ?? ensureStreaming(event.seq)
+            assistantRowsByStep.set(key, row)
+            streaming = row
+            row.streaming = true
+            const before = row.text.length
+            appendTextDelta(row, chunk.text)
+            state.responseChars += Math.max(0, row.text.length - before)
           }
         } else if (chunk.type === 'reasoning-delta') {
           if (chunk.text) {
-            ensureReasoning(event.seq, event.data.turn, event.data.step).text += chunk.text
+            const row = ensureReasoning(event.seq, event.data.turn, event.data.step)
+            appendTextDelta(row, chunk.text)
           }
         }
         const step = tpsStep
@@ -4351,6 +4457,8 @@ ${output}
         break
       }
       case 'assistant/message': {
+        if (handledAssistantMessages.has(event.seq)) break
+        handledAssistantMessages.add(event.seq)
         const text = textOf(event.data.message.content)
         // Replay without chunk deltas (prepareReplayEvents drops settled
         // ones): rebuild the reasoning row from the sealed message's
@@ -4380,8 +4488,23 @@ ${output}
         // anyway leaves an empty `●` bullet in the transcript. A pre-existing
         // streaming row always has text (ensureStreaming is only reached on
         // non-empty text deltas), so only create one when text arrives.
-        const row = streaming ?? (text ? ensureStreaming(event.seq) : undefined)
+        // Key the step→row ledger only when the event carries a durable
+        // turn/step; a message without them must never collide onto a
+        // previous step's row (a bare `undefined:undefined` key would make
+        // every turn/step-less message reuse the FIRST one's assistant row).
+        const msgTurn = event.data.turn
+        const msgStep = event.data.step
+        const msgKey = msgTurn !== undefined && msgStep !== undefined
+          ? stepKey(msgTurn, msgStep)
+          : undefined
+        const row = (msgKey !== undefined ? assistantRowsByStep.get(msgKey) : undefined) ?? streaming ??
+          (text
+            ? ([...state.rows].reverse().find(candidate =>
+                candidate.kind === 'assistant' && candidate.seq === event.seq,
+              ) ?? ensureStreaming(event.seq))
+            : undefined)
         if (row !== undefined) {
+          if (msgKey !== undefined) assistantRowsByStep.set(msgKey, row)
           row.time = event.time
           if (text) row.text = text
           row.streaming = false
@@ -4686,11 +4809,39 @@ ${output}
   // Live subscription list and activity timer, rebound to every replacement
   // agent so no status from the previous session can leak across a swap.
   let agentSubscriptions: Array<() => void> = []
-  let activityTracker = new ActivityTracker({
-    phrases: true,
-    detailLimit: 40,
-    showIdle: false,
-  })
+  /** Tracker knobs + custom actions from the persisted pi-style config
+   *  (`~/.dsh-tui/working-activity.json`); a missing file means lively
+   *  defaults (all eggs on). */
+  const activityPrefsSnapshot = (): {
+    config: TrackerConfig
+    customActions?: Readonly<Record<string, readonly string[]>>
+  } => {
+    const cfg = readActivityConfig()
+    if (cfg === undefined) {
+      return { config: { phrases: true, detailLimit: 40, showIdle: false } }
+    }
+    return {
+      config: {
+        phrases: featureOn(cfg, 'phrases'),
+        detailLimit: 40,
+        showIdle: false,
+        features: {
+          rareEggs: featureOn(cfg, 'rareEggs'),
+          weekend: featureOn(cfg, 'weekend'),
+          holidays: featureOn(cfg, 'holidays'),
+          nightPhrases: featureOn(cfg, 'nightPhrases'),
+        },
+        customPhrases: cfg.customPhrases,
+        showTokPerSec: cfg.showTokPerSec,
+        workRemindAt: cfg.workRemindAt,
+      },
+      customActions: cfg.customActions,
+    }
+  }
+  let activityTracker = (() => {
+    const prefs = activityPrefsSnapshot()
+    return new ActivityTracker(prefs.config, Date.now, prefs.customActions)
+  })()
   let activityTickTimer: NodeJS.Timeout | undefined
 
   const stopActivityTick = (): void => {
@@ -4713,11 +4864,8 @@ ${output}
   const bindAgent = (): void => {
     for (const dispose of agentSubscriptions) dispose()
     stopActivityTick()
-    activityTracker = new ActivityTracker({
-      phrases: true,
-      detailLimit: 40,
-      showIdle: false,
-    })
+    const prefs = activityPrefsSnapshot()
+    activityTracker = new ActivityTracker(prefs.config, Date.now, prefs.customActions)
     activityTracker.onAgentStatus(agent.status)
     renderWorkingActivity()
     activityTickTimer = setInterval(() => {
@@ -4807,6 +4955,14 @@ ${output}
         // publish never throws into this arm.
         messageObserver?.publish(session, event)
         activityTracker.onSessionEvent(event)
+        // Interrupt quip: an aborted/interrupted turn ends the round; the
+        // comeback copy shows on the next thinking rotation (pi parity).
+        if ((event as { type: string }).type === 'turn/end') {
+          const reason = (event.data as { reason?: { kind?: string } }).reason
+          if (reason?.kind === 'aborted' || reason?.kind === 'interrupted') {
+            activityTracker.onInterrupted()
+          }
+        }
         renderWorkingActivity()
         // Mode-affecting atoms fold into the Shift+Tab mode indicator the
         // moment they land (whether appended by cycleMode or by hand).
@@ -4876,6 +5032,8 @@ ${output}
           // only show a branch for sessions this install actually used — which
           // is exactly what the column claims.
           noteBranch(agent.session.id, branch)
+          // Feed the working line so git tools can show ` · git <branch>`.
+          activityTracker.onGitBranch(branch)
           state.emit()
         }
       })

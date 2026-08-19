@@ -52,7 +52,7 @@ const editTool = {
 }
 
 /** Boot one headless terminal at the given width and render the card. */
-async function renderAt(cols, tool, diffLayout = 'auto') {
+async function renderAt(cols, tool, diffLayout = 'auto', toolBackground = 'none') {
   const rows = 30
   const term = new XTerm({ cols, rows, scrollback: 0, allowProposedApi: true })
   class FakeStdout extends Writable {
@@ -62,7 +62,7 @@ async function renderAt(cols, tool, diffLayout = 'auto') {
     _write(chunk, _e, cb) { term.write(String(chunk), cb) }
   }
   const app = await render(
-    React.createElement(AssistantToolUseMessage, { tool, addMargin: false, verbose: false, diffLayout }),
+    React.createElement(AssistantToolUseMessage, { tool, addMargin: false, verbose: false, diffLayout, toolBackground }),
     { stdout: new FakeStdout(), debug: true, exitOnCtrlC: false },
   )
   // cli-highlight loads lazily on first use; give it room to land so the
@@ -97,7 +97,23 @@ async function renderAt(cols, tool, diffLayout = 'auto') {
     check('关键字使用语法色（syntaxKeyword）', defX > 0 && fgAt(defX, pairRow) === 0x8fa8e8, `fg=${fgAt(Math.max(defX, 0), pairRow).toString(16)}`)
   }
   if (ctxRow >= 0) {
-    check('上下文行底色为浅档卡片色', bgAt(6, ctxRow) === 0x242b3a, `bg=${bgAt(6, ctxRow).toString(16)}`)
+    check('默认 none 档：上下文行无卡片底色', bgAt(6, ctxRow) === 0xffffff, `bg=${bgAt(6, ctxRow).toString(16)}`)
+  }
+}
+
+// ---- 1b. toolBackground 档位：subtle/strong 给上下文行上浅/深卡片底色
+{
+  const { lines, bgAt } = await renderAt(120, editTool, 'auto', 'subtle')
+  const row = lines.findIndex(line => line.includes('# tail'))
+  if (row >= 0) {
+    check('subtle 档：上下文行为浅档卡片底色', bgAt(6, row) === 0x1c2330, `bg=${bgAt(6, row).toString(16)}`)
+  }
+}
+{
+  const { lines, bgAt } = await renderAt(120, editTool, 'auto', 'strong')
+  const row = lines.findIndex(line => line.includes('# tail'))
+  if (row >= 0) {
+    check('strong 档：上下文行为深档卡片底色', bgAt(6, row) === 0x242b3a, `bg=${bgAt(6, row).toString(16)}`)
   }
 }
 
@@ -110,9 +126,9 @@ async function renderAt(cols, tool, diffLayout = 'auto') {
   check('窄屏不出现 │ 分隔', !s.includes('│'))
   const bodyRow = lines.findIndex(line => line.includes('# tail'))
   if (bodyRow >= 0) {
-    check('统一式卡体方块底色（文本处有）', bgAt(lines[bodyRow]!.indexOf('# tail'), bodyRow) === 0x1c2330,
+    check('默认 none 档：统一式卡体无底色（文本处）', bgAt(lines[bodyRow]!.indexOf('# tail'), bodyRow) === 0xffffff,
       `bg=${bgAt(lines[bodyRow]!.indexOf('# tail'), bodyRow).toString(16)}`)
-    check('统一式卡体方块底色（行尾也有）', bgAt(69, bodyRow) === 0x1c2330,
+    check('默认 none 档：统一式卡体无底色（行尾）', bgAt(69, bodyRow) === 0xffffff,
       `bg=${bgAt(69, bodyRow).toString(16)}`)
   }
 }
