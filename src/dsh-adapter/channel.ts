@@ -2204,6 +2204,10 @@ export function createChannel(
       // counters land back at the rewind point, matching the fork).
       streaming = undefined
       reasoning = undefined
+      // Stale sealed/thinking bookkeeping belongs to the OLD agent's rows;
+      // keep it out of the next turn's settle logs and revive cache.
+      sealedReasoning.length = 0
+      lastReasoningRow = undefined
       toolCards.clear()
       nextRowId = 0
       state.rows.length = 0
@@ -2237,7 +2241,13 @@ export function createChannel(
         thinking: 0,
         tools: 0,
       }
-      for (const event of prepareReplayEvents(seed)) renderEvent(event)
+      replayEvents(seed)
+      settleStreaming()
+      // A seed ending mid-turn replays a turn/start that set working=true;
+      // the boot path resets this after replay — mirror it here so an idle
+      // rewound agent doesn't sit with a live spinner (a still-running
+      // agent re-asserts on its next event).
+      state.working = handle.agent.status === 'running'
       // Rebind subscriptions to the new agent, then free the old one.
       const oldHandle = currentHandle
       const sourceSessionId = String(agent.session.id)
@@ -2362,6 +2372,10 @@ export function createChannel(
       // rewindTo, plus the context window which the replay re-derives).
       streaming = undefined
       reasoning = undefined
+      // Stale sealed/thinking bookkeeping belongs to the OLD agent's rows;
+      // keep it out of the next turn's settle logs and revive cache.
+      sealedReasoning.length = 0
+      lastReasoningRow = undefined
       toolCards.clear()
       nextRowId = 0
       state.rows.length = 0
@@ -2414,8 +2428,12 @@ export function createChannel(
         thinking: 0,
         tools: 0,
       }
-      for (const event of prepareReplayEvents(handle.agent.session.events)) renderEvent(event)
+      replayEvents(handle.agent.session.events)
       settleStreaming()
+      // A log ending mid-turn replays a turn/start that set working=true;
+      // mirror the boot path's post-replay reset (a still-running agent
+      // re-asserts on its next event).
+      state.working = handle.agent.status === 'running'
       // Rebind subscriptions to the resumed agent, then free the old one.
       const oldHandle = currentHandle
       const previousSessionId = String(agent.session.id)
@@ -2521,6 +2539,10 @@ export function createChannel(
       }
       streaming = undefined
       reasoning = undefined
+      // Stale sealed/thinking bookkeeping belongs to the OLD agent's rows;
+      // keep it out of the next turn's settle logs and revive cache.
+      sealedReasoning.length = 0
+      lastReasoningRow = undefined
       toolCards.clear()
       nextRowId = 0
       state.rows.length = 0
@@ -2698,6 +2720,10 @@ export function createChannel(
       }
       streaming = undefined
       reasoning = undefined
+      // Stale sealed/thinking bookkeeping belongs to the OLD agent's rows;
+      // keep it out of the next turn's settle logs and revive cache.
+      sealedReasoning.length = 0
+      lastReasoningRow = undefined
       toolCards.clear()
       nextRowId = 0
       state.rows.length = 0
@@ -2734,8 +2760,10 @@ export function createChannel(
         thinking: 0,
         tools: 0,
       }
-      for (const event of prepareReplayEvents(seed)) renderEvent(event)
+      replayEvents(seed)
       settleStreaming()
+      // Same mid-turn-seed spinner reset as resume above.
+      state.working = handle.agent.status === 'running'
       const oldHandle = currentHandle
       agent = handle.agent
       currentHandle = handle
@@ -4063,13 +4091,39 @@ ${output}
     return streaming
   }
 
-  const ensureReasoning = (seq?: number): ChatRow => {
+  /** Latest reasoning row keyed by its (turn, step) — lets a resumed
+   *  mid-step stream REVIVE the row the replay sealed (crash-orphan tail:
+   *  replay folds the partial row, live continuation chunks would
+   *  otherwise open a SECOND row for the same step, splitting one
+   *  thinking block in two). */
+  let lastReasoningRow: { row: ChatRow; turn: number; step: number } | undefined
+
+  const ensureReasoning = (seq?: number, turn?: number, step?: number): ChatRow => {
     if (reasoning === undefined) {
+      // Same-step revive: the sealed row is this step's thinking — continue
+      // it (durationMs carried over via reasoningStart back-dating).
+      if (
+        lastReasoningRow !== undefined &&
+        turn !== undefined &&
+        lastReasoningRow.turn === turn &&
+        lastReasoningRow.step === step
+      ) {
+        reasoning = lastReasoningRow.row
+        reasoning.streaming = true
+        const sealedIdx = sealedReasoning.indexOf(reasoning)
+        if (sealedIdx !== -1) sealedReasoning.splice(sealedIdx, 1)
+        reasoningStart = Date.now() - (reasoning.durationMs ?? 0)
+        logForDebugging('thinking: revived sealed reasoning row for same step')
+        return reasoning
+      }
       reasoningStart = Date.now()
       reasoning = { id: nextRowId, kind: 'reasoning', text: '', streaming: true, ...seq !== undefined ? { seq } : {} }
       nextRowId += 1
       state.rows.push(reasoning)
       logForDebugging('thinking: reasoning row open (expanded)')
+    }
+    if (turn !== undefined && step !== undefined) {
+      lastReasoningRow = { row: reasoning, turn, step }
     }
     return reasoning
   }
@@ -4170,6 +4224,23 @@ ${output}
     }
   }
 
+  /** True while the durable transcript is being replayed (boot /resume /
+   *  rewind / model-switch fork). The assistant/message reasoning-rebuild
+   *  branch below must run ONLY on this path: in a live stream the chunks
+   *  already created the reasoning row, and foldLiveReasoning clears the
+   *  `reasoning` handle before assistant/message arrives — so
+   *  `reasoning === undefined` alone cannot tell replay from live, and
+   *  using it would rebuild a second thinking block per step. */
+  let replaying = false
+  const replayEvents = (events: readonly SessionEvent[]): void => {
+    replaying = true
+    try {
+      for (const event of prepareReplayEvents(events)) renderEvent(event)
+    } finally {
+      replaying = false
+    }
+  }
+
   const renderEvent = (event: SessionEvent): void => {
     switch (event.type) {
       case 'user/message': {
@@ -4261,7 +4332,9 @@ ${output}
             state.responseChars += chunk.text.length
           }
         } else if (chunk.type === 'reasoning-delta') {
-          if (chunk.text) ensureReasoning(event.seq).text += chunk.text
+          if (chunk.text) {
+            ensureReasoning(event.seq, event.data.turn, event.data.step).text += chunk.text
+          }
         }
         const step = tpsStep
         if (
@@ -4286,11 +4359,15 @@ ${output}
         const text = textOf(event.data.message.content)
         // Replay without chunk deltas (prepareReplayEvents drops settled
         // ones): rebuild the reasoning row from the sealed message's
-        // reasoning blocks. Live streaming never reaches this — chunks
-        // created and hold the live row. Pushed BEFORE the assistant row
-        // so the transcript order matches the live stream; settled
-        // (folded) immediately, durationMs unknown without a live clock.
-        if (reasoning === undefined) {
+        // reasoning blocks. Replay-only — gated on the `replaying` flag,
+        // not on `reasoning === undefined`: a live stream's chunks already
+        // created the row, and foldLiveReasoning has cleared the `reasoning`
+        // handle by the time this event lands, so the undefined check alone
+        // would rebuild a duplicate thinking block per step. Pushed BEFORE
+        // the assistant row so the transcript order matches the live
+        // stream; settled (folded) immediately, durationMs unknown without
+        // a live clock.
+        if (replaying && reasoning === undefined) {
           const reasoningText = event.data.message.content
             .map(block => (block.type === 'reasoning' ? block.text : ''))
             .join('')
@@ -4603,7 +4680,7 @@ ${output}
   }
 
   // Replay the durable transcript first, then follow live events.
-  for (const event of prepareReplayEvents(agent.session.events)) renderEvent(event)
+  replayEvents(agent.session.events)
   settleStreaming()
   // Attached to an idle agent: any replayed turn/start belongs to a previous
   // session run, so the spinner must not come up on boot.

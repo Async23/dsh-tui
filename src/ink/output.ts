@@ -497,7 +497,7 @@ export default class Output {
       this.packedChars -= oldest.value.length
       this.packedLines.delete(oldest.value)
     }
-    this.packedLines.set(line, run)
+    this.packedLines.set(detachString(line), run)
     this.packedChars += line.length
   }
 
@@ -1223,8 +1223,11 @@ function writeLineToScreen(
     offsetX += isWideCharacter ? 2 : 1
   }
 
-  // Commit the recording for the packed fast path (complete runs only).
-  if (runAlive && run !== undefined && packed !== undefined && run.lastX >= run.baseX) {
+  // Commit the recording for the packed fast path. Complete NON-EMPTY
+  // runs only: an empty line ('' from split('\n'), zero-width-only lines)
+  // records zero entries and would commit a degenerate run whose replay
+  // writes NaN damage (gaps[0] undefined) and poisons the whole frame diff.
+  if (runAlive && run !== undefined && packed !== undefined && run.gaps.length > 0) {
     packed.commit(line, run)
   }
 

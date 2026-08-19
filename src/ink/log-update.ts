@@ -109,6 +109,11 @@ export class LogUpdate {
   /** Drop the previous-output state after the process resumes from suspension (SIGCONT) so terminal content is not clobbered. */
   reset(): void {
     this.state.previousOutput = ''
+    // Any anchored-pad offset is void: the next frame repaints from the
+    // physical cursor without it (SIGCONT resume, repaint(), forceRedraw,
+    // and alt-screen entry all land here — without the clear, rows the
+    // repaint just drew at the viewport top would stay marked unreachable).
+    this.state.anchoredPad = 0
   }
 
   private renderFullFrame(frame: Frame): Diff {
@@ -198,11 +203,13 @@ export class LogUpdate {
     // _after_ the viewport change which means calcuating text wrapping.
     // Resizing is a rare enough event that it's not practically a big issue.
     if (
-      next.viewport.height < prev.viewport.height ||
+      next.viewport.height !== prev.viewport.height ||
       (prev.viewport.width !== 0 && next.viewport.width !== prev.viewport.width)
     ) {
       // A resize re-aligns the whole terminal (reflow rewraps scrollback):
       // any anchored-pad offset from a previous shrink repaint is void.
+      // Height-only growth is included: the shrink branches below would
+      // otherwise mix the old and new viewport heights in their geometry.
       this.state.anchoredPad = 0
       return fullResetSequence_CAUSES_FLICKER(next, 'resize', stylePool)
     }
@@ -216,6 +223,25 @@ export class LogUpdate {
     // mutually exclusive anyway).
     if (this.state.reanchorPending && !altScreen) {
       this.state.reanchorPending = false
+      // An anchored layout is live: a plain in-place repaint would redraw
+      // the whole frame top-anchored, duplicating the scrollback originals
+      // the anchor just preserved, and dropping the pad would freeze the
+      // freshly drawn top rows as unreachable. Re-run the seam-aware
+      // anchored repaint instead — it keeps the bottom-anchored layout
+      // when the seam still matches (idle reanchor: prev ≈ next) and falls
+      // back to a top-anchored whole-frame repaint (pad 0) when the frame
+      // content changed meanwhile.
+      if (this.state.anchoredPad > 0 && next.screen.height < next.viewport.height) {
+        const { patches, anchoredPad } = shrinkAnchoredRepaint(
+          prev,
+          next,
+          stylePool,
+          this.state.anchoredPad,
+        )
+        this.state.anchoredPad = anchoredPad
+        return patches
+      }
+      this.state.anchoredPad = 0
       return repaintViewportInPlace(prev, next, stylePool)
     }
 
@@ -298,7 +324,7 @@ export class LogUpdate {
     // Use <= (not <) because even when next height equals viewport height,
     // the scrollback depth from the previous render differs from a fresh
     // render.
-    if (prevHadScrollback && nextFitsViewport && isShrinking) {
+    if (!altScreen && prevHadScrollback && nextFitsViewport && isShrinking) {
       // Anchored tail repaint (see shrinkAnchoredRepaint): rows already in
       // scrollback keep their originals; only the changed tail is
       // repainted. The former full reset here reprinted the whole short
@@ -811,7 +837,10 @@ function shrinkAnchoredRepaint(
   renderFrameSlice(screen, next, startY, height, stylePool, false)
   return {
     patches: [{ type: 'stdout', content: anchor }, ...screen.diff],
-    anchoredPad: skip,
+    // Cap at height-1: a seam that matches every row of a very short frame
+    // must not mark the WHOLE frame as scrollback — the last row (the
+    // input area) stays live and repaintable.
+    anchoredPad: Math.min(skip, height - 1),
   }
 }
 

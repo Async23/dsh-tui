@@ -1018,6 +1018,9 @@ export function replayCellRun(
   run: CellRun,
 ): boolean {
   if (x < 0 || y < 0 || y >= screen.height || x >= screen.width) return false
+  // Defensive: an empty run has no cells and no span — its damage math
+  // would be NaN. Callers never cache empty runs, but a future one might.
+  if (run.gaps.length === 0) return false
   const cells = screen.cells
   const width = screen.width
   let ox = x
@@ -1042,8 +1045,16 @@ export function replayCellRun(
         return false
       }
     } else {
-      // SpacerTail: G1 fires when it overwrites a Wide cell.
-      if (prevW === CellWidth.Wide) return false
+      // SpacerTail: G1 fires when it overwrites a Wide cell; G2's
+      // SpacerHead variant (prev SpacerTail under a non-SpacerTail write)
+      // can't occur in a recorded run — SpacerHead is never recorded — but
+      // keep the guard honest for that day soft-wrap starts recording it.
+      if (
+        prevW === CellWidth.Wide ||
+        (newW !== CellWidth.SpacerTail && prevW === CellWidth.SpacerTail)
+      ) {
+        return false
+      }
     }
     cells[ci] = run.charIdxs[i]!
     cells[ci + 1] = w1
