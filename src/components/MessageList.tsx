@@ -135,6 +135,30 @@ export function MessageList({
   const HEIGHTS_CACHE_MAX = 5000
   const heightsRef = React.useRef(new Map<number, number>())
   const localRefs = React.useRef(new Map<number, DOMElement>())
+  /** Row ids that have been mounted (and therefore painted into the
+   *  terminal) at least once. The sticky window may skip a row ONLY after
+   *  this: an unpainted row above the window has no scrollback copy, so
+   *  skipping it would erase it from the user's history entirely — preset
+   *  history at boot (session resume) landed exactly there. Cleared when
+   *  the list head changes identity (rewind / new session / loadOlder
+   *  prepends restored rows that must paint again). */
+  const paintedOnceRef = React.useRef<Set<number>>(new Set())
+  const paintedBaseRef = React.useRef<number | undefined>(undefined)
+  /** Window-expansion hold: after the window WIDENS (new rows mounted),
+   *  refuse to tighten for a short hold so the mounted rows actually reach
+   *  the terminal. React commits within one ink frame coalesce — a render
+   *  that mounts rows followed by the measure-tick re-render that drops
+   *  them paints only the DROPPED layout, and never-mounted rows have no
+   *  scrollback copy (preset history at boot vanished — CI
+   *  repro-inline-scrollback). After the hold, tightening is visually
+   *  free: those rows sit in scrollback and the diff skips them. */
+  const lastStartRef = React.useRef<number>(-1)
+  const holdUntilRef = React.useRef<number>(0)
+  const listHeadId = visibleRows[0]?.id
+  if (listHeadId !== undefined && paintedBaseRef.current !== undefined && listHeadId !== paintedBaseRef.current) {
+    paintedOnceRef.current = new Set()
+  }
+  if (listHeadId !== undefined) paintedBaseRef.current = listHeadId
   /** Content-space offset of visibleRows[0] (header + dividers), measured. */
   const baseRef = React.useRef<number | null>(null)
   const measureQueuedRef = React.useRef(false)
@@ -214,7 +238,36 @@ export function MessageList({
       covered -= heightOf(visibleRows[floor])
       floor--
     }
-    start = floor + 1
+    // The walk exhausted the whole list: every row is within coverage —
+    // floor+1 here would drop row 0 (its content then has no terminal copy
+    // anywhere; preset history lost its head — CI repro-inline-scrollback).
+    start = floor === 0 && covered > 0 ? 0 : floor + 1
+    // Paint-at-least-once: extend the window over any row that has never
+    // been mounted. A row the window skips keeps only its terminal/scrollback
+    // copy — a row that was never painted has NO copy anywhere, so preset
+    // history (session resume, repro-inline-scrollback's #39 family) would
+    // vanish from the user's scrollback. Extending mounts everything above
+    // on the first frame (topPad 0, full paint), then the set fills and the
+    // window tightens to the tail.
+    const paintedOnce = paintedOnceRef.current
+    for (let i = 0; i < start; i++) {
+      if (!paintedOnce.has(visibleRows[i]!.id)) {
+        start = i
+        break
+      }
+    }
+    // Expansion hold — AFTER the extension so it tracks the FINAL window:
+    // never tighten within the hold window after a widen. React commits
+    // inside one ink frame coalesce; a mount followed by the measure-tick
+    // re-render that drops the row paints only the DROPPED layout, and the
+    // row's painted-once mark (set at the first commit) is a lie.
+    if (lastStartRef.current >= 0 && start > lastStartRef.current && performance.now() < holdUntilRef.current) {
+      start = lastStartRef.current
+    }
+    if (lastStartRef.current < 0 || start < lastStartRef.current) {
+      holdUntilRef.current = performance.now() + 120
+    }
+    lastStartRef.current = start
   }
   if (forceMountRowId !== undefined && forceMountRowId !== null) {
     const idx = visibleRows.findIndex(row => row.id === forceMountRowId)
@@ -257,6 +310,11 @@ export function MessageList({
   // mounted coverage so burst scrolls never show blank spacer.
   React.useLayoutEffect(() => {
     let changed = false
+    // Mounted ⇒ painted: record rows eligible for window skipping.
+    const paintedOnce = paintedOnceRef.current
+    for (const id of localRefs.current.keys()) {
+      if (!paintedOnce.has(id)) paintedOnce.add(id)
+    }
     for (const [id, el] of localRefs.current) {
       const h = el.yogaNode?.getComputedHeight()
       if (h !== undefined && h > 0 && heightsRef.current.get(id) !== h) {
