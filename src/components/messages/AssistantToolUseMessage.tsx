@@ -6,6 +6,7 @@ import type { ToolCallView, ToolFileDiff, ToolResultView, ToolRow } from '../../
 import { ToolUseLoader } from '../ToolUseLoader.js'
 import { SplitDiffView } from '../SplitDiffView.js'
 import { formatDuration } from '../../cc/format.js'
+import type { ToolBackground } from '../../tuiDisplayPrefs.js'
 
 type Props = {
   tool: ToolRow
@@ -28,6 +29,8 @@ type Props = {
   footnote?: string
   /** Diff presentation preference; `auto` picks by terminal width. */
   diffLayout?: 'auto' | 'split' | 'unified'
+  /** Background treatment for the ordinary, unselected tool card surface. */
+  toolBackground?: ToolBackground
 }
 
 /** Tool display names: DSH emits lowercase tool ids (`bash`); Claude Code
@@ -255,6 +258,7 @@ export function AssistantToolUseMessage({
   isExpanded = false,
   footnote,
   diffLayout = 'auto',
+  toolBackground = 'none',
 }: Props): React.ReactNode {
   const isRunning = tool.status === 'running'
   const isError = tool.status === 'error'
@@ -306,6 +310,14 @@ export function AssistantToolUseMessage({
   const lines = capLines(body, cap, verbose)
   const rendered: BodyLine[] =
     footnote === undefined ? lines : [...lines, { text: footnote, tone: 'hint' }]
+  // Nested split-diff context panes must also yield to interaction highlights.
+  // `none` leaves them transparent so the selected/expanded root shows through.
+  const ordinaryToolBackground = isSelected || isExpanded ? 'none' : toolBackground
+  const ordinaryBackground = ordinaryToolBackground === 'subtle'
+    ? 'toolCardBackgroundDim'
+    : ordinaryToolBackground === 'strong'
+      ? 'toolCardBackground'
+      : undefined
 
   return (
     <Box
@@ -314,12 +326,14 @@ export function AssistantToolUseMessage({
       justifyContent="space-between"
       marginTop={addMargin ? 1 : 0}
       width="100%"
+      // Selection and per-row expansion remain higher-priority interaction
+      // highlights; the configured treatment applies only to an ordinary card.
       backgroundColor={
         isSelected
           ? 'messageActionsBackground'
           : isExpanded
             ? 'userMessageBackgroundHover'
-            : 'toolCardBackgroundDim'
+            : ordinaryBackground
       }
     >
       <Box flexDirection="column" flexGrow={1}>
@@ -347,6 +361,7 @@ export function AssistantToolUseMessage({
               width={columns - 4}
               maxRows={DIFF_BODY_MAX_LINES}
               verbose={verbose}
+              toolBackground={ordinaryToolBackground}
             />
           </Box>
         ) : (

@@ -15,6 +15,7 @@ import { MessageMetadata } from './messages/MessageMetadata.js'
 import { stripNarration } from '../utils/narration.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import { truncateToWidth } from '../ink/truncateToWidth.js'
+import type { ToolBackground } from '../tuiDisplayPrefs.js'
 
 /**
  * Transcript rows rendered in the Claude Code visual language: user prompts
@@ -50,6 +51,7 @@ export function MessageList({
   model,
   diffLayout = 'auto',
   thinkingFold = 'preview',
+  toolBackground = 'none',
   showAll,
   onToggleAll,
   onLoadOlder,
@@ -72,6 +74,8 @@ export function MessageList({
   diffLayout?: 'auto' | 'split' | 'unified'
   /** Thinking-block display mode from channel (`preview`/`full`). */
   thinkingFold?: 'preview' | 'full'
+  /** Tool-card background treatment from the live channel settings. */
+  toolBackground?: ToolBackground
   showAll: boolean
   onToggleAll: () => void
   /** Restore folded-away older rows from the session log (CC-style "load
@@ -104,6 +108,7 @@ export function MessageList({
     ? rows
     : rows.slice(hiddenCount)
   ).filter(row => thinkingVisible || row.kind !== 'reasoning')
+
   // CC addMargin: every rendered block gets a 1-row top margin except the
   // first. Pre-pass over the FULL list so a windowed row keeps the exact
   // spacing it would have in a fully-mounted list.
@@ -423,6 +428,7 @@ export function MessageList({
               model={model}
               diffLayout={diffLayout}
               thinkingFold={thinkingFold}
+              toolBackground={toolBackground}
               background={rowBackground(row.id)}
               toolCallId={tool?.callId}
               toolName={tool?.name}
@@ -473,6 +479,7 @@ type MemoRowProps = {
   /** Edit/Write diff presentation preference (forwarded to tool cards). */
   diffLayout: 'auto' | 'split' | 'unified'
   thinkingFold: 'preview' | 'full'
+  toolBackground: ToolBackground
   background: 'messageActionsBackground' | 'userMessageBackgroundHover' | undefined
   // ToolRow, flattened: the channel writes status/result fields in place,
   // so passing the object itself would make mutations invisible to memo.
@@ -514,6 +521,7 @@ function TranscriptRow({
   model,
   diffLayout,
   thinkingFold,
+  toolBackground,
   background,
   toolCallId,
   toolName,
@@ -657,6 +665,7 @@ function TranscriptRow({
             isExpanded={isExpanded}
             footnote={toolFootnote}
             diffLayout={diffLayout}
+            toolBackground={toolBackground}
           />
         </Box>
       )

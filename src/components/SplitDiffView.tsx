@@ -8,6 +8,7 @@ import type { Color } from '../ink/styles.js'
 import { getCliHighlightPromise, type CliHighlight } from '../cc/cliHighlight.js'
 import { getTheme } from '../theme.js'
 import { useTheme } from './design-system/ThemeProvider.js'
+import type { ToolBackground } from '../tuiDisplayPrefs.js'
 
 /**
  * Side-by-side (two-pane) diff view for Edit/Write tool cards.
@@ -374,17 +375,26 @@ function PaneLine({
   kind,
   width,
   tone,
+  toolBackground,
   padLeft = false,
 }: {
   readonly side: { readonly segments: readonly Segment[] } | undefined
   readonly kind: DiffRow['kind']
   readonly width: number
   readonly tone: 'old' | 'new'
+  readonly toolBackground: ToolBackground
   readonly padLeft?: boolean
 }): React.ReactNode {
+  const ordinaryBackground = toolBackground === 'subtle'
+    ? 'toolCardBackgroundDim'
+    : toolBackground === 'strong'
+      ? 'toolCardBackground'
+      : undefined
+  // Additions/removals keep their semantic tint; unchanged and empty panes
+  // inherit the configured ordinary tool-card surface.
   const backgroundColor =
     kind === 'context'
-      ? 'toolCardBackground'
+      ? ordinaryBackground
       : tone === 'old'
         ? 'diffRemovedDimmed'
         : 'diffAddedDimmed'
@@ -422,6 +432,7 @@ export function SplitDiffView({
   width,
   maxRows,
   verbose,
+  toolBackground = 'none',
 }: {
   readonly diffs: readonly ToolFileDiff[]
   /** Content width available to the whole two-pane block (divider included). */
@@ -429,6 +440,7 @@ export function SplitDiffView({
   /** Row budget when not verbose; overflow folds into one hint row. */
   readonly maxRows: number
   readonly verbose: boolean
+  readonly toolBackground?: ToolBackground
 }): React.ReactNode {
   const [hl, setHl] = React.useState<CliHighlight | null>(null)
   React.useEffect(() => {
@@ -491,7 +503,7 @@ export function SplitDiffView({
   })
 
   return (
-    <Box flexDirection="column" width={paneWidth * 2 + 1} backgroundColor="toolCardBackgroundDim">
+    <Box flexDirection="column" width={paneWidth * 2 + 1}>
       {visible.map((row, index) => {
         if ('separator' in row) {
           return (
@@ -513,11 +525,11 @@ export function SplitDiffView({
           : { segments: newRuns !== undefined ? mergeRuns(newRuns, row.newWords) : row.newWords }
         return (
           <Box key={index} flexDirection="row">
-            <PaneLine side={oldSide} kind={row.kind === 'add' ? 'context' : row.kind} tone="old" width={paneWidth} />
-            <Box width={1} flexShrink={0} backgroundColor="toolCardBackgroundDim">
+            <PaneLine side={oldSide} kind={row.kind === 'add' ? 'context' : row.kind} tone="old" width={paneWidth} toolBackground={toolBackground} />
+            <Box width={1} flexShrink={0}>
               <Text dimColor>│</Text>
             </Box>
-            <PaneLine side={newSide} kind={row.kind === 'del' ? 'context' : row.kind} tone="new" width={paneWidth} padLeft />
+            <PaneLine side={newSide} kind={row.kind === 'del' ? 'context' : row.kind} tone="new" width={paneWidth} toolBackground={toolBackground} padLeft />
           </Box>
         )
       })}
