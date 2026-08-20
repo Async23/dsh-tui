@@ -1729,8 +1729,9 @@ export function createChannel(
   /** One composer image accompanying a registry-command line: structural
    *  mirror of rc.8's `EncodedImageAttachment` (`@deepseek-ai/dsh-attachment/
    *  types`). Kept local so older installs never resolve rc.8-only types. */
+  type RegistryCommandImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
   interface RegistryCommandImage {
-    mediaType: string
+    mediaType: RegistryCommandImageMediaType
     data: string
     name?: string
   }
@@ -1743,6 +1744,16 @@ export function createChannel(
     images: readonly RegistryCommandImage[],
     signal: AbortSignal,
   ) => Promise<CommandExecution | undefined>
+
+  /** Whether the installed command service takes composer images: rc line
+   *  gate with a structural fallback, so a failed manifest probe (bundlers,
+   *  exotic loaders) still lands on the 4-param rc.8 shape at runtime. */
+  const commandServiceSupportsImages = (service: CommandRuntime): boolean => {
+    const line = installedLineOf('@deepseek-ai/dsh-commands')
+    if (line !== undefined) return line >= 8
+    return typeof (service.execute as { length?: number } | undefined)?.length === 'number'
+      && (service.execute as { length: number }).length >= 4
+  }
 
   /** Run one DSH registry command (`/plan`, …) on the live agent; the text
    *  of its result, '' when the result is textless, undefined when the
@@ -1806,12 +1817,21 @@ export function createChannel(
     }
     try {
       const signal = new AbortController().signal
-      const images = await registryCommandImages(definition, `/${name}${rawInput}`)
+      const line = `/${name}${rawInput}`
+      const images = await registryCommandImages(commandService, definition, line, signal)
       // rc.8 moved the signal to the 4th parameter and added composer
       // images; older lines (rc.7/rc.6) take (agent, line, signal).
       const execution = images === undefined
-        ? await (commandService.execute as unknown as CommandExecuteLegacy)(agent, `/${name}${rawInput}`, signal)
-        : await (commandService.execute as unknown as CommandExecuteWithImages)(agent, `/${name}${rawInput}`, images, signal)
+        ? await (commandService.execute as unknown as CommandExecuteLegacy)(agent, line, signal)
+        : await (commandService.execute as unknown as CommandExecuteWithImages)(agent, line, images.images, signal)
+      if (images !== undefined && images.dropped.length > 0) {
+        // Loud-drop policy mirrors the submit pipeline (mentions-missing):
+        // a referenced image that never reached the command must be visible.
+        state.notify(t('mentions-missing', { paths: images.dropped.join(' ') }), {
+          color: 'warning',
+          timeoutMs: 4000,
+        })
+      }
       // `undefined` = not registered; a handler error surfaces as its
       // message so the user sees why the command failed.
       return execution?.result.text ?? ''
@@ -1828,35 +1848,43 @@ export function createChannel(
    *  line references its token. A command that does not declare
    *  `input.images` gets NO images — rc.8 admission settles such a batch
    *  as an error, and upstream sends images only to image-capable commands.
-   *  A failing read drops just that image; the command still runs. */
+   *  A failing read drops just that image (reported via the returned
+   *  tokens) while the command still runs. */
   const registryCommandImages = async (
+    service: CommandRuntime,
     definition: unknown,
     line: string,
-  ): Promise<RegistryCommandImage[] | undefined> => {
-    if ((installedLineOf('@deepseek-ai/dsh-commands') ?? 0) < 8) return undefined
+    signal: AbortSignal,
+  ): Promise<{ images: RegistryCommandImage[]; dropped: string[] } | undefined> => {
+    if (!commandServiceSupportsImages(service)) return undefined
     const declaresImages = (definition as { input?: { images?: boolean } } | undefined)?.input?.images === true
-    if (!declaresImages || stagedImages.size === 0) return []
+    if (!declaresImages || stagedImages.size === 0) return { images: [], dropped: [] }
     const store = mentionAttachments(ctx) as
       | { readImage?(ref: unknown, signal?: AbortSignal): Promise<{ data: Uint8Array }> }
       | undefined
-    if (typeof store?.readImage !== 'function') return []
+    if (typeof store?.readImage !== 'function') return { images: [], dropped: [] }
     const images: RegistryCommandImage[] = []
+    const dropped: string[] = []
     for (const [token, attachment] of stagedImages) {
       if (!line.includes(token)) continue
       try {
-        const stored = await store.readImage(attachment)
+        const stored = await store.readImage(attachment, signal)
         if (stored?.data instanceof Uint8Array && stored.data.byteLength > 0) {
           images.push({
             mediaType: attachment.mediaType,
             data: Buffer.from(stored.data).toString('base64'),
             name: attachment.name,
           })
+        } else {
+          dropped.push(token)
         }
       } catch {
-        // One unreadable staged image is dropped; the command still runs.
+        // One unreadable staged image is dropped — same loud policy as the
+        // submit pipeline's mentions-missing warning (deliverUserText).
+        dropped.push(token)
       }
     }
-    return images
+    return { images, dropped }
   }
 
   // Session-mode folds: last-wins projections over the session log. The
