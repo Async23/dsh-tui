@@ -27,13 +27,17 @@ UI 层(`screens/`、`components/`、`ink/`、`hooks/`、`utils/`、`cc/`)
   官方 web-app 另多禁一行 `hmr`(TUI 不需要)
 - **config overrides**:6 行(system-prompt / llm-deepseek / agent-loop /
   sandbox-policy / approval / session-persistence-jsonl),全部是表面发行配置
-- **inserts**:8 行(dsh-tui、working-activity、storage、storage-json、
-  storage-domain、workspace、agent-presets、cordis-host-runner;后 6 个与官方
-  web-app 共用)
+- **inserts**:14 行(dsh-tui、working-activity、六个插件互通行,以及
+  dsh-tui-storage、dsh-tui-storage-json、dsh-tui-storage-domain、
+  dsh-tui-workspace、dsh-tui-agent-presets、dsh-tui-cordis-host-runner)。
+  后 6 行对应官方 web-app 的 host-plane 服务,但使用 dsh-tui 作用域 id,
+  并在检测到官方同 id/name 行已存在时自行 disabled,因此可安全共存
+  (`dsh web` 不再 `duplicate loader entry id`)
 
 上游发版后如果 patch 面变化,`pnpm run verify:patch-surface` 会在 CI 先爆;
 确认差异后执行 `node --import tsx/esm scripts/verify-patch-surface.ts --snapshot`
-重新生成快照。
+重新生成快照。`pnpm run verify:web-coexistence` 会把 dsh-tui patch 与官方
+web-app patch 按 include 语义合成一遍,直接拦截 loader entry id 复用。
 
 ## 升级流程
 
