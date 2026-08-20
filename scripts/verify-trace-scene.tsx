@@ -181,6 +181,23 @@ function makeChannel(overrides: Record<string, unknown> = {}): Record<string, un
     notifications: [],
     activityEnabled: false,
     contextBarEnabled: true,
+    statusBar: {
+      compact: true,
+      model: true,
+      thinking: true,
+      cwd: true,
+      contextUsage: true,
+      cache: true,
+      tokens: false,
+      tps: false,
+      gitBranch: false,
+      sessionTitle: false,
+      mode: false,
+      contextBar: false,
+      activity: false,
+      trajectory: true,
+      shortcutHint: false,
+    },
     activityFrames: [],
     loadedContext: undefined,
     goal: undefined,
@@ -371,7 +388,7 @@ function makeChannel(overrides: Record<string, unknown> = {}): Record<string, un
   // Scrollback accounting. Leaving the alternate screen makes the terminal
   // restore the main buffer, and Ink then repaints once because its front
   // frame was blanked — one frame per ROUND TRIP in inline mode, the same cost
-  // the Ctrl+X editor handoff already pays. What must never happen is growth
+  // the Ctrl+G editor handoff already pays. What must never happen is growth
   // that scales with USE: the old inline overlay churned the frame on every
   // keystroke, and that is the family this view exists to escape.
   const perTrip = (rowsOf() - scrollbackBefore) / 20
@@ -581,6 +598,10 @@ function makeChannel(overrides: Record<string, unknown> = {}): Record<string, un
     React.createElement(Chat, {
       channel: makeChannel({
         traceEvents: () => EVENTS,
+        statusBar: {
+          ...makeChannel().statusBar as Record<string, unknown>,
+          shortcutHint: true,
+        },
         // One row only: the harness terminal is short, and a longer
         // transcript scrolls the failed card out of the visible window.
         rows: [failedRow],
@@ -598,6 +619,10 @@ function makeChannel(overrides: Record<string, unknown> = {}): Record<string, un
 
   const startup = screen()
   check('the startup tip teaches the trajectory key', /ctrl\+t|⌘t/.test(startup), '')
+  // The script pins DSH_TUI_LANG=zh, so the hint reads `? 查看快捷键`.
+  check('the idle shortcuts hint appears exactly once',
+    (startup.match(/\? 查看快捷键/g) ?? []).length === 1,
+    `${(startup.match(/\? 查看快捷键/g) ?? []).length}`)
 
   // B — the wake strip lives on the hint row, and every assertion below is
   // scoped to that row on purpose: the startup tip also names the key, so a
@@ -654,6 +679,10 @@ function makeChannel(overrides: Record<string, unknown> = {}): Record<string, un
       React.createElement(Chat, {
         channel: makeChannel({
           traceEvents: () => EVENTS,
+          statusBar: {
+            ...makeChannel().statusBar as Record<string, unknown>,
+            shortcutHint: true,
+          },
           rows: [],
           // A long CJK title is the case that truncates first, so it is the
           // one that shows a wrong container width soonest.
