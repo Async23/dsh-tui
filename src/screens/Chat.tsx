@@ -315,8 +315,6 @@ export function Chat({
   const [thinkingVisible, setThinkingVisible] = React.useState(true)
   const [thinkingOpen, setThinkingOpen] = React.useState(false)
   const [thinkingFocus, setThinkingFocus] = React.useState(0)
-  /** Mid-conversation toggle waiting for Enter confirmation (CC semantics). */
-  const [thinkingConfirm, setThinkingConfirm] = React.useState<boolean | null>(null)
   /** ctrl+r history search dialog (ported from CC's HistorySearchDialog). */
   const [historyOpen, setHistoryOpen] = React.useState(false)
   const [historyQuery, setHistoryQuery] = React.useState('')
@@ -1541,29 +1539,13 @@ export function Chat({
       return
     }
     if (thinkingOpen) {
-      if (thinkingConfirm !== null) {
-        // Confirmation state: Enter applies, Esc backs out to the select.
-        if (plainReturn) {
-          const enabled = thinkingConfirm
-          setThinkingVisible(enabled)
-          setThinkingConfirm(null)
-          setThinkingOpen(false)
-          channel.notify(t('thinking-toggled', { state: enabled ? t('thinking-on') : t('thinking-off') }))
-        } else if (key.escape) {
-          setThinkingConfirm(null)
-        }
-      } else if (key.upArrow || key.downArrow) {
+      if (key.upArrow || key.downArrow) {
         setThinkingFocus(index => (index === 0 ? 1 : 0))
       } else if (plainReturn) {
-        const enabled = thinkingFocus === 0
-        const midConversation = channel.rows.some(row => row.kind === 'assistant')
-        if (midConversation && enabled !== thinkingVisible) {
-          setThinkingConfirm(enabled)
-        } else {
-          setThinkingVisible(enabled)
-          setThinkingOpen(false)
-          channel.notify(t('thinking-toggled', { state: enabled ? t('thinking-on') : t('thinking-off') }))
-        }
+        const visible = thinkingFocus === 0
+        setThinkingVisible(visible)
+        setThinkingOpen(false)
+        channel.notify(t('thinking-toggled', { state: visible ? t('thinking-on') : t('thinking-off') }))
       } else if (key.escape) {
         setThinkingOpen(false)
       }
@@ -2271,7 +2253,6 @@ export function Chat({
             <ThinkingToggle
               currentValue={thinkingVisible}
               focusIndex={thinkingFocus}
-              confirmationPending={thinkingConfirm}
             />
           )}
           {workspacePickerOpen && workspaceTargets.length > 0 && (

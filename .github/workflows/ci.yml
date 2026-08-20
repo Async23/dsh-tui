@@ -306,6 +306,10 @@ jobs:
       # 完整循环。
       - run: node scripts/verify-effort-slider-ui.mjs
 
+      # /thinking 显示语义回归（issue #317）：中英文文案必须明确只影响
+      # 思考过程显示，切换立即生效且不得改变模型 reasoning effort。
+      - run: node --import tsx/esm scripts/verify-thinking-display.tsx
+
       # 主题解析回归：内置主题完整性、parseCustomTheme 拒绝畸形/不安全项、
       # displayName 内嵌换行入口压平（#160 窗口化列表单行契约的第一道防
       # 线）。注意必须走 tsx——脚本直接 import src/customTheme.ts。
