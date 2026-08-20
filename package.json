@@ -108,6 +108,7 @@
     "verify:liangshen-bootstrap": "node scripts/verify-liangshen-bootstrap.mjs",
     "verify:liangshen-bash": "node scripts/verify-liangshen-bash.mjs",
     "verify:package": "npm pack --dry-run --json --ignore-scripts | node scripts/verify-package.mjs",
+    "verify:bun-package": "node scripts/verify-bun-package.mjs",
     "verify:prompt-debug": "npm run build && node scripts/verify-prompt-debug.mjs",
     "verify:clipboard-image": "node --import tsx/esm scripts/verify-clipboard-image.ts",
     "verify:plugin-ledger": "node --import tsx/esm scripts/verify-plugin-ledger.ts",
