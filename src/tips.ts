@@ -73,8 +73,8 @@ export const TIPS: readonly Tip[] = [
   {
     id: 'keys-ctrl-g',
     group: 'keys',
-    zh: 'Ctrl+G 用 $VISUAL 编辑器编辑当前输入',
-    en: 'Ctrl+G edits your input in the $VISUAL editor',
+    zh: 'Ctrl+G 用 $VISUAL/$EDITOR 编辑器编辑当前输入',
+    en: 'Ctrl+G edits your input in the $VISUAL/$EDITOR editor',
   },
   {
     id: 'keys-ctrl-enter',
