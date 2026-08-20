@@ -1573,6 +1573,12 @@ export function createChannel(
   /** Monotonic token: only the latest `interruptAndDeliver` re-queues, so a
    *  second interrupt while the abort settles cannot double-deliver. */
   let interruptSeq = 0
+  // Cancellation is asynchronous: a fast second Esc can arrive after the
+  // driver has accepted the first abort but before its turn/end event lands.
+  // Do not cancel the same driver twice, or the second cancel can swallow the
+  // replacement work queued by interruptAndDeliver and leave the UI gated on
+  // a working flag that has not observed turn/end yet.
+  let cancelInFlight = false
   /** The llm runtime seam (dsh-llm LlmRuntime): route metadata resolution. */
   const llmRuntime = ctx.get('llm') as
     | {
@@ -2180,17 +2186,22 @@ export function createChannel(
     cancel() {
       // Keep the staged queue: an interrupt aborts the running turn but the
       // queued/steered messages are delivered as the next turn (web parity).
+      // Cancellation converges asynchronously; ignore a repeated Esc/Ctrl+C
+      // until the aborted turn has produced its terminal event.
+      if (cancelInFlight) return
+      cancelInFlight = true
       agent.cancel({ kind: 'user' }, { keepInbox: true })
     },
     interruptAndDeliver(texts: readonly string[]): number {
       const queued = texts.map(text => text.trim()).filter(text => text !== '')
-      if (queued.length === 0) return 0
+      if (queued.length === 0 || cancelInFlight) return 0
       // No keepInbox: the parked copies are dropped (their discard events
       // retire the preview), then each text is re-queued as a fresh
       // followup. dsh-agent's cancel-convergence wake latch accepts this
       // wake immediately after cancel and starts it once the aborted turn
       // retires; waiting for whenIdle is unsafe because it also follows
       // replacement work and may never settle.
+      cancelInFlight = true
       agent.cancel({ kind: 'user' })
       const token = ++interruptSeq
       const deliver = (): void => {
@@ -4801,6 +4812,7 @@ ${output}
         break
       }
       case 'turn/start': {
+        cancelInFlight = false
         state.working = true
         state.turnStart = Date.now()
         state.responseChars = 0
@@ -4816,6 +4828,7 @@ ${output}
         break
       }
       case 'turn/end': {
+        cancelInFlight = false
         settleStreaming()
         state.working = false
         state.activeToolCount = 0
