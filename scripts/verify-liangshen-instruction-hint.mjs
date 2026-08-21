@@ -37,7 +37,7 @@ function createHarness() {
     async preStep(session) {
       return listeners['agent/pre-step'](
         { agent: { session }, signal: undefined },
-        async () => ({ kind: 'continue', messages: [] }),
+        async () => ({ kind: 'enter', messages: [] }),
       )
     },
   }
