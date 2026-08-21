@@ -7,9 +7,10 @@
  * adapter touches is blessed here; anything else must go through upstream
  * channels or the adapter, never the UI.
  *
- * `upstreamDrift()` powers both the boot-time warning (dev visibility) and
- * the CI gate (scripts/verify-upstream-contract.ts) so a mismatched
- * install fails in CI before it fails on a user's machine.
+ * `upstreamDrift()` powers the CI gate (scripts/verify-upstream-contract.ts)
+ * so a mismatched install fails in CI before it fails on a user's machine.
+ * `upstreamDriftSummary()` collapses the per-package entries into the
+ * single natural-language boot notice the logo header shows (see LogoV2).
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -163,4 +164,58 @@ export function upstreamDrift(): UpstreamDriftEntry[] {
     }
   }
   return drift
+}
+
+/**
+ * Classification of a drifted install for the one-line boot notice:
+ * `newer` / `older` — every drifted harness package sits on a single
+ * parseable version off one end of the validated window; `mixed` — several
+ * distinct versions coexist (unstable tree); `broken` — something is
+ * missing or unparseable and wording cannot get more specific.
+ */
+export type UpstreamDriftKind = 'newer' | 'older' | 'mixed' | 'broken'
+
+/** Merged drift verdict consumed by the logo header notice (LogoV2). */
+export interface UpstreamDriftSummary {
+  kind: UpstreamDriftKind
+  /** Distinct installed versions among drifted packages ('missing' for absent ones). */
+  versions: string[]
+}
+
+/** Parse `0.1.0-rc.8` into an orderable tuple; undefined when unparseable. */
+function versionTuple(version: string): readonly [number, number, number, number] | undefined {
+  const match = /^(\d+)\.(\d+)\.(\d+)-rc\.(\d+)$/u.exec(version)
+  return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])]
+}
+
+/**
+ * Collapse {@link upstreamDrift} into a single summary for the boot notice:
+ * undefined when the install matches the contract. Only harness rc packages
+ * decide newer/older/mixed; a framework-only drift (e.g. a cordis major
+ * bump) reports `broken`, since its version line is not comparable.
+ */
+export function upstreamDriftSummary(): UpstreamDriftSummary | undefined {
+  const drift = upstreamDrift()
+  if (drift.length === 0) return undefined
+  const harness = drift.filter(entry => UPSTREAM_FRAMEWORK_MAJORS[entry.package] === undefined)
+  const versions = [...new Set(drift.map(entry => entry.installed ?? 'missing'))]
+  if (harness.some(entry => entry.installed === undefined)) {
+    return { kind: 'broken', versions }
+  }
+  const harnessVersions = [...new Set(harness.map(entry => entry.installed!))]
+  if (harnessVersions.length > 1) {
+    return { kind: 'mixed', versions }
+  }
+  const installed = versionTuple(harnessVersions[0] ?? '')
+  const validated = versionTuple(UPSTREAM_VALIDATED_VERSION)!
+  if (installed === undefined) {
+    return { kind: 'broken', versions }
+  }
+  for (let i = 0; i < installed.length; i++) {
+    if (installed[i]! > validated[i]!) return { kind: 'newer', versions }
+    if (installed[i]! < validated[i]!) return { kind: 'older', versions }
+  }
+  // Identical to the primary validated version — cannot happen (it would
+  // not be drift); report broken rather than staying silent.
+  return { kind: 'broken', versions }
 }
