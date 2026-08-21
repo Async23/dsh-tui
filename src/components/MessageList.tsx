@@ -214,7 +214,10 @@ export function MessageList({
         thinkingVisible,
         thinkingFold,
         diffLayout,
-        model,
+        // Model only renders on expanded rows (MessageMetadata) — folding
+        // it out of the signature keeps an idle /model switch from
+        // invalidating every cached height at once.
+        expanded ? model : '',
         tool?.status ?? '',
         tool?.resultText?.length ?? 0,
         tool?.resultFull?.length ?? 0,
@@ -316,14 +319,22 @@ export function MessageList({
       }
     }
     // Unknown-height extension (layout signature, see sigRef): a row whose
-    // cached height was just invalidated must remount to re-measure even
+    // cached height was just INVALIDATED must remount to re-measure even
     // when it sits outside the window — its spacer otherwise falls back to
     // DEFAULT_ROW_HEIGHT until the row scrolls back into view, leaving the
     // content geometry wrong for exactly that long (blank band after
     // Ctrl+O, unreachable scroll bottom after a tool result lands). One
     // remount per change; the measure tick + hold then tighten again.
+    // Guard: only rows that have actually MOUNTED here once qualify
+    // (paintedOnce fills from localRefs post-commit) — a brand-new
+    // streaming row has never been measured, and extending over it would
+    // mount everything below the window every frame while the user reads
+    // scrolled-up (virtualization defeated, per-frame full mount = the
+    // long-session stall). New rows keep the original path: their height
+    // lands once the window reaches them.
     for (let i = 0; i < start; i++) {
-      if (!heightsRef.current.has(visibleRows[i]!.id)) {
+      const rowId = visibleRows[i]!.id
+      if (!heightsRef.current.has(rowId) && paintedOnceRef.current.has(rowId)) {
         start = i
         break
       }
@@ -341,15 +352,14 @@ export function MessageList({
     }
     lastStartRef.current = start
   }
-  // Tail-side unknown-height extension (see the start-side loop above):
-  // runs for non-sticky views too — while scrolled up, a signature change
-  // below the window (streaming tail growth, tool result landing) still
-  // invalidates those heights, and the bottomPad spacer must not run on
-  // stale geometry until the user scrolls back down. Mounted-below rows
-  // are paint-culled by the ScrollBox renderer; only their Yoga heights
-  // are needed here.
+  // Tail-side invalidated-height extension (see the start-side loop above
+  // for the rationale and the mounted-once guard): rows BELOW the window
+  // whose height was just invalidated remount to re-measure, so bottomPad
+  // keeps real geometry while the user reads scrolled-up content and the
+  // tail streams. Runs for non-sticky views; sticky mounts the tail anyway.
   for (let i = end; i < visibleRows.length; i++) {
-    if (!heightsRef.current.has(visibleRows[i]!.id)) end = i + 1
+    const rowId = visibleRows[i]!.id
+    if (!heightsRef.current.has(rowId) && paintedOnceRef.current.has(rowId)) end = i + 1
   }
   if (forceMountRowId !== undefined && forceMountRowId !== null) {
     const idx = visibleRows.findIndex(row => row.id === forceMountRowId)
