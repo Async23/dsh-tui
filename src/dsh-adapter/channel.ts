@@ -1193,6 +1193,72 @@ function toolResultText(event: SessionEvent<'tool/result'>): string {
   return block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
 }
 
+/** Phase badge for the harness goal card — mirrors the panel's PhaseBadge. */
+const GOAL_RESULT_BADGE: Record<string, string> = {
+  active: '● active',
+  paused: '⏸ paused',
+  blocked: '⛔ blocked',
+  complete: '✓ complete',
+}
+
+/**
+ * Summary cards for the harness's goal/todo tools. Their results are machine
+ * JSON (`{"goal":{…}}` / `{"todos":[…]}`) that would otherwise dump under the
+ * tool card as a raw `⎿ {"goal":…}` line. Matched by tool-name substring AND
+ * payload shape, so unrelated tools and plain-text results pass through to
+ * the registry/raw-text path untouched. Runs on the live stream and replay.
+ */
+function harnessToolResultView(
+  name: string,
+  data: SessionEvent<'tool/result'>['data'],
+): ToolResultView | undefined {
+  const lower = name.toLowerCase()
+  const isGoalTool = lower.includes('goal')
+  const isTodoTool = lower.includes('todo')
+  if (!isGoalTool && !isTodoTool) return undefined
+  const block = data.message.content[0]
+  if (block === undefined || block.type !== 'tool-result') return undefined
+  const text = block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
+  if (text === '' || !text.startsWith('{')) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const record = parsed as Record<string, unknown>
+
+  if (isGoalTool && typeof record.goal === 'object' && record.goal !== null) {
+    const goal = record.goal as Record<string, unknown>
+    if (typeof goal.objective === 'string' && typeof goal.phase === 'string') {
+      const badge = GOAL_RESULT_BADGE[goal.phase] ?? goal.phase
+      const rounds = typeof goal.roundsStarted === 'number' && typeof goal.maxGoalRounds === 'number'
+        ? ` · ${goal.roundsStarted}/${goal.maxGoalRounds}`
+        : ''
+      const activation = typeof record.activation === 'string' ? ` · ${record.activation}` : ''
+      const lines = [`🎯 ${goal.objective}`, `${badge}${rounds}${activation}`]
+      const blocked = (goal.blockedReason as { message?: unknown } | undefined)?.message
+      if (typeof blocked === 'string') lines.push(`⛔ ${blocked}`)
+      return { card: 'generic', content: lines.map(line => ({ type: 'text', text: line })) }
+    }
+  }
+
+  if (isTodoTool && Array.isArray(record.todos)) {
+    const rows = record.todos as Array<Record<string, unknown>>
+    const done = rows.filter(row => row.status === 'completed').length
+    const lines = [`todos ✓ ${done}/${rows.length}`]
+    for (const row of rows) {
+      if (row.status !== 'in_progress' || typeof row.content !== 'string') continue
+      lines.push(`● ${row.content}`)
+      if (lines.length >= 4) break
+    }
+    return { card: 'generic', content: lines.map(line => ({ type: 'text', text: line })) }
+  }
+
+  return undefined
+}
+
 function toolErrorText(event: SessionEvent<'tool/result'>): string {
   const failure = event.data.error
   if (failure === undefined) return ''
@@ -2146,6 +2212,36 @@ export function createChannel(
   // another directory's listing.
   const fileCandidateCache = { cwd: '', load: undefined as Promise<readonly FileCandidate[]> | undefined }
 
+  // `/model <provider/id>` completion: the model catalog is async (one llm
+  // listModels per provider), so the first keystrokes that could be heading
+  // for /model warm a session-lifetime cache — the shared promise dedupes
+  // concurrent triggers, children() synchronously serves whatever has landed,
+  // and the arrival state.emit() reopens the menu mid-typing. switchModel's
+  // success path drops the cache so the [current] tag re-resolves against
+  // the new route.
+  const modelNodeCache = {
+    nodes: undefined as readonly CommandCompletionNode[] | undefined,
+    load: undefined as Promise<void> | undefined,
+  }
+  const warmModelNodes = (): void => {
+    if (modelNodeCache.load !== undefined) return
+    modelNodeCache.load = state.listModels().then((list) => {
+      modelNodeCache.nodes = list.map((model) => ({
+        name: `${model.provider}/${model.id}`,
+        description: model.name,
+        ...(state.provider === model.provider && state.model === model.id
+          ? { tag: 'current' }
+          : {}),
+      }))
+      state.emit()
+    }).catch(() => {
+      // listModels already swallows per-provider failures; this only fires
+      // when the llm service shape itself is missing — settle on an empty
+      // menu rather than retrying on every keystroke.
+      modelNodeCache.nodes = []
+    })
+  }
+
   const state: ChannelState = {
     effortLevels: undefined,
     version: 0,
@@ -2191,7 +2287,17 @@ export function createChannel(
     pending: [],
     commandList: LOCAL_COMMANDS,
     commandCompletions(input: string) {
+      // Warm the /model catalog as soon as the input could be heading there
+      // (`/m`, `/mo`, …) — by the time a trailing space asks children() for
+      // model nodes, the fetch has usually landed.
+      const head = input.slice(1).split(/[\t ]/)[0]?.toLowerCase() ?? ''
+      if (head !== '' && 'model'.startsWith(head)) warmModelNodes()
       return completeCommands(input, state.commandList, (path) => {
+        if (path.length === 1 && path[0] === 'model') {
+          // provider/id specs, current model tagged; see modelNodeCache.
+          warmModelNodes()
+          return modelNodeCache.nodes ?? []
+        }
         if (path.length === 1 && path[0] === 'workspace') {
           const builtins: CommandCompletionNode[] = [
             { name: 'resume', description: 'Switch to another workspace', descriptionKey: 'cmd-desc-workspace-resume' },
@@ -2208,6 +2314,21 @@ export function createChannel(
                 aliases: command.aliases,
                 description: command.description,
               })),
+          ]
+        }
+        if (path.length === 1 && path[0] === 'permission') {
+          // Sandbox-preset vocabulary of the `/permission` picker — Tab
+          // completes it for keyboard users, Enter still dispatches.
+          return [
+            { name: 'read-only', description: 'Read-only session: no file writes, no commands', descriptionKey: 'permission-preset-readonly-desc' },
+            { name: 'workspace-write', description: 'Read/write inside the workspace; writes need a prior read', descriptionKey: 'permission-preset-workspace-write-desc' },
+            { name: 'danger-full-access', description: 'Unrestricted access, no approvals', descriptionKey: 'permission-preset-full-access-desc' },
+          ]
+        }
+        if (path.length === 1 && path[0] === 'plan') {
+          return [
+            { name: 'on', description: 'Enter plan mode: read-only, plan before acting', descriptionKey: 'plan-mode-on-desc' },
+            { name: 'off', description: 'Exit plan mode, back to normal execution', descriptionKey: 'plan-mode-off-desc' },
           ]
         }
         return commandTrees?.children(path) ?? []
@@ -3069,6 +3190,11 @@ export function createChannel(
       state.agentPreset = modelComposed.agentPreset
       state.model = model
       state.provider = provider
+      // /model completion cache: the [current] tag was resolved at fetch
+      // time — drop the cache so the next `/model ` refetches for the new
+      // route.
+      modelNodeCache.nodes = undefined
+      modelNodeCache.load = undefined
       state.tps = undefined
       state.tpsSamples = []
       state.lastUsage = undefined
@@ -4457,6 +4583,11 @@ ${output}
    *  its result-time contextual diff back from here). */
   const presentResultView = (name: string, rawArgs: string, data: SessionEvent<'tool/result'>['data']): ToolResultView | undefined => {
     try {
+      // Harness goal/todo tools first: their raw JSON reads as noise in the
+      // transcript — fold recognizable shapes into a summary card before the
+      // registry gets a chance to (not) know them.
+      const local = harnessToolResultView(name, data)
+      if (local !== undefined) return local
       const tool = toolsRegistry?.get(name, agent)
       if (tool?.presentResult === undefined) return undefined
       const block = data.message.content[0]

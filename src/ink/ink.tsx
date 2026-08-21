@@ -20,6 +20,7 @@ import { KeyboardEvent } from './events/keyboard-event.js';
 import { FocusManager } from './focus.js';
 import { emptyFrame, type Frame, type FrameEvent } from './frame.js';
 import { dispatchClick, dispatchHover } from './hit-test.js';
+import { logMouseDebug } from '../utils/debug.js';
 import instances from './instances.js';
 import { suppressInputFor } from './input-suppression.js';
 import { LogUpdate } from './log-update.js';
@@ -1510,9 +1511,14 @@ export default class Ink {
    * nodeCache rects map 1:1 to terminal cells (no scrollback offset).
    */
   dispatchClick(col: number, row: number): boolean {
-    if (!this.altScreenActive) return false;
+    if (!this.altScreenActive) {
+      logMouseDebug('dispatchClick skipped — alt screen inactive', { col, row });
+      return false;
+    }
     const blank = isEmptyCellAt(this.frontFrame.screen, col, row);
-    return dispatchClick(this.rootNode, col, row, blank);
+    const handled = dispatchClick(this.rootNode, col, row, blank);
+    logMouseDebug('dispatchClick', { col, row, handled });
+    return handled;
   }
   dispatchHover(col: number, row: number): void {
     if (!this.altScreenActive) return;
