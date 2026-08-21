@@ -355,6 +355,19 @@ export default class Ink {
     this.terminalRows = rows;
     this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows);
 
+    // Invalidate every render that was scheduled against the OLD size: a
+    // queued microtask generation or a scroll-drain timer would otherwise
+    // fire after this resize completes and paint a frame computed for the
+    // pre-resize layout (mixed-width rows, off-by-reflow writes). The
+    // re-render below schedules fresh work at the new dimensions.
+    this.renderGeneration++;
+    this.pendingRenderGeneration = null;
+    this.scheduleRender.cancel?.();
+    if (this.drainTimer !== null) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+
     // Every cached measurement in the tree was taken against a width that no
     // longer exists. Nothing here is "dirty" in the reconciler's sense — no
     // props changed — so without an explicit sweep the text nodes keep
@@ -539,9 +552,27 @@ export default class Ink {
     // Done before the render to avoid dirtying state that would trigger
     // an extra React re-render cycle.
     flushInteractionTime();
+
+    // Dimension consistency: onComputeLayout laid the tree out against
+    // this.terminalColumns/Rows (the cached values handleResize owns), so
+    // the renderer and the diff engine MUST paint that same size. Reading
+    // the live stdout size here mixed the two when a resize event had not
+    // fired yet (Windows Terminal emits 'resize' after columns already
+    // changed): Yoga laid out for the old width while log-update wrapped
+    // and diffed at the new one — rows painted off by the reflow delta.
+    // On drift, route through the resize path (cache sync + markTreeDirty
+    // + re-render) and bail: the render handleResize schedules paints the
+    // correctly-laid-out frame.
+    const liveColumns = this.options.stdout.columns || 80;
+    const liveRows = this.options.stdout.rows || 24;
+    if (this.options.stdout.isTTY && (liveColumns !== this.terminalColumns || liveRows !== this.terminalRows)) {
+      this.handleResize();
+      return;
+    }
+
     const renderStart = performance.now();
-    const terminalWidth = this.options.stdout.columns || 80;
-    const terminalRows = this.options.stdout.rows || 24;
+    const terminalWidth = this.terminalColumns;
+    const terminalRows = this.terminalRows;
     const frame = this.renderer({
       frontFrame: this.frontFrame,
       backFrame: this.backFrame,
@@ -1133,6 +1164,10 @@ export default class Ink {
     // Cancel any pending throttled render so it doesn't fire between
     // cleanupTerminalModes() and process.exit() and write to main screen.
     this.scheduleRender.cancel?.();
+    if (this.drainTimer !== null) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
     this.app?.detachForShutdown();
     // Shutdown bypasses the normal unmount path, so release the process and
     // stdout listeners here as well. Otherwise a SIGCONT or resize arriving
@@ -1140,6 +1175,11 @@ export default class Ink {
     // through this detached instance after terminal cleanup has completed.
     this.unsubscribeTTYHandlers?.();
     this.unsubscribeExit();
+    // unmount() early-returns on isUnmounted above, so its instances.delete
+    // never runs — a detached instance would stay in the map and a later
+    // instances.get(stdout) lookup (Chat's reanchorViewport plumbing) could
+    // hand out a dead renderer. Remove the mapping here too.
+    instances.delete(this.options.stdout);
     // `detachForShutdown()` deliberately makes later `unmount()` calls a
     // no-op, so release process-level output patches here rather than relying
     // on unmount() to do it. The shutdown continuation may run an updater
@@ -1901,9 +1941,24 @@ export default class Ink {
         logForDebugging(`[stderr] ${text}`, {
           level: 'warn'
         });
-        if (this.altScreenActive && !this.isUnmounted && !this.isPaused) {
-          this.prevFrameContaminated = true;
-          this.scheduleRender();
+        if (!this.isUnmounted && !this.isPaused) {
+          if (this.altScreenActive) {
+            this.prevFrameContaminated = true;
+            this.scheduleRender();
+          } else {
+            // Main-screen (inline): the diff engine's moves are purely
+            // relative to the physical cursor, so ANY unobserved tty write
+            // (one that slipped through before this patch existed, or via
+            // a path it can't intercept — a snapshotted ESM writer) shifts
+            // every later write by N rows with nothing to detect it after
+            // the fact. The stdin-gap reassert covers slow leaks; this
+            // per-write defensive net closes the fast ones: blind
+            // idempotent viewport repaint from the physical cursor. When
+            // nothing drifted (the usual case — the write was swallowed)
+            // it paints the same pixels again at O(viewport) bytes.
+            this.log.requestViewportReanchor();
+            this.scheduleRender();
+          }
         }
       } finally {
         reentered = false;
