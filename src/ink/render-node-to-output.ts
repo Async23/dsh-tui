@@ -495,15 +495,19 @@ function renderNodeToOutput(
     const width = yogaNode.getComputedWidth()
     const height = yogaNode.getComputedHeight()
 
-    // Absolute-positioned overlays (e.g. autocomplete menus with bottom='100%')
-    // can compute negative screen y when they extend above the viewport. Without
-    // clamping, setCellAt drops cells at y<0, clipping the TOP of the content
-    // (best matches in an autocomplete). By clamping to 0, we shift the element
-    // down so the top rows are visible and the bottom overflows below — the
-    // opaque prop ensures it paints over whatever is underneath.
-    if (y < 0 && node.style.position === 'absolute') {
-      y = 0
-    }
+    // Absolute-positioned overlays anchored above their parent
+    // (bottom='100%') compute negative screen y when their content is
+    // taller than the space above the anchor. Do NOT clamp y to 0 here:
+    // shifting the node down breaks the bottom-anchoring contract — the
+    // panel's BOTTOM would overflow past the anchor and paint over the
+    // composer/status rows below it (small-terminal overlay reports).
+    // Instead let the y<0 rows clip naturally: setCellAt drops cells above
+    // row 0 and blitRegion clamps in screen space, so the panel keeps its
+    // bottom pinned at the anchor and only loses its topmost rows — the
+    // same semantics as CSS clipping above the containing block. Producers
+    // prevent the case entirely by maxHeight-ing the overlay to the actual
+    // space above the anchor (OverlayAbove), so clipping is the last
+    // resort, not the layout.
 
     // Check if we can skip this subtree (clean node with unchanged layout).
     // Blit cells from previous screen instead of re-rendering.
