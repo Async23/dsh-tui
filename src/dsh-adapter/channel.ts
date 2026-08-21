@@ -1195,6 +1195,72 @@ function toolResultText(event: SessionEvent<'tool/result'>): string {
   return block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
 }
 
+/** Phase badge for the harness goal card — mirrors the panel's PhaseBadge. */
+const GOAL_RESULT_BADGE: Record<string, string> = {
+  active: '● active',
+  paused: '⏸ paused',
+  blocked: '⛔ blocked',
+  complete: '✓ complete',
+}
+
+/**
+ * Summary cards for the harness's goal/todo tools. Their results are machine
+ * JSON (`{"goal":{…}}` / `{"todos":[…]}`) that would otherwise dump under the
+ * tool card as a raw `⎿ {"goal":…}` line. Matched by tool-name substring AND
+ * payload shape, so unrelated tools and plain-text results pass through to
+ * the registry/raw-text path untouched. Runs on the live stream and replay.
+ */
+function harnessToolResultView(
+  name: string,
+  data: SessionEvent<'tool/result'>['data'],
+): ToolResultView | undefined {
+  const lower = name.toLowerCase()
+  const isGoalTool = lower.includes('goal')
+  const isTodoTool = lower.includes('todo')
+  if (!isGoalTool && !isTodoTool) return undefined
+  const block = data.message.content[0]
+  if (block === undefined || block.type !== 'tool-result') return undefined
+  const text = block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
+  if (text === '' || !text.startsWith('{')) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const record = parsed as Record<string, unknown>
+
+  if (isGoalTool && typeof record.goal === 'object' && record.goal !== null) {
+    const goal = record.goal as Record<string, unknown>
+    if (typeof goal.objective === 'string' && typeof goal.phase === 'string') {
+      const badge = GOAL_RESULT_BADGE[goal.phase] ?? goal.phase
+      const rounds = typeof goal.roundsStarted === 'number' && typeof goal.maxGoalRounds === 'number'
+        ? ` · ${goal.roundsStarted}/${goal.maxGoalRounds}`
+        : ''
+      const activation = typeof record.activation === 'string' ? ` · ${record.activation}` : ''
+      const lines = [`🎯 ${goal.objective}`, `${badge}${rounds}${activation}`]
+      const blocked = (goal.blockedReason as { message?: unknown } | undefined)?.message
+      if (typeof blocked === 'string') lines.push(`⛔ ${blocked}`)
+      return { card: 'generic', content: lines.map(line => ({ type: 'text', text: line })) }
+    }
+  }
+
+  if (isTodoTool && Array.isArray(record.todos)) {
+    const rows = record.todos as Array<Record<string, unknown>>
+    const done = rows.filter(row => row.status === 'completed').length
+    const lines = [`todos ✓ ${done}/${rows.length}`]
+    for (const row of rows) {
+      if (row.status !== 'in_progress' || typeof row.content !== 'string') continue
+      lines.push(`● ${row.content}`)
+      if (lines.length >= 4) break
+    }
+    return { card: 'generic', content: lines.map(line => ({ type: 'text', text: line })) }
+  }
+
+  return undefined
+}
+
 function toolErrorText(event: SessionEvent<'tool/result'>): string {
   const failure = event.data.error
   if (failure === undefined) return ''
@@ -2358,6 +2424,21 @@ export function createChannel(
               })),
           ]
         }
+        if (path.length === 1 && path[0] === 'permission') {
+          // Sandbox-preset vocabulary of the `/permission` picker — Tab
+          // completes it for keyboard users, Enter still dispatches.
+          return [
+            { name: 'read-only', description: 'Read-only session: no file writes, no commands', descriptionKey: 'permission-preset-readonly-desc' },
+            { name: 'workspace-write', description: 'Read/write inside the workspace; writes need a prior read', descriptionKey: 'permission-preset-workspace-write-desc' },
+            { name: 'danger-full-access', description: 'Unrestricted access, no approvals', descriptionKey: 'permission-preset-full-access-desc' },
+          ]
+        }
+        if (path.length === 1 && path[0] === 'plan') {
+          return [
+            { name: 'on', description: 'Enter plan mode: read-only, plan before acting', descriptionKey: 'plan-mode-on-desc' },
+            { name: 'off', description: 'Exit plan mode, back to normal execution', descriptionKey: 'plan-mode-off-desc' },
+          ]
+        }
         return commandTrees?.children(path) ?? []
       })
     },
@@ -3217,6 +3298,11 @@ export function createChannel(
       state.agentPreset = modelComposed.agentPreset
       state.model = model
       state.provider = provider
+      // /model completion cache: the [current] tag was resolved at fetch
+      // time — drop the cache so the next `/model ` refetches for the new
+      // route.
+      modelNodeCache.nodes = undefined
+      modelNodeCache.load = undefined
       state.tps = undefined
       state.tpsSamples = []
       state.lastUsage = undefined
@@ -4605,6 +4691,11 @@ ${output}
    *  its result-time contextual diff back from here). */
   const presentResultView = (name: string, rawArgs: string, data: SessionEvent<'tool/result'>['data']): ToolResultView | undefined => {
     try {
+      // Harness goal/todo tools first: their raw JSON reads as noise in the
+      // transcript — fold recognizable shapes into a summary card before the
+      // registry gets a chance to (not) know them.
+      const local = harnessToolResultView(name, data)
+      if (local !== undefined) return local
       const tool = toolsRegistry?.get(name, agent)
       if (tool?.presentResult === undefined) return undefined
       const block = data.message.content[0]

@@ -316,6 +316,8 @@ export function Chat({
   const [themeName, setTheme] = useTheme()
   const { rows: terminalRows } = useTerminalSize()
   const [showAllMessages, setShowAllMessages] = React.useState(false)
+  /** Fold state for the GoalTodoPanel todo section (ctrl/cmd+q or click). */
+  const [todoCollapsed, setTodoCollapsed] = React.useState(false)
   const [thinkingVisible, setThinkingVisible] = React.useState(true)
   const [thinkingOpen, setThinkingOpen] = React.useState(false)
   const [thinkingFocus, setThinkingFocus] = React.useState(0)
@@ -1998,6 +2000,11 @@ export function Chat({
       instances.get(process.stdout)?.forceRedraw()
     } else if (isMod(key) && input === 'e') {
       setShowAllMessages(previous => !previous)
+    } else if (isMod(key) && input === 'q') {
+      // Fold/unfold the GoalTodoPanel todo section — works mid-turn too:
+      // the collapsed line keeps the done/total count and the live task
+      // preview, so long todo lists stop crowding the prompt.
+      setTodoCollapsed(previous => !previous)
     } else if (plainReturn && showPill) {
       handle?.scrollToBottom()
     } else if (extensionShortcuts !== undefined && extensionShortcuts.dispatch(input, key)) {
@@ -2251,7 +2258,11 @@ export function Chat({
                 thinkingStatus={thinkingStatus}
               />
             ))}
-        <GoalTodoPanel channel={channel} />
+        <GoalTodoPanel
+          channel={channel}
+          collapsed={todoCollapsed}
+          onToggle={() => setTodoCollapsed(previous => !previous)}
+        />
         {statusEntries.length > 0 && (
           // Plugin status contributions (tuiStatus seam): one joined line,
           // truncated by the Text wrap contract — the host owns the layout,
