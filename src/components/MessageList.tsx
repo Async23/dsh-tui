@@ -19,6 +19,7 @@ import { MessageMetadata } from './messages/MessageMetadata.js'
 import { stripNarration } from '../utils/narration.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import { truncateToWidth } from '../ink/truncateToWidth.js'
+import { clipPreview, type TimelineSnapshot, type TimelineTurn } from '../ink/timeline-rail.js'
 import type { ToolBackground } from '../tuiDisplayPrefs.js'
 
 /**
@@ -142,8 +143,7 @@ export function MessageList({
   forceMountRowId,
   newSinceRowId,
   onUnseenCount,
-  onAnchorUserRow,
-  onScrollbarNodes,
+  onTimeline,
   failureHintRowId,
   failureHint,
   onOpenSubagent,
@@ -184,21 +184,28 @@ export function MessageList({
   /** Reports how many new rows still sit below the viewport bottom edge. */
   onUnseenCount?: (count: number) => void
   /**
-   * Reports the "anchor" user row for the sticky prompt header: the topmost
-   * user message inside the viewport, or (when the viewport shows only
-   * assistant content) the nearest user message above it — the turn whose
-   * output the user is reading. Null while pinned to the bottom, so the
-   * header never flashes a stale message during the first frames after the
-   * user starts scrolling up. Reported only on change.
+   * Reports the conversation timeline snapshot for the sticky prompt
+   * header AND the transcript's turn rail: one entry per user turn
+   * (stable row id + content-space text top + preview line), plus the
+   * viewport-derived navigation targets, all computed from the same
+   * offsets[]/base geometry the mount window uses:
+   *
+   *  - active: the LAST turn whose prompt top is at-or-above the viewport
+   *    top (the turn whose content owns the top row — the one being
+   *    read); the FIRST turn stands in while pre-turn content (logo /
+   *    loaded-context) owns the top. Never null while any turn exists.
+   *    Top-anchored on purpose (Grok timeline semantics), not
+   *    "topmost visible prompt": the highlight moves only when a turn
+   *    boundary crosses the viewport top, so it never leaps when nudging
+   *    off the bottom, and the header/rail can never disagree.
+   *  - upId: nearest turn STRICTLY above the viewport top (▲ target).
+   *  - downId: nearest turn below the top whose top ≤ maxScroll — turns
+   *    past maxScroll can never own the top row (the renderer clamps
+   *    there), so naming them would make ▼ repeat itself forever.
+   *
+   * Reported post-commit, only when the signature changes.
    */
-  onAnchorUserRow?: (rowId: number | null) => void
-  /**
-   * Scrollbar node positions: one node per user row, given as its
-   * content-space TEXT top (header base + rows offset + top margin) so the
-   * transcript scrollbar can map it onto its track without knowing the
-   * header geometry. Reported only on change.
-   */
-  onScrollbarNodes?: (nodes: ReadonlyArray<{ id: number; top: number }>) => void
+  onTimeline?: (state: TimelineSnapshot) => void
   /**
    * Row id that should carry the trajectory footnote — the newest unseen
    * failure, or null. Exactly one row ever carries it: repeating the pointer
@@ -519,66 +526,61 @@ export function MessageList({
     }
   })
 
-  // Anchor user row for the sticky prompt header (Chat's StickyPromptHeader
-  // pins the message the viewport is showing — NOT the last one). The
-  // topmost user message inside the viewport wins; when the viewport shows
-  // only assistant content, the nearest user message above it (the turn
-  // whose output fills the view). Same rows-space math as the mount window
-  // (offsets are rows-space, scrollTop content-space — subtract the header
-  // base). Null while pinned to the bottom: Chat hides the header there,
-  // and reporting null avoids a stale anchor flashing during the first
-  // frames after the user scrolls up. Reported post-commit, only on change.
-  let anchorUserRowId: number | null = null
-  if (!sticky) {
-    const viewTop = Math.min(scrollTop, scrollTop + pending) - base
-    const viewBottom = Math.max(scrollTop, scrollTop + pending) + viewport - base
-    let lastUserAbove: number | null = null
+  // Conversation timeline snapshot: one entry per user turn (stable id +
+  // content-space text top + preview), plus the viewport-derived targets
+  // consumed by BOTH the sticky prompt header (active) and the transcript
+  // turn rail (active highlight, ▲/▼). Top-anchored semantics (Grok
+  // timeline): active = the LAST turn whose prompt top is at-or-above the
+  // viewport top — the turn whose content owns the top row, "the turn
+  // being read" — with the first turn standing in while pre-turn content
+  // (logo / loaded-context) owns the top. The highlight moves only when a
+  // turn boundary crosses the viewport top, never when a later prompt
+  // merely becomes visible lower on screen, so it cannot leap when
+  // nudging off the bottom and the header/rail can never disagree. The
+  // projected top (scrollTop + pending) is used so boundary crossings
+  // register during wheel bursts, not one drain frame late. Same
+  // rows-space math as the mount window (offsets are rows-space,
+  // scrollTop content-space — add the header base). downId additionally
+  // requires the turn's top ≤ maxScroll: the renderer clamps scrollTop
+  // there, so a turn past it could never own the top row, and naming it
+  // would make ▼ repeat itself forever (the stuck-▼ bug). Reported
+  // post-commit, only when the signature changes.
+  const timelineTurns: TimelineTurn[] = []
+  let activeTurnIndex: number | null = null
+  let upTurnIndex: number | null = null
+  let downTurnIndex: number | null = null
+  {
+    const viewTop = scrollTop + pending
+    const maxScroll = Math.max(0, (scrollHandle?.getScrollHeight() ?? 0) - viewport)
+    let index = 0
     for (let i = 0; i < visibleRows.length; i++) {
       const row = visibleRows[i]!
-      const top = offsets[i]!
-      const bottom = top + heightOf(row)
-      if (bottom <= viewTop) {
-        if (row.kind === 'user') lastUserAbove = row.id
-        continue
-      }
-      if (top >= viewBottom) break
-      if (row.kind === 'user') {
-        anchorUserRowId = row.id
-        break
-      }
-    }
-    if (anchorUserRowId === null) anchorUserRowId = lastUserAbove
-  }
-  const lastAnchorReportRef = React.useRef<number | null | undefined>(undefined)
-  React.useEffect(() => {
-    if (anchorUserRowId !== lastAnchorReportRef.current) {
-      lastAnchorReportRef.current = anchorUserRowId
-      onAnchorUserRow?.(anchorUserRowId)
-    }
-  })
-
-  // Scrollbar node positions: one per user row, in content-space (header
-  // base + rows offset) so the scrollbar can map them onto its track. The
-  // reported top is the row's TEXT top (wrapper top + its 1-line top
-  // margin), so a node click that scrolls to it puts the message text at
-  // the viewport top. User rows are single-line, so a node is a point.
-  // Reported post-commit, only on change — during streaming the tail user
-  // row's top is stable (the streaming reply grows BELOW it), so the
-  // report stays quiet until a new turn lands or an earlier row reflows.
-  const scrollbarNodes: Array<{ id: number; top: number }> = []
-  for (let i = 0; i < visibleRows.length; i++) {
-    const row = visibleRows[i]!
-    if (row.kind === 'user') {
+      if (row.kind !== 'user') continue
       const textTop = base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0)
-      scrollbarNodes.push({ id: row.id, top: textTop })
+      timelineTurns.push({ id: row.id, top: textTop, preview: clipPreview(row.text) })
+      if (textTop <= viewTop) activeTurnIndex = index
+      if (textTop < viewTop) upTurnIndex = index
+      if (downTurnIndex === null && textTop > viewTop && textTop <= maxScroll) {
+        downTurnIndex = index
+      }
+      index++
     }
+    if (index > 0 && activeTurnIndex === null) activeTurnIndex = 0
   }
-  const lastNodesReportRef = React.useRef('')
+  const timeline: TimelineSnapshot = {
+    turns: timelineTurns,
+    activeId: activeTurnIndex === null ? null : timelineTurns[activeTurnIndex]!.id,
+    upId: upTurnIndex === null ? null : timelineTurns[upTurnIndex]!.id,
+    downId: downTurnIndex === null ? null : timelineTurns[downTurnIndex]!.id,
+  }
+  const lastTimelineReportRef = React.useRef('')
   React.useEffect(() => {
-    const sig = scrollbarNodes.map(n => `${n.id}:${n.top}`).join('|')
-    if (sig !== lastNodesReportRef.current) {
-      lastNodesReportRef.current = sig
-      onScrollbarNodes?.(scrollbarNodes)
+    const sig =
+      timelineTurns.map(t => `${t.id}:${t.top}:${t.preview}`).join('|') +
+      `#a${timeline.activeId}#u${timeline.upId}#d${timeline.downId}`
+    if (sig !== lastTimelineReportRef.current) {
+      lastTimelineReportRef.current = sig
+      onTimeline?.(timeline)
     }
   })
 

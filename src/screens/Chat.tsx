@@ -26,7 +26,8 @@ import { useCopyOnSelect } from '../ink/hooks/use-copy-on-select.js'
 import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
 import { LogoHeader, MessageList } from '../components/MessageList.js'
-import { TranscriptScrollbar, type ScrollbarNode } from '../components/TranscriptScrollbar.js'
+import { TimelineRail } from '../components/TimelineRail.js'
+import type { TimelineSnapshot } from '../ink/timeline-rail.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { PromptInput, type PromptController } from '../components/PromptInput.js'
 import { GoalTodoPanel } from '../components/GoalTodoPanel.js'
@@ -275,14 +276,20 @@ export function Chat({
   const [helpOpen, setHelpOpen] = React.useState(false)
   const [handle, setHandle] = React.useState<ScrollBoxHandle | null>(null)
   /**
-   * The user row the sticky prompt header pins — the message the transcript
-   * viewport is currently showing (reported by MessageList), not the last
-   * user message: scrolled up to an old turn, the header carries THAT
-   * turn's prompt. Null while pinned to the bottom (header hidden).
+   * Conversation timeline snapshot (reported by MessageList): one entry
+   * per user turn plus the viewport-derived navigation targets. The
+   * ACTIVE turn — the one whose content owns the viewport top row — pins
+   * the sticky prompt header AND highlights the transcript rail's tick,
+   * from one report so the two can never disagree; upId/downId drive the
+   * rail's ▲/▼. Null activeId while pinned to the bottom only when there
+   * are no turns (header hidden there anyway).
    */
-  const [anchorUserRowId, setAnchorUserRowId] = React.useState<number | null>(null)
-  /** Scrollbar node positions (one per user row), reported by MessageList. */
-  const [scrollbarNodes, setScrollbarNodes] = React.useState<ReadonlyArray<ScrollbarNode>>([])
+  const [timeline, setTimeline] = React.useState<TimelineSnapshot>({
+    turns: [],
+    activeId: null,
+    upId: null,
+    downId: null,
+  })
   const [selectionActive, setSelectionActive] = React.useState(false)
   const [selectedId, setSelectedId] = React.useState<number | null>(null)
   const [expandedRows, setExpandedRows] = React.useState<ReadonlySet<number>>(
@@ -2441,10 +2448,11 @@ export function Chat({
     permissionPickerOpen || planPickerOpen || langPickerOpen || historyOpen ||
     rewindOpen || searchOpen || tipsOpen
 
-  // The sticky header pins the user message the transcript viewport is
-  // showing (anchorUserRowId, reported by MessageList) — scrolled up to an
-  // old turn, it carries THAT turn's prompt, not the latest one.
+  // The sticky header pins the turn owning the viewport top row
+  // (timeline.activeId, reported by MessageList) — scrolled up to an old
+  // turn, it carries THAT turn's prompt, not the latest one.
   // channel.rows is a live in-place array, so the lookup is per-render.
+  const anchorUserRowId = timeline.activeId
   const anchorUserText =
     anchorUserRowId === null
       ? null
@@ -2457,9 +2465,15 @@ export function Chat({
           text={anchorUserText}
           onClick={() => {
             // Click snaps the pinned prompt to the viewport top (CC's
-            // StickyPromptHeader): the pinned row is the one the viewport
-            // is showing, so the seek target is that same row.
-            if (anchorUserRowId !== null) seekRow(anchorUserRowId)
+            // StickyPromptHeader). Jump by the SAME content coordinate the
+            // rail's tick uses (timeline turn top = the prompt TEXT top):
+            // the element-based seek lands the row wrapper's margin at the
+            // top instead — one row shy of the text top the anchor rule
+            // compares against — and the header would flip to the previous
+            // turn immediately after the click.
+            const turn = timeline.turns.find(t => t.id === anchorUserRowId)
+            if (turn) handle?.scrollTo(turn.top)
+            else if (anchorUserRowId !== null) seekRow(anchorUserRowId)
             else handle?.scrollToBottom()
           }}
         />
@@ -2509,15 +2523,18 @@ export function Chat({
           forceMountRowId={forceMountRowId}
           newSinceRowId={isSticky ? null : lastSeenRowIdRef.current}
           onUnseenCount={setUnseenCount}
-          onAnchorUserRow={setAnchorUserRowId}
-          onScrollbarNodes={setScrollbarNodes}
+          onTimeline={setTimeline}
           onOpenSubagent={(agentId) => setSubagentDetailId(agentId)}
         />
         </ScrollBox>
-        <TranscriptScrollbar
+        <TimelineRail
           handle={handle}
-          nodes={scrollbarNodes}
-          anchorRowId={anchorUserRowId}
+          turns={timeline.turns}
+          activeId={timeline.activeId}
+          upId={timeline.upId}
+          downId={timeline.downId}
+          terminalWidth={terminalColumns}
+          hoverEnabled={!promptSelectionActive}
         />
       </Box>
       {/* Bottom chrome (pill, spinners, dialogs, prompt, statusline): never

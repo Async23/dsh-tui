@@ -2,15 +2,18 @@
  * verify-sticky-anchor — 置顶 prompt 头跟随视口（“翻到哪条置顶哪条”）。
  *
  * 用户报告：滚动到倒数第二条消息时，置顶头仍显示最后一条消息。修复后
- * StickyPromptHeader 钉住视口正在显示的那条 user 消息（视口内最靠上的
- * user 行；视口内只有 assistant 内容时取视口上方最近的 user 行），不再
- * 固定取 `channel.lastUserText`。
+ * StickyPromptHeader 不再读 `channel.lastUserText`，而是钉住时间线 active
+ * 轮：占据视口顶行的轮次（顶部锚定，Grok timeline 语义 —— prompt 顶在
+ * 视口顶之上/恰在顶行的最后一轮；logo 等前置内容占顶时取第一轮）。
+ * 与时间线 rail 的 ━━ 高亮同源（同一个 MessageList 上报），两者永不分歧。
  *
  * 断言（全屏 headless xterm，100×40）：
  *   1. 初始钉底：无置顶头（第 0 行不以 ❯ 开头）；
- *   2. 滚轮上滚后：置顶头出现，且 = 视口内最靠上的可见 user 消息；
- *   3. 继续上滚：置顶头跟随变化，且永不为屏幕上看不到的“最后一条”；
- *   4. 逐格下滚：每步置顶头都与视口顶可见 user 消息一致；
+ *   2. 上滚后：置顶头 = 顶部锚定轮 —— 视口首内容为 回复 k 时恰为 问题 k；
+ *      首内容为 问题 M 时为 M-1 或 M（prompt 自身顶到视口顶行 = M，
+ *      其上仅剩 1 行 margin 空行 = M-1）；
+ *   3. 继续上滚：跟随变化，且永不为屏幕上看不到的“最后一条”；
+ *   4. 逐格下滚：每步都与顶部锚定轮一致；
  *   5. 点击置顶头：被钉消息跳到视口顶部（转译区首行附近出现该消息）；
  *   6. 滚回底部：重新钉底，置顶头消失。
  *
@@ -131,11 +134,12 @@ function headerText(): string | null {
   const line0 = screenLines()[0]!.trimEnd()
   return /^❯/.test(line0) ? line0 : null
 }
-/** 视口内最靠上的可见 user 消息编号（从转译区第 1 行扫起，跳过置顶头）。 */
-function topVisibleUser(): number | null {
-  for (let y = 1; y < ROWS; y++) {
-    const m = screenLines()[y]!.match(/问题 (\d+)/)
-    if (m) return Number(m[1])
+/** 转译区首个可见内容行（跳过置顶头）：[所属轮次, 是 prompt 行吗]。 */
+function firstContentTurn(): { turn: number; isPrompt: boolean } | null {
+  const lines = screenLines()
+  for (let y = headerText() ? 1 : 0; y < ROWS; y++) {
+    const m = lines[y]!.match(/(问题|回复) (\d+)/)
+    if (m) return { turn: Number(m[2]), isPrompt: m[1] === '问题' }
   }
   return null
 }
@@ -150,19 +154,50 @@ const clickHeader = async () => {
   stdin.write('\x1b[<0;5;1m')
   await sleep(400)
 }
-/** 断言置顶头 = 视口顶可见 user 消息，且不是最后一条（问题 8 不在顶上时）。 */
-function assertHeaderFollowsViewport(label: string): void {
-  const top = topVisibleUser()
+/** 内容末行（最后一轮最后 1 行回复）是否已出现在 prompt 框正上方 —— 真·钉底。 */
+function atBottomEnd(): boolean {
+  const lines = screenLines()
+  let promptRow = -1
+  for (let y = ROWS - 1; y >= 0; y--) {
+    if (lines[y]!.trimStart().startsWith('❯')) { promptRow = y; break }
+  }
+  const from = promptRow >= 0 ? Math.max(0, promptRow - 4) : ROWS - 6
+  for (let y = from; y < ROWS; y++) {
+    if (lines[y]!.includes('回复 8 第 8 行')) return true
+  }
+  return false
+}
+/**
+ * 断言置顶头 = 顶部锚定轮（占据视口顶行的轮次）。屏幕侧推断：
+ *  - 首内容为 回复 k → 该答案属于第 k 轮，prompt k 必在顶上方 → 头 = k；
+ *  - 首内容为 问题 M → prompt 恰在视口顶行（头 = M）或其上只剩 1 行
+ *    margin 空行（prompt 文字顶还在顶行下方 1 行 → 头 = M-1）；
+ *  - M = 1 时恒为 1（前置内容占顶 → 第一轮兜底）；
+ *  - 真·钉底（末行已可见）时头合法隐藏。
+ */
+function assertHeaderFollowsViewport(label: string): number | null {
+  const first = firstContentTurn()
   const header = headerText()
-  if (top === null) {
-    check(`${label}: 视口内无 user 消息 → 置顶头隐藏`, header === null, `header=${JSON.stringify(header)}`)
-    return
+  if (first === null) {
+    check(`${label}: 无内容可推断（跳过）`, true)
+    return null
   }
-  check(`${label}: 置顶头存在`, header !== null, `header=${JSON.stringify(header)}`)
-  check(`${label}: 置顶头 = 视口顶消息 问题 ${top}`, header?.includes(`问题 ${top}`) === true, `header=${JSON.stringify(header)}`)
-  if (top !== 8) {
-    check(`${label}: 置顶头 ≠ 最后一条消息`, header?.includes('问题 8') === false, `header=${JSON.stringify(header)}`)
+  if (atBottomEnd()) {
+    check(`${label}: 钉底态置顶头隐藏`, header === null, `header=${JSON.stringify(header)}`)
+    return null
   }
+  const expected = first.isPrompt
+    ? (first.turn === 1 ? [1] : [first.turn - 1, first.turn])
+    : [first.turn]
+  const headerTurn = header?.match(/问题 (\d+)/)
+  const got = headerTurn ? Number(headerTurn[1]) : null
+  check(`${label}: 置顶头 = 顶部锚定轮（期望 ∈ {${expected.join('/')}}）`,
+    header !== null && got !== null && expected.includes(got),
+    `首内容=${first.isPrompt ? '问题' : '回复'} ${first.turn} header=${JSON.stringify(header)}`)
+  if (!expected.includes(8)) {
+    check(`${label}: 置顶头 ≠ 最后一条消息`, got === null || got !== 8, `header=${JSON.stringify(header)}`)
+  }
+  return got
 }
 
 // ── 1. 初始钉底：无置顶头，末尾消息可见 ──
@@ -179,13 +214,8 @@ assertHeaderFollowsViewport('上滚 12 格后')
 let seenAny = false
 for (let step = 1; step <= 14; step++) {
   await wheel(false, 1)
-  const top = topVisibleUser()
-  const header = headerText()
-  if (top !== null && header !== null) {
-    seenAny = true
-    check(`下滚第 ${step} 格: 置顶头 = 视口顶 问题 ${top}`, header.includes(`问题 ${top}`), `header=${JSON.stringify(header)}`)
-    if (top !== 8) check(`下滚第 ${step} 格: ≠ 最后一条`, !header.includes('问题 8'), `header=${JSON.stringify(header)}`)
-  }
+  const got = assertHeaderFollowsViewport(`下滚第 ${step} 格`)
+  if (got !== null) seenAny = true
 }
 check('下滚过程中至少观察到一次置顶头跟随', seenAny)
 
@@ -196,9 +226,10 @@ check('下滚过程中至少观察到一次置顶头跟随', seenAny)
   // 见 render-node-to-output 的 sticky-restore）——那不是本测试要覆盖的
   // 场景，避开它。
   await wheel(true, 3)
-  const top = topVisibleUser()
   const header = headerText()
-  if (top !== null && header !== null) {
+  const pinned = header?.match(/问题 (\d+)/)
+  if (header !== null && pinned) {
+    const top = Number(pinned[1])
     const before = screenLines().slice(1, 6).map(l => l.trimEnd())
     await clickHeader()
     const after = screenLines().slice(1, 6).map(l => l.trimEnd())
@@ -207,7 +238,7 @@ check('下滚过程中至少观察到一次置顶头跟随', seenAny)
     check('点击后: 原消息跳到转译区顶部', after[0]?.includes(`问题 ${top}`) || after[1]?.includes(`问题 ${top}`) || after[2]?.includes(`问题 ${top}`),
       `before=${JSON.stringify(before[0])} after=${JSON.stringify(after[0])}`)
   } else {
-    check('点击测试跳过（需要置顶头可见）', false, `top=${top} header=${JSON.stringify(header)}`)
+    check('点击测试跳过（需要置顶头可见）', false, `header=${JSON.stringify(header)}`)
   }
 }
 
