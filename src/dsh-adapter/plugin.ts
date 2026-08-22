@@ -376,6 +376,18 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // (swapping layouts requires re-mounting the whole tree).
   let bootedFullscreen = config.fullscreen === true
   let fullscreenFrozen = false
+  // The settings service may come up AFTER this plugin's apply: the cordis
+  // inject callback defers until the service registers, so the first
+  // `apply(scope.get())` below can land after the mount (field report: the
+  // /settings fullscreen toggle never took effect — the frozen latch below
+  // swallowed the late callback and bootedFullscreen stayed false). The
+  // mount must therefore WAIT for the first settings application (bounded —
+  // a bare embedder without a settings service must not deadlock).
+  let resolveSettingsReady: (() => void) | undefined
+  const settingsReady = new Promise<void>(resolve => {
+    resolveSettingsReady = () => resolve()
+    setTimeout(resolve, 300)
+  })
   // Register the dsh-tui settings namespace so the /settings screen can
   // edit it (the section below was '命名空间未注册' without this): the
   // user layer in settings.yaml wins over cordis.yml's diffLayout, and
@@ -481,10 +493,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         channel.notify(t('settings-fullscreen-restart'), { color: 'warning' })
       }
     })
+    resolveSettingsReady?.()
   })
-  // The tree mounts with the resolved value from here on; a settings doc
-  // landing later must not flip the running session's exit/layout truth.
-  fullscreenFrozen = true
   // The /settings screen's own section: the dsh-tui namespace comes from
   // the settings registration above, and the declared selects write `lang`
   // and `diffLayout` back through the settings service's revision-fenced
@@ -918,6 +928,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       })
     },
   })
+  // Freeze the fullscreen decision only NOW, right before the tree mounts:
+  // the settings first-application (awaited above via settingsReady) must
+  // have resolved bootedFullscreen already, and a mid-session /settings
+  // edit from here on is persisted for the next boot (the watch notifies),
+  // never applied live (swapping layouts requires re-mounting the tree).
+  await settingsReady
+  fullscreenFrozen = true
   // fullscreen: wrap the tree in <AlternateScreen> (DEC 1049 + SGR mouse
   // tracking), which turns on in-app text selection (copy-on-select via
   // useCopyOnSelect), wheel scroll, and click/hover hit-testing. Inline
