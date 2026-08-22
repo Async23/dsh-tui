@@ -350,6 +350,10 @@ export function MessageList({
     return scrollHandle.subscribe(tick)
   }, [scrollHandle])
 
+  // Cached rail/header preview per user row (see the timeline block for why
+  // the length guard exists alongside the id key).
+  const previewCacheRef = React.useRef(new Map<number, { len: number; preview: string }>())
+
   const heightOf = (row: ChatRow): number =>
     heightsRef.current.get(row.id) ?? DEFAULT_ROW_HEIGHT
   const offsets: number[] = new Array<number>(visibleRows.length)
@@ -550,6 +554,13 @@ export function MessageList({
   let upTurnIndex: number | null = null
   let downTurnIndex: number | null = null
   {
+    // Preview cache: user rows are immutable once landed, and this loop
+    // runs on EVERY scroll frame (MessageList re-renders per drain tick).
+    // clipPreview scans to the first non-empty line — O(text length) per
+    // row per frame for pasted-content prompts. Cache by row id with a
+    // text-length guard as belt-and-braces against any id reuse.
+    const previewCache = previewCacheRef.current
+    if (previewCache.size > 2000) previewCache.clear()
     const viewTop = scrollTop + pending
     const maxScroll = Math.max(0, (scrollHandle?.getScrollHeight() ?? 0) - viewport)
     let index = 0
@@ -557,7 +568,12 @@ export function MessageList({
       const row = visibleRows[i]!
       if (row.kind !== 'user') continue
       const textTop = base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0)
-      timelineTurns.push({ id: row.id, top: textTop, preview: clipPreview(row.text) })
+      let cached = previewCache.get(row.id)
+      if (cached === undefined || cached.len !== row.text.length) {
+        cached = { len: row.text.length, preview: clipPreview(row.text) }
+        previewCache.set(row.id, cached)
+      }
+      timelineTurns.push({ id: row.id, top: textTop, preview: cached.preview })
       if (textTop <= viewTop) activeTurnIndex = index
       if (textTop < viewTop) upTurnIndex = index
       if (downTurnIndex === null && textTop > viewTop && textTop <= maxScroll) {
