@@ -96,6 +96,8 @@ export function TrajectoryScene({
   /** Mouse hover states for the tab segments and the sort/projection label. */
   const [hoverTab, setHoverTab] = React.useState<'timeline' | 'hotspot' | null>(null)
   const [hoverAxis, setHoverAxis] = React.useState(false)
+  /** Hover state for the header ✕ exit button. */
+  const [closeHovered, setCloseHovered] = React.useState(false)
 
   // ── projection ───────────────────────────────────────────────────────────
   const nodes = build.nodes
@@ -388,19 +390,35 @@ export function TrajectoryScene({
     (totals.retries > 0 ? ` \u00b7 ${t('traj-retries', { n: totals.retries })}` : '') +
     ` \u00b7 ${formatDuration(totals.spanMs)}`
 
+  // ✕ 退出按钮占 2 格（` ✕`）：预量测行给右端留出预算，按钮钉在末列
+  const CLOSE_WIDTH = 2
   const headerLine = spread(
     `\u2726 ${t('traj-title')}  ${channel.sessionTitle ?? channel.cwd}`,
     totalsText,
-    bandWidth,
+    bandWidth - CLOSE_WIDTH,
   )
   const header = (
     <Box width="100%" height={1} flexShrink={0}>
-      <Text>
-        <Text color="claude" bold>{`\u2726 ${t('traj-title')}`}</Text>
-        <Text color="subtle">{headerLine.left.slice((`\u2726 ${t('traj-title')}`).length)}</Text>
-        <Text>{headerLine.gap}</Text>
-        <Text color={totals.errors > 0 ? 'error' : 'subtle'}>{headerLine.right}</Text>
-      </Text>
+      {/* 显式分段宽度（页签行同法）：Text 自然宽度的布局测量在 CJK/混合
+          内容下有歧义，会把末段 ✕ 挤出 100% 行宽被裁——显式 width 钉死。 */}
+      <Box flexShrink={0} width={bandWidth - CLOSE_WIDTH}>
+        <Text>
+          <Text color="claude" bold>{`\u2726 ${t('traj-title')}`}</Text>
+          <Text color="subtle">{headerLine.left.slice((`\u2726 ${t('traj-title')}`).length)}</Text>
+          <Text>{headerLine.gap}</Text>
+          <Text color={totals.errors > 0 ? 'error' : 'subtle'}>{headerLine.right}</Text>
+        </Text>
+      </Box>
+      <Box
+        flexShrink={0}
+        width={CLOSE_WIDTH}
+        // 可点击退出（q/Esc 的鼠标等价）——hover 提亮给出可点指示
+        onClick={() => onClose()}
+        onMouseEnter={(): void => setCloseHovered(true)}
+        onMouseLeave={(): void => setCloseHovered(false)}
+      >
+        <Text color={closeHovered ? 'text' : 'subtle'}>{' ✕'}</Text>
+      </Box>
     </Box>
   )
 

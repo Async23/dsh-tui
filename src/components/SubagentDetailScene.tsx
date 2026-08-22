@@ -3,6 +3,7 @@ import { Box, Text, useInput, ScrollBox, type ScrollBoxHandle, useTerminalSize }
 import type { SubagentState } from '../dsh-adapter/subagents.js'
 import { t } from '../i18n.js'
 import { Divider } from './design-system/Divider.js'
+import { ExitButton } from './SubagentDashboard.js'
 import { isPlainReturnInput } from '../utils/modifiers.js'
 import { toolNameColor } from './messages/AssistantToolUseMessage.js'
 import { getCliHighlightPromise } from '../cc/cliHighlight.js'
@@ -209,6 +210,9 @@ export function SubagentDetailScene({
         <Text bold>{`${t('subagent-card-prefix')}${subagent.description}`}</Text>
         <Text dimColor>·</Text>
         <Text color={info.color}>{info.label}</Text>
+        <Box flexGrow={1} />
+        {/* 可点击退出（Esc/Enter 的鼠标等价），hover 提亮 */}
+        <ExitButton onClick={onBack} />
       </Box>
       <Text>
         <Text>{subagent.model ?? subagent.provider ?? 'default'}</Text>

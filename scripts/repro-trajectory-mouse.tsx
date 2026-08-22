@@ -246,7 +246,35 @@ if (targetIdx >= 0) {
   }
 }
 
+// ── 7. 头行 ✕ 退出按钮点击 = onClose ─────────────────────────────────────
 await inst.unmount()
+{
+  let closed = 0
+  const onClose = (): void => { closed++ }
+  const termX = makeTerm()
+  const sX = makeStreams(termX)
+  const instX = await render(
+    <AlternateScreen>
+      <TrajectoryScene channel={channel} build={traj.buildTrajectory(EVENTS as never)} onClose={onClose} />
+    </AlternateScreen>,
+    { stdout: sX.stdout as any, stdin: sX.stdin as any, stderr: sX.stderr as any, exitOnCtrlC: false, patchConsole: false },
+  )
+  await sleep(600)
+  let lx = screenLines(termX)
+  for (let wait = 0; wait < 5 && !lx.some(l => l.includes('时序')); wait++) {
+    await sleep(200)
+    lx = screenLines(termX)
+  }
+  const closeRowIdx = lx.findIndex(l => l.includes('时序') && l.includes('热点'))
+  // ✕ 钉在头行（页签行上一行）末列
+  const headerIdx2 = closeRowIdx - 1
+  check('✕ 退出按钮可见', headerIdx2 >= 0 && (lx[headerIdx2] ?? '').trimEnd().endsWith('✕'),
+    headerIdx2 >= 0 ? `行${headerIdx2} 末字符=${(lx[headerIdx2] ?? '').trimEnd().slice(-1)} 行尾=[${(lx[headerIdx2] ?? '').slice(-30)}]` : '未找到页签行')
+  clickCell(sX.stdin, COLS - 3, headerIdx2 + 1) // ✕ 在 bandWidth（COLS-4）末端：paddingX 1 + 116 宽内容，✕ 于 1-indexed COLS-3
+  await sleep(300)
+  check('点击 ✕ → onClose 被调用', closed === 1, `closed=${closed}`)
+  await instX.unmount()
+}
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} 项失败`)
 process.exit(failed === 0 ? 0 : 1)
