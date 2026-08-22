@@ -209,6 +209,36 @@ export function SessionBrowser({
 
   const focused = sessionAt(view.rows, focus)
 
+  /**
+   * Resume a session (Enter and row-click share this path). The screen closes
+   * only once the resume actually happened. Closing first and letting a
+   * refusal fall through to a notification would send that explanation to the
+   * conversation the user is not looking at, and leave them staring at an
+   * unchanged transcript wondering what Enter did. `resumeTo` reports its own
+   * reasons; this only has to stay put.
+   */
+  const resumeSession = (target: NonNullable<typeof focused>): void => {
+    runAction(async () => {
+      try {
+        const result = await channel.resumeTo(target.id)
+        if (result.ok) {
+          channel.notify(t('resume-resumed'))
+          onClose()
+        } else {
+          if (result.reason === 'cancelled') return
+          const text = result.reason === 'working'
+            ? t('resume-while-working')
+            : result.reason === 'unavailable'
+              ? t('resume-unavailable')
+              : t('session-resume-failed', { err: result.error })
+          setNotice({ text, tone: 'error' })
+        }
+      } catch (error) {
+        setNotice({ text: t('session-resume-failed', { err: message(error) }), tone: 'error' })
+      }
+    })
+  }
+
   // Where the cursor is RIGHT NOW, including moves made earlier in this same
   // tick. A held arrow key (or a paste) delivers several key events from one
   // stdin chunk, and every one of them runs before React re-renders — so a
@@ -395,31 +425,7 @@ export function SessionBrowser({
       step(key.pageDown ? 1 : -1, Math.max(1, Math.floor(listHeight / 2)))
     } else if (isPlainReturn(key)) {
       if (focused === undefined) return
-      const target = focused
-      // The screen closes only once the resume actually happened. Closing
-      // first and letting a refusal fall through to a notification would send
-      // that explanation to the conversation the user is not looking at, and
-      // leave them staring at an unchanged transcript wondering what Enter
-      // did. `resumeTo` reports its own reasons; this only has to stay put.
-      runAction(async () => {
-        try {
-          const result = await channel.resumeTo(target.id)
-          if (result.ok) {
-            channel.notify(t('resume-resumed'))
-            onClose()
-          } else {
-            if (result.reason === 'cancelled') return
-            const text = result.reason === 'working'
-              ? t('resume-while-working')
-              : result.reason === 'unavailable'
-                ? t('resume-unavailable')
-                : t('session-resume-failed', { err: result.error })
-            setNotice({ text, tone: 'error' })
-          }
-        } catch (error) {
-          setNotice({ text: t('session-resume-failed', { err: message(error) }), tone: 'error' })
-        }
-      })
+      resumeSession(focused)
     } else if (key.escape) {
       // Esc backs out one layer at a time: a live query first, the screen
       // second. Closing on the first Esc would discard a search the user is
@@ -540,6 +546,11 @@ export function SessionBrowser({
                 depth={row.depth}
                 focused={windowTop + index === focus}
                 now={now}
+                // 点击行 = 聚焦 + 恢复该会话（与 Enter 同路径）
+                onClick={() => {
+                  setFocusId(row.session.id)
+                  resumeSession(row.session)
+                }}
               />
             ),
           )}
