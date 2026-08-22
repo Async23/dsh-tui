@@ -45,6 +45,78 @@ const DEFAULT_ROW_HEIGHT = 2
  *  first layout measurement. */
 const DEFAULT_HEADER_LINES = 14
 
+/**
+ * Per-kind layout signature: the O(1) identity of every input that decides a
+ * row's rendered HEIGHT (see sigRef in MessageList). Fields are scoped to the
+ * row's own renderer — a global flat signature over-invalidates (a diffLayout
+ * switch must not drop user-message heights). Text uses length as the proxy:
+ * full-text hashing per row per frame would defeat virtualization's budget,
+ * and a same-length miss only degrades to the previous behavior.
+ */
+function layoutSignature(
+  row: ChatRow,
+  columns: number,
+  expanded: boolean,
+  expandedRows: ReadonlySet<number>,
+  thinkingVisible: boolean,
+  thinkingFold: string,
+  diffLayout: string,
+  model: string,
+  failureHintRowId: number | null | undefined,
+  failureHint: string | undefined,
+): string {
+  // Universal height inputs: width reflows every row; kind switches height
+  // semantics wholesale; text length drives wrapping.
+  const parts: Array<string | number | boolean> = [columns, row.kind, row.text?.length ?? 0]
+  switch (row.kind) {
+    case 'assistant':
+      // Streaming vs settled swaps renderers; Ctrl+O/per-row expand adds the
+      // metadata row (model only renders expanded — keeps an idle /model
+      // switch from touching settled rows).
+      parts.push(row.streaming === true, expanded, expandedRows.has(row.id), expanded ? model : '')
+      break
+    case 'reasoning':
+      // thinkingFold (preview vs full) and the visibility filter change the
+      // folded card's height; streaming shows verbose live.
+      parts.push(row.streaming === true, expanded, expandedRows.has(row.id), thinkingVisible, thinkingFold)
+      break
+    case 'tool': {
+      const tool = row.tool
+      parts.push(
+        expanded,
+        expandedRows.has(row.id),
+        diffLayout,
+        tool?.status ?? '',
+        tool?.resultText?.length ?? 0,
+        tool?.resultFull?.length ?? 0,
+        tool?.errorText?.length ?? 0,
+        row.id === failureHintRowId ? failureHint ?? '' : '',
+      )
+      break
+    }
+    case 'subagent':
+      // 卡片高度输入：running→settled 折叠 waterfall+tool 行（5→1 行），
+      // failed 增加 error 行。缺这些字段的话 offscreen 结算后 cached
+      // height 永不过期 → 滚回 blank band / 滚不到底。
+      parts.push(
+        row.subagent?.status ?? '',
+        row.subagent?.toolCalls.length ?? 0,
+        row.subagent?.outputLines.length ?? 0,
+        row.subagent?.error?.length ?? 0,
+      )
+      break
+    case 'compact':
+      // Folded one-liner vs full summary text.
+      parts.push(expanded, expandedRows.has(row.id))
+      break
+    default:
+      // user / notice / interrupt / local / local-output: height follows
+      // text + columns alone (selection/background never change height).
+      break
+  }
+  return parts.join('|')
+}
+
 export function MessageList({
   rows,
   expanded,
@@ -204,27 +276,24 @@ export function MessageList({
     const sigs = sigRef.current
     for (let i = 0; i < visibleRows.length; i++) {
       const row = visibleRows[i]!
-      const tool = row.tool
-      const sig = [
+      // Per-kind signature: only the inputs that row's OWN renderer consumes.
+      // A global flat array (every field × every row) over-invalidates — a
+      // /settings diffLayout switch used to drop every user/assistant/
+      // reasoning height at once, remounting the widened window over rows
+      // whose rendering never changed (Yoga spike + measure churn for
+      // nothing). Base parts cover the universal height inputs.
+      const sig = layoutSignature(
+        row,
         columns,
-        row.kind,
-        row.text?.length ?? 0,
-        row.streaming === true,
         expanded,
-        expandedRows.has(row.id),
+        expandedRows,
         thinkingVisible,
         thinkingFold,
         diffLayout,
-        // Model only renders on expanded rows (MessageMetadata) — folding
-        // it out of the signature keeps an idle /model switch from
-        // invalidating every cached height at once.
-        expanded ? model : '',
-        tool?.status ?? '',
-        tool?.resultText?.length ?? 0,
-        tool?.resultFull?.length ?? 0,
-        tool?.errorText?.length ?? 0,
-        row.id === failureHintRowId ? failureHint ?? '' : '',
-      ].join('|')
+        model,
+        failureHintRowId,
+        failureHint,
+      )
       if (sigs.get(row.id) !== sig) {
         if (sigs.size >= HEIGHTS_CACHE_MAX) {
           const oldest = sigs.keys().next().value
@@ -489,11 +558,6 @@ export function MessageList({
     registerRowRef?.(rowId, el)
   }, [registerRowRef])
 
-  // Second-resolution clock for the running tool card's live elapsed time.
-  // Computed per render (cheap) but only forwarded to running rows, so
-  // settled rows never see a changing prop.
-  const nowSec = Math.floor(Date.now() / 1000)
-
   return (
     <>
       {rows.some(row => row.folded) && (
@@ -548,7 +612,6 @@ export function MessageList({
               toolResultView={tool?.resultView}
               toolStartedAt={tool?.startedAt}
               toolDurationMs={tool?.durationMs}
-              nowSec={tool?.status === 'running' ? nowSec : undefined}
               subagent={subagent}
               onToggleRow={onToggleRow}
               setRowRef={setRowRef}
@@ -607,9 +670,6 @@ type MemoRowProps = {
   toolResultView: ToolResultView | undefined
   toolStartedAt: number | undefined
   toolDurationMs: number | undefined
-  /** Second-resolution clock, forwarded only while the tool runs so the
-   *  live elapsed label ticks; settled rows never receive a changing prop. */
-  nowSec: number | undefined
   // SubagentRow, stable ref (subagent lifecycle events update the store, not
   // the row ref itself, so a plain ref compare stays correct).
   subagent: SubagentRow | undefined
