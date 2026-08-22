@@ -554,14 +554,14 @@ export default class Ink {
   }
 
   /**
-   * Schedule the next scroll-drain frame — Grok Build's Presenter, ported:
+   * Schedule the next scroll-drain frame — Grok Build's Presenter, ported.
+   * Grok keeps TWO cadence knobs (min_draw_ms for renders, scroll_ms for
+   * scroll); collapsing both to FRAME_INTERVAL_MS made big flicks steppy
+   * (the proportional step, 75%-of-remaining, × 4× the interval = chunky
+   * ramp and ~4× longer settle), so the drain keeps its own fast cadence:
    *
-   *  - CADENCE: one drain frame per FRAME_INTERVAL_MS (60fps). The old
-   *    quarter-interval timer (~250fps) multiplied pty writes 4× for zero
-   *    visible smoothness — a terminal paints at its display refresh, not
-   *    at our timer rate. Scroll throughput is unchanged: the drain step
-   *    is proportional (75% of remaining delta per frame), so fewer frames
-   *    just take proportionally bigger steps.
+   *  - CADENCE: quarter interval (~250fps). Drain frames are cheap
+   *    (DECSTBM + ~10 patches); scroll throughput is unchanged.
    *  - IN-FLIGHT GATE: while stdout still holds unflushed bytes above
    *    PTY_BACKLOG_BYTES (slow ConPTY round trip, ssh link), queue nothing
    *    further — re-probe at quarter interval instead. Grok's equivalent
@@ -588,7 +588,7 @@ export default class Ink {
       }, FRAME_INTERVAL_MS >> 2);
       return;
     }
-    this.drainTimer = setTimeout(this.renderNow, FRAME_INTERVAL_MS);
+    this.drainTimer = setTimeout(this.renderNow, FRAME_INTERVAL_MS >> 2);
   }
 
   onRender() {
