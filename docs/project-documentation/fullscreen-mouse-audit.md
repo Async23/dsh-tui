@@ -4,7 +4,8 @@
 >
 > 审计方法：3 路并行子代理（fullscreen 生命周期 / 鼠标输入管线 / UI 组件
 > 交互覆盖）+ 主线程源码逐路径验证。审计 C（UI 组件）子代理已交付完整报告；
-> 审计 A/B 子代理超时中断，其主题由主线程亲自验证补全。本报告只记录审计
+> 审计 A/B 子代理超时中断，其主题由主线程亲自验证补全（第二轮补充审计了
+> 渲染/生命周期路径与终端层外围文件，见第 9/10 节）。本报告只记录审计
 > 证据与修复边界，**本轮未修改 `src/`**。
 >
 > 现状基线：fullscreen（alt-screen）与 SGR 鼠标支持已具备完整链路——DEC 1049
@@ -25,7 +26,11 @@
    streaming 行点击不一致；页签/滑块/补全下拉/会话行不可点；鼠标坐标越界
    clamp。
 3. **P2**：右键/中键语义、滚轮加速度、hover 节流、hover 事件对象、
-   X10 点击兜底、点击帧同步。
+   X10 点击兜底、点击帧同步、AlternateScreen 多实例回退。
+4. **总体判断**：fullscreen 生命周期与渲染几何（第 10 节）经两轮逐路径
+   验证**无 P0/P1 级缺口**——DEC 1049 进出、鼠标追踪、终端模式自愈、外部
+   编辑器 handoff、altScreen 渲染几何均已成熟；可完善点集中在 UI 层消费
+   不足与少量管线级增强。
 
 ## 2. P0：阻断型面板不可点击（agent 阻塞时鼠标放行不了）
 
@@ -178,6 +183,15 @@ hit-test 的 rect 检查天然 miss（点击侧安全）；但**选区侧**：�
    一次性受益（含键盘路径 moveFocus）。
 3. 补越界坐标的单元测试。
 
+**第二轮补充核实的防护现状**（哪些已有、哪些没有）：
+- 已有：`selectLineAt`（selection.ts#L420 越界 row 直接 return）；
+  `extendSelection` 的 line 模式（#L455 clamp row）；
+  `shiftSelection/shiftAnchor`（clamp [minRow,maxRow] + clamp-debt 追踪）；
+  键盘路径 `moveFocus`（ink.tsx 调用方保证 clamp）；hit-test 侧天然 miss。
+- 没有：`startSelection`/`updateSelection`（#L95,#L124 无 clamp）；
+  `extendSelection` 的 word 模式 fallback（#L451-453 用原始 col，未 clamp）。
+- 结论：入口 clamp（方案 1）一次覆盖所有路径，仍是最优解。
+
 ## 8. P1：其余 UI 点击缺口（审计 C 提炼）
 
 - **C-02** `MessageList.tsx:738-756`：streaming assistant 行无 onClick，与
@@ -213,6 +227,9 @@ hit-test 的 rect 检查天然 miss（点击侧安全）；但**选区侧**：�
 - **M-F9 点击帧同步（需验证）**：dispatchClick 用 nodeCache（上一渲染帧的
   rect）对当前 DOM 树 hit-test，React commit 后未渲染的窗口期可能错位；
   是否加 renderNow 或帧号校验需先验证。
+- **F-2 AlternateScreen 实例回退**（`AlternateScreen.tsx`#L52）：`instances.get
+  (process.stdout) ?? instances.values().next().value`——测试/嵌入式多实例时
+  可能拿到错误实例（有注释说明是有意为之的兜底）。P2。
 - **C-04** load earlier / show previous Divider 可点但无 hover；
   **C-05** 行点击语义（点击=折叠 vs 键盘=选中+展开，建议点击=seekRow+
   selectedId，产品决策）；**C-08** interrupt 无点击目标；**C-18** PromptInput
@@ -233,9 +250,47 @@ hit-test 的 rect 检查天然 miss（点击侧安全）；但**选区侧**：�
   兼容、编辑器 rmcup 后重进 alt、post-restore 输入抑制窗口）；
 - 选区滚动平移（captureScrolledRows/shiftSelectionForFollow，verify-wheel-
   selection 覆盖）；双击/三击语义、多击链上限 3、click-to-focus；
-- 组件层已完善：AssistantThinkingMessage（三种形态均有 onClick）、
-  NewMessagesPill（click+hover 双全，唯一 hover 参考实现）、StickyPromptHeader、
-  Chat/SubagentMessage、GoalTodoPanel（有 onClick 无 hover 属 P2）。
+- **第二轮补充确认（渲染/生命周期路径，均经主线程逐段阅读）**：
+  - 渲染几何：`renderer.ts`#L106-113 altScreen 高度钳制（yogaHeight >
+    terminalRows 时裁剪并告警日志）；viewport `+1` hack 防 shouldClearScreen
+    误判；cursor.y clamp 防 LF 滚屏（#L171-184）；
+  - diff 引擎：`log-update.ts`#L255-278 altScreen 专用 DECSTBM 硬件滚动优化
+    （BSU/ESU 原子化，tmux/JediTerm 排除）；#L597-598 altScreen 跳过光标恢复
+    （下一帧 CSI H 锚定）；#L676-689 JediTerm inline 特例不影响 alt-screen；
+  - 帧锚定：`ink.tsx`#L737-743 ALT_SCREEN_ANCHOR_CURSOR + CSI H 每帧自愈
+    （tmux status 刷新等外部游标扰动）；#L785-811 BSU/ESU 原子帧 + iTerm2
+    cursor-guide 底部停车 + resize 后 ERASE_SCREEN 原子擦除；#L858-867
+    altScreen 下声明光标用绝对 CUP 并 clamp 到终端尺寸；
+  - 输入泵：`App.tsx`#L457-479 readable 泵 + Bun wedge 防护 + stdin 长间隙
+    → reassertTerminalModes；#L389-415 flushIncomplete 重武装（heavy render
+    时防孤儿 ESC）；`parse-keypress.ts`#L753-773 孤儿 SGR/X10 尾巴带 ESC
+    前缀重合成（X10 字节窗收窄防误吞 `[MAX]` 类输入）；
+  - 模式生命周期：`App.tsx`#L306-386 raw mode 引用计数（EBP/EFE/kitty/
+    modifyOtherKeys/win32 启用与对称禁用）；`ink.tsx`#L1264-1267
+    reenterAltScreen 自愈（SIGCONT/resize/sleep-wake）；#L1231-1250
+    detachStdinForHandoff（/update 重启防父子抢读）；
+  - 组件层已完善：AssistantThinkingMessage（三种形态均有 onClick）、
+    NewMessagesPill（click+hover 双全，唯一 hover 参考实现）、StickyPromptHeader、
+    Chat/SubagentMessage、GoalTodoPanel（有 onClick 无 hover 属 P2）；
+  - **终端层外围文件（第二轮补读，均确认无 P0/P1 缺口）**：
+    - `termio/tokenize.ts`#L247-288 X10 鼠标消费：三字节 ≥0x20 校验防误吞
+      CSI DL / PASTE_END、`\x1b[M` 后无参数判定、不完整事件缓冲；
+      已文档化 UTF-8 双字节坐标折叠局限（162+ 列无 SGR 终端，罕见）；
+    - `termio/parser.ts`：输出侧 ANSI 解析（Ansi.tsx 唯一消费方，只取
+      text/link action），mode action 无消费方但属合理（渲染内容不含
+      DECSET）；`?1049`/`?47`、`?1000/1002/1003`、`?1004`、`?2004` 映射齐全；
+    - `terminal.ts`：DEC 2026 支持矩阵（tmux 排除、VTE≥0.68、Zed/foot/kitty
+      等）、JediTerm 显式检测与 DECSTBM 排除、win32-input-mode 排除嵌入式
+      xterm.js（issue #215）、XTVERSION SSH 穿透、writeDiffToTerminal 的
+      BSU/ESU 包裹 + clearTerminal 拆出同步块（WT viewport-yank 防护、
+      claude-code#35580）+ 每帧 SGR_RESET/link('') BCE 防护（issue #10）；
+    - `input-suppression.ts`：120ms 单调扩展抑制窗口，use-input 单点消费
+      （外部编辑器 handoff 后异步回复防泄漏）；
+    - `hooks/use-terminal-viewport.ts`：滚动容器 scrollTop 减法 + cursor-
+      restore scroll 补偿，与 log-update 的 scrollbackRows 口径一致；
+    - `selection.ts` 剩余原语：getSelectedText 的 noSelect 跳过/尾随空白
+      修剪、softWrap 接续 clamp（#L843-855）、captureScrolledRows 窗口
+      边界、clamp-debt 追踪（shiftSelection 的 pre-clamp 虚拟行）。
 
 ## 11. 现有回归 harness（改动后必跑）
 
