@@ -1427,7 +1427,7 @@ export function createChannel(
         runtime.interrupt(target, { kind: 'ancestor', agent })
         subagentStore.onCancelled(agentId, 'interrupted')
         state.subagents = subagentStore.snapshot()
-        syncSubagentRows()
+        syncSubagentRows(state.subagents)
         state.emit()
         return true
       } catch {
@@ -1461,9 +1461,12 @@ export function createChannel(
   /**
    * Sync subagentStore state into ChatRows (insert/update in state.rows).
    * Called whenever subagent state changes (spawned/completed/failed/output).
+   * Accepts a caller-taken snapshot to avoid the double copy on the hot path
+   * (session/event fires per subagent token: snapshot here + snapshot in the
+   * caller = two full state copies before emitStream's 16ms throttle).
    */
-  const syncSubagentRows = (): void => {
-    const snapshot = subagentStore.snapshot()
+  const syncSubagentRows = (preSnapshot?: readonly SubagentState[]): void => {
+    const snapshot = preSnapshot ?? subagentStore.snapshot()
     for (const sub of snapshot) {
       let row = subagentRowsByAgentId.get(sub.agentId)
       if (!row) {
@@ -5565,7 +5568,7 @@ ${output}
         if (subagentId) {
           subagentStore.onSessionEvent(subagentId, event)
           state.subagents = subagentStore.snapshot()
-          syncSubagentRows()
+          syncSubagentRows(state.subagents)
           if (event.type === 'assistant/chunk') state.emitStream()
           else state.emit()
           return
@@ -5627,7 +5630,7 @@ ${output}
             // Session discovery is best-effort and must not break the parent turn.
           }
           state.subagents = subagentStore.snapshot()
-          syncSubagentRows()
+          syncSubagentRows(state.subagents)
           state.emit()
         })
         const disposeEnd = ctx.on('subagent/end' as any, (info: { id: string; stopReason: string; lastAssistantMessage?: unknown[] }) => {
@@ -5646,7 +5649,7 @@ ${output}
           else if (info.stopReason === 'cancelled' || info.stopReason === 'aborted') subagentStore.onCancelled(info.id, info.stopReason, output)
           else subagentStore.onFailed(info.id, info.stopReason || 'Unknown error')
           state.subagents = subagentStore.snapshot()
-          syncSubagentRows()
+          syncSubagentRows(state.subagents)
           state.emit()
         })
         return () => {
