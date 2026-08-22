@@ -10,6 +10,7 @@ import { AssistantThinkingMessage } from './messages/AssistantThinkingMessage.js
 import { AssistantToolUseMessage } from './messages/AssistantToolUseMessage.js'
 import { SubagentMessage } from './Chat/SubagentMessage.js'
 import { isMinimalMode } from '../minimalMode.js'
+import { noteFrameCause, noteListGeometry } from '../ink/geometry-trace.js'
 import { InterruptedByUser } from './InterruptedByUser.js'
 import { LogoV2 } from './LogoV2.js'
 import { StreamingMarkdown } from './StreamingMarkdown.js'
@@ -379,6 +380,20 @@ export function MessageList({
   const topPad = offsets[start] ?? 0
   const mountedBottom = end < visibleRows.length ? offsets[end] : total
   const bottomPad = total - mountedBottom
+  noteListGeometry({
+    start,
+    end,
+    topPad,
+    bottomPad,
+    total,
+    base,
+    sticky,
+    pending,
+    viewport,
+    termRows,
+    columns,
+    rowCount: visibleRows.length,
+  })
 
   // New-messages pill count: rows past the seen-anchor whose top edge is
   // still below the viewport bottom. Same rows-space math as the window
@@ -460,6 +475,7 @@ export function MessageList({
       measureQueuedRef.current = true
       queueMicrotask(() => {
         measureQueuedRef.current = false
+        noteFrameCause('measure')
         setMeasureTick(t => t + 1)
       })
     }
