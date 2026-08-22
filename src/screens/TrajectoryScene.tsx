@@ -1,6 +1,5 @@
 import React from 'react'
 import { Box, Text, useInput, useTerminalSize } from '../ui.js'
-import InkBox from '../ink/components/Box.js'
 import type { WheelEvent } from '../ink/events/wheel-event.js'
 import { useAnimationFrame } from '../ink/hooks/use-animation-frame.js'
 import { Divider } from '../components/design-system/Divider.js'
@@ -434,6 +433,7 @@ export function TrajectoryScene({
           projection (timeline, `m`). Non-active tabs brighten on hover. */}
       <Box
         flexShrink={0}
+        width={stringWidth(tabTimelineText)}
         onClick={() => switchView('timeline')}
         onMouseEnter={(): void => setHoverTab('timeline')}
         onMouseLeave={(): void => setHoverTab(previous => (previous === 'timeline' ? null : previous))}
@@ -447,6 +447,7 @@ export function TrajectoryScene({
       </Box>
       <Box
         flexShrink={0}
+        width={stringWidth(hotspotShown)}
         onClick={() => switchView('hotspot')}
         onMouseEnter={(): void => setHoverTab('hotspot')}
         onMouseLeave={(): void => setHoverTab(previous => (previous === 'hotspot' ? null : previous))}
@@ -459,7 +460,7 @@ export function TrajectoryScene({
         </Text>
       </Box>
       {queryShown !== '' && (
-        <Box flexShrink={0} onClick={() => setQueryOpen(true)}>
+        <Box flexShrink={0} width={stringWidth(queryShown)} onClick={() => setQueryOpen(true)}>
           <Text color="suggestion">{queryShown}</Text>
         </Box>
       )}
@@ -468,6 +469,11 @@ export function TrajectoryScene({
       </Box>
       <Box
         flexShrink={0}
+        // +1 slack: ink breaks a wrap line exactly AT the box width, so a
+        // wide-char-ending label (按耗时) at an exact fit loses its last
+        // glyph to a clipped second line (the truncateWidth doc's trap).
+        // The flexGrow gap absorbs the extra cell.
+        width={stringWidth(tabsLine.right) + 1}
         onClick={() => {
           if (view === 'hotspot') {
             setSort(previous => HOTSPOT_SORTS[(HOTSPOT_SORTS.indexOf(previous) + 1) % HOTSPOT_SORTS.length]!)
@@ -522,16 +528,13 @@ export function TrajectoryScene({
         }}
       />
       <Box height={1} flexShrink={0}><Text> </Text></Box>
-      {/* Content region with the wheel: raw ink-box host — ThemedBox drops
-          onWheel (compiled prop list), so the handler must sit on an element
-          that registers it. Layout stays a flexGrow column, so the extra
-          nesting changes nothing about the fixed geometry. */}
-      <InkBox
-        flexDirection="column"
-        flexGrow={1}
-        flexShrink={1}
-        overflow="hidden"
-        width="100%"
+      {/* Content region with the wheel: the literal ink-box host — every Box
+          flavor (ThemedBox AND raw ink Box) is a compiled component whose
+          prop list drops onWheel into the style rest (SuggestionCard/ScrollBox
+          hit the same wall and write the host element directly). Layout stays
+          a flexGrow column, so the extra nesting changes nothing. */}
+      <ink-box
+        style={{ flexDirection: 'column', flexGrow: 1, flexShrink: 1, overflow: 'hidden', width: '100%' }}
         onWheel={handleWheel}
       >
         {view === 'timeline' ? (
@@ -573,7 +576,7 @@ export function TrajectoryScene({
             onRowClick={index => jumpFromHotspot(hotspotRows(agg)[index])}
           />
         )}
-      </InkBox>
+      </ink-box>
       <Box height={1} flexShrink={0}><Text> </Text></Box>
       <Box width="100%" height={1} flexShrink={0}>
         <Text dimColor italic wrap="truncate">

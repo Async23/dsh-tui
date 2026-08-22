@@ -1,6 +1,5 @@
 import React from 'react'
 import { Box, Text, useInput, useTerminalSize } from '../ui.js'
-import InkBox from '../ink/components/Box.js'
 import type { WheelEvent } from '../ink/events/wheel-event.js'
 import { Divider } from '../components/design-system/Divider.js'
 import { HintLine } from '../components/design-system/HintLine.js'
@@ -520,14 +519,18 @@ export function Settings({
         {host === undefined && <Text color="warning">{t('settings-unavailable')}</Text>}
       </Box>
       <Divider />
-      {/* ink-box host for the wheel (ThemedBox's compiled prop list drops
-          onWheel): rolling the wheel walks the focus, and the focus-follow
-          window scrolls with it — the focus IS the viewport here. */}
-      <InkBox flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden" onWheel={handleWheel}>
+      {/* Literal ink-box host for the wheel — every Box flavor is a compiled
+          component whose prop list drops onWheel (SuggestionCard precedent).
+          Rolling the wheel walks the focus, and the focus-follow window
+          scrolls with it — the focus IS the viewport here. */}
+      <ink-box
+        style={{ flexDirection: 'column', flexGrow: 1, flexShrink: 1, overflow: 'hidden' }}
+        onWheel={handleWheel}
+      >
         {visible.map(entry => (
           <React.Fragment key={entry.key}>{entry.node}</React.Fragment>
         ))}
-      </InkBox>
+      </ink-box>
       <Box flexGrow={1} />
       {notice !== undefined && (
         <Text color={notice.tone === 'error' ? 'error' : 'success'}>{notice.text}</Text>
