@@ -142,6 +142,7 @@ export function MessageList({
   forceMountRowId,
   newSinceRowId,
   onUnseenCount,
+  onAnchorUserRow,
   failureHintRowId,
   failureHint,
   onOpenSubagent,
@@ -181,6 +182,15 @@ export function MessageList({
   newSinceRowId?: number | null
   /** Reports how many new rows still sit below the viewport bottom edge. */
   onUnseenCount?: (count: number) => void
+  /**
+   * Reports the "anchor" user row for the sticky prompt header: the topmost
+   * user message inside the viewport, or (when the viewport shows only
+   * assistant content) the nearest user message above it — the turn whose
+   * output the user is reading. Null while pinned to the bottom, so the
+   * header never flashes a stale message during the first frames after the
+   * user starts scrolling up. Reported only on change.
+   */
+  onAnchorUserRow?: (rowId: number | null) => void
   /**
    * Row id that should carry the trajectory footnote — the newest unseen
    * failure, or null. Exactly one row ever carries it: repeating the pointer
@@ -498,6 +508,44 @@ export function MessageList({
     if (unseenCount !== lastUnseenReportRef.current) {
       lastUnseenReportRef.current = unseenCount
       onUnseenCount?.(unseenCount)
+    }
+  })
+
+  // Anchor user row for the sticky prompt header (Chat's StickyPromptHeader
+  // pins the message the viewport is showing — NOT the last one). The
+  // topmost user message inside the viewport wins; when the viewport shows
+  // only assistant content, the nearest user message above it (the turn
+  // whose output fills the view). Same rows-space math as the mount window
+  // (offsets are rows-space, scrollTop content-space — subtract the header
+  // base). Null while pinned to the bottom: Chat hides the header there,
+  // and reporting null avoids a stale anchor flashing during the first
+  // frames after the user scrolls up. Reported post-commit, only on change.
+  let anchorUserRowId: number | null = null
+  if (!sticky) {
+    const viewTop = Math.min(scrollTop, scrollTop + pending) - base
+    const viewBottom = Math.max(scrollTop, scrollTop + pending) + viewport - base
+    let lastUserAbove: number | null = null
+    for (let i = 0; i < visibleRows.length; i++) {
+      const row = visibleRows[i]!
+      const top = offsets[i]!
+      const bottom = top + heightOf(row)
+      if (bottom <= viewTop) {
+        if (row.kind === 'user') lastUserAbove = row.id
+        continue
+      }
+      if (top >= viewBottom) break
+      if (row.kind === 'user') {
+        anchorUserRowId = row.id
+        break
+      }
+    }
+    if (anchorUserRowId === null) anchorUserRowId = lastUserAbove
+  }
+  const lastAnchorReportRef = React.useRef<number | null | undefined>(undefined)
+  React.useEffect(() => {
+    if (anchorUserRowId !== lastAnchorReportRef.current) {
+      lastAnchorReportRef.current = anchorUserRowId
+      onAnchorUserRow?.(anchorUserRowId)
     }
   })
 

@@ -131,8 +131,9 @@ function searchableText(row: ChatRow): string {
 
 /**
  * Main chat screen in the Claude Code layout: a scrollable transcript
- * (with the current turn's prompt pinned above the viewport while scrolled
- * up), transient notifications, the working spinner, the bordered prompt
+ * (with the user message the viewport is showing pinned above the transcript
+ * while scrolled up), transient notifications, the working spinner, the
+ * bordered prompt
  * input (with slash-command overlay) and the status line pinned at the
  * bottom.
  *
@@ -270,6 +271,13 @@ export function Chat({
   const [expanded, setExpanded] = React.useState(false)
   const [helpOpen, setHelpOpen] = React.useState(false)
   const [handle, setHandle] = React.useState<ScrollBoxHandle | null>(null)
+  /**
+   * The user row the sticky prompt header pins — the message the transcript
+   * viewport is currently showing (reported by MessageList), not the last
+   * user message: scrolled up to an old turn, the header carries THAT
+   * turn's prompt. Null while pinned to the bottom (header hidden).
+   */
+  const [anchorUserRowId, setAnchorUserRowId] = React.useState<number | null>(null)
   const [selectionActive, setSelectionActive] = React.useState(false)
   const [selectedId, setSelectedId] = React.useState<number | null>(null)
   const [expandedRows, setExpandedRows] = React.useState<ReadonlySet<number>>(
@@ -2423,15 +2431,25 @@ export function Chat({
     permissionPickerOpen || planPickerOpen || langPickerOpen || historyOpen ||
     rewindOpen || searchOpen || tipsOpen
 
+  // The sticky header pins the user message the transcript viewport is
+  // showing (anchorUserRowId, reported by MessageList) — scrolled up to an
+  // old turn, it carries THAT turn's prompt, not the latest one.
+  // channel.rows is a live in-place array, so the lookup is per-render.
+  const anchorUserText =
+    anchorUserRowId === null
+      ? null
+      : channel.rows.find(row => row.id === anchorUserRowId)?.text ?? null
+
   return (
     <Box ref={wakeTickRef} flexDirection="column" flexGrow={1} width="100%">
-      {!isSticky && channel.lastUserText && (
+      {!isSticky && anchorUserText && (
         <StickyPromptHeader
-          text={channel.lastUserText}
+          text={anchorUserText}
           onClick={() => {
-            // Click jumps back to the pinned prompt (CC's StickyPromptHeader).
-            const lastUser = [...channel.rows].reverse().find(row => row.kind === 'user')
-            if (lastUser) seekRow(lastUser.id)
+            // Click snaps the pinned prompt to the viewport top (CC's
+            // StickyPromptHeader): the pinned row is the one the viewport
+            // is showing, so the seek target is that same row.
+            if (anchorUserRowId !== null) seekRow(anchorUserRowId)
             else handle?.scrollToBottom()
           }}
         />
@@ -2480,6 +2498,7 @@ export function Chat({
           forceMountRowId={forceMountRowId}
           newSinceRowId={isSticky ? null : lastSeenRowIdRef.current}
           onUnseenCount={setUnseenCount}
+          onAnchorUserRow={setAnchorUserRowId}
           onOpenSubagent={(agentId) => setSubagentDetailId(agentId)}
         />
       </ScrollBox>
@@ -2904,7 +2923,11 @@ export function Chat({
 /**
  * The pinned prompt header shown above the ScrollBox while the user has
  * scrolled up (mirroring Claude Code's FullscreenLayout.StickyPromptHeader).
- * Fixed at 1 row so the ScrollBox never shifts when the text changes.
+ * Pins the user message the transcript viewport is currently showing — the
+ * topmost visible user message, or the nearest one above when only assistant
+ * content fills the view — so it tracks which turn the user is reading
+ * instead of always carrying the latest prompt. Fixed at 1 row so the
+ * ScrollBox never shifts when the text changes.
  */
 function StickyPromptHeader({
   text,
