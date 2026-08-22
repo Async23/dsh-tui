@@ -1,7 +1,11 @@
 import type { DOMElement } from './dom.js'
 import { ClickEvent } from './events/click-event.js'
 import type { EventHandlerProps } from './events/event-handlers.js'
+import { PointerEvent } from './events/pointer-event.js'
+import { WheelEvent } from './events/wheel-event.js'
+import { logError } from '../utils/log.js'
 import { nodeCache } from './node-cache.js'
+import { dispatcher } from './reconciler.js'
 
 /**
  * Find the deepest DOM element whose rendered rect contains (col, row).
@@ -49,10 +53,16 @@ export function hitTest(
  * containing node up through parentNode. Only nodes with an onClick handler
  * fire. Stops when a handler calls stopImmediatePropagation(). Returns
  * true if at least one onClick handler fired.
+ *
+ * Each handler call is isolated: a throwing handler is logged and the
+ * bubbling continues, so one broken onClick cannot swallow the click from
+ * its ancestors or the rest of the input batch.
+ *
  * @param root - the tree root to hit-test.
  * @param col - the screen column of the click.
  * @param row - the screen row of the click.
  * @param cellIsBlank - whether the clicked cell is blank, reported on the event.
+ * @param button - raw SGR release byte (carries shift/alt/ctrl modifier bits).
  * @returns true when at least one onClick handler fired.
  */
 export function dispatchClick(
@@ -60,6 +70,7 @@ export function dispatchClick(
   col: number,
   row: number,
   cellIsBlank = false,
+  button = 0,
 ): boolean {
   let target: DOMElement | undefined = hitTest(root, col, row) ?? undefined
   if (!target) return false
@@ -76,7 +87,7 @@ export function dispatchClick(
       focusTarget = focusTarget.parentNode
     }
   }
-  const event = new ClickEvent(col, row, cellIsBlank)
+  const event = new ClickEvent(col, row, cellIsBlank, { button })
   let handled = false
   while (target) {
     const handler = target._eventHandlers?.onClick as
@@ -88,8 +99,15 @@ export function dispatchClick(
       if (rect) {
         event.localCol = col - rect.x
         event.localRow = row - rect.y
+      } else {
+        event.localCol = 0
+        event.localRow = 0
       }
-      handler(event)
+      try {
+        handler(event)
+      } catch (error) {
+        logError(error)
+      }
       if (event.didStopImmediatePropagation()) return true
     }
     target = target.parentNode
@@ -98,11 +116,52 @@ export function dispatchClick(
 }
 
 /**
+ * Route a wheel event to the ScrollBox (or any onWheel handler) under the
+ * pointer. Dispatches through the shared Dispatcher at continuous priority
+ * so the event bubbles from the deepest hit node and React schedules any
+ * state updates at the right lane.
+ *
+ * @param root - the tree root to hit-test.
+ * @param col - the screen column of the wheel event.
+ * @param row - the screen row of the wheel event.
+ * @param deltaY - rows to scroll (positive = scroll down).
+ * @param deltaX - columns to scroll (positive = right; informational).
+ * @param button - raw SGR byte (carries modifier bits).
+ * @returns true when an onWheel handler existed under the pointer.
+ */
+export function dispatchWheel(
+  root: DOMElement,
+  col: number,
+  row: number,
+  deltaY: number,
+  deltaX = 0,
+  button = 0,
+): boolean {
+  const target = hitTest(root, col, row)
+  if (!target) return false
+  // Does any ancestor (target inclusive) carry an onWheel handler?
+  let node: DOMElement | undefined = target
+  let hasHandler = false
+  while (node && !hasHandler) {
+    hasHandler = Boolean(node._eventHandlers?.onWheel)
+    node = node.parentNode
+  }
+  if (!hasHandler) return false
+  const event = new WheelEvent(col, row, deltaY, deltaX, { button })
+  dispatcher.dispatchContinuous(target, event)
+  return true
+}
+
+/**
  * Fire onMouseEnter/onMouseLeave as the pointer moves. Like DOM
  * mouseenter/mouseleave: does NOT bubble — moving between children does
  * not re-fire on the parent. Walks up from the hit node collecting every
  * ancestor with a hover handler; diffs against the previous hovered set;
  * fires leave on the nodes exited, enter on the nodes entered.
+ *
+ * Handlers receive a PointerEvent ('hover') with the pointer position;
+ * existing `() => void` handlers simply ignore the argument. Each call is
+ * isolated so one throwing handler cannot break the rest of the diff.
  *
  * Mutates `hovered` in place so the caller (App instance) can hold it
  * across calls. Clears the set when the hit is null (cursor moved into a
@@ -130,14 +189,30 @@ export function dispatchHover(
       hovered.delete(old)
       // Skip handlers on detached nodes (removed between mouse events)
       if (old.parentNode) {
-        ;(old._eventHandlers as EventHandlerProps | undefined)?.onMouseLeave?.()
+        const handler = (old._eventHandlers as EventHandlerProps | undefined)
+          ?.onMouseLeave
+        if (handler) {
+          try {
+            handler(new PointerEvent('hover', col, row, { action: 'move' }))
+          } catch (error) {
+            logError(error)
+          }
+        }
       }
     }
   }
   for (const n of next) {
     if (!hovered.has(n)) {
       hovered.add(n)
-      ;(n._eventHandlers as EventHandlerProps | undefined)?.onMouseEnter?.()
+      const handler = (n._eventHandlers as EventHandlerProps | undefined)
+        ?.onMouseEnter
+      if (handler) {
+        try {
+          handler(new PointerEvent('hover', col, row, { action: 'move' }))
+        } catch (error) {
+          logError(error)
+        }
+      }
     }
   }
 }
