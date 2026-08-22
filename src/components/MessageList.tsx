@@ -143,6 +143,7 @@ export function MessageList({
   newSinceRowId,
   onUnseenCount,
   onAnchorUserRow,
+  onScrollbarNodes,
   failureHintRowId,
   failureHint,
   onOpenSubagent,
@@ -191,6 +192,13 @@ export function MessageList({
    * user starts scrolling up. Reported only on change.
    */
   onAnchorUserRow?: (rowId: number | null) => void
+  /**
+   * Scrollbar node positions: one node per user row, given as its
+   * content-space TEXT top (header base + rows offset + top margin) so the
+   * transcript scrollbar can map it onto its track without knowing the
+   * header geometry. Reported only on change.
+   */
+  onScrollbarNodes?: (nodes: ReadonlyArray<{ id: number; top: number }>) => void
   /**
    * Row id that should carry the trajectory footnote — the newest unseen
    * failure, or null. Exactly one row ever carries it: repeating the pointer
@@ -546,6 +554,31 @@ export function MessageList({
     if (anchorUserRowId !== lastAnchorReportRef.current) {
       lastAnchorReportRef.current = anchorUserRowId
       onAnchorUserRow?.(anchorUserRowId)
+    }
+  })
+
+  // Scrollbar node positions: one per user row, in content-space (header
+  // base + rows offset) so the scrollbar can map them onto its track. The
+  // reported top is the row's TEXT top (wrapper top + its 1-line top
+  // margin), so a node click that scrolls to it puts the message text at
+  // the viewport top. User rows are single-line, so a node is a point.
+  // Reported post-commit, only on change — during streaming the tail user
+  // row's top is stable (the streaming reply grows BELOW it), so the
+  // report stays quiet until a new turn lands or an earlier row reflows.
+  const scrollbarNodes: Array<{ id: number; top: number }> = []
+  for (let i = 0; i < visibleRows.length; i++) {
+    const row = visibleRows[i]!
+    if (row.kind === 'user') {
+      const textTop = base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0)
+      scrollbarNodes.push({ id: row.id, top: textTop })
+    }
+  }
+  const lastNodesReportRef = React.useRef('')
+  React.useEffect(() => {
+    const sig = scrollbarNodes.map(n => `${n.id}:${n.top}`).join('|')
+    if (sig !== lastNodesReportRef.current) {
+      lastNodesReportRef.current = sig
+      onScrollbarNodes?.(scrollbarNodes)
     }
   })
 

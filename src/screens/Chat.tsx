@@ -26,6 +26,7 @@ import { useCopyOnSelect } from '../ink/hooks/use-copy-on-select.js'
 import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
 import { LogoHeader, MessageList } from '../components/MessageList.js'
+import { TranscriptScrollbar, type ScrollbarNode } from '../components/TranscriptScrollbar.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { PromptInput, type PromptController } from '../components/PromptInput.js'
 import { GoalTodoPanel } from '../components/GoalTodoPanel.js'
@@ -132,8 +133,10 @@ function searchableText(row: ChatRow): string {
 /**
  * Main chat screen in the Claude Code layout: a scrollable transcript
  * (with the user message the viewport is showing pinned above the transcript
- * while scrolled up), transient notifications, the working spinner, the
- * bordered prompt
+ * while scrolled up, and a 1-column minimap scrollbar with one node per
+ * user message — the current message's node is highlighted, clicking a node
+ * jumps to it), transient notifications, the working spinner, the bordered
+ * prompt
  * input (with slash-command overlay) and the status line pinned at the
  * bottom.
  *
@@ -278,6 +281,8 @@ export function Chat({
    * turn's prompt. Null while pinned to the bottom (header hidden).
    */
   const [anchorUserRowId, setAnchorUserRowId] = React.useState<number | null>(null)
+  /** Scrollbar node positions (one per user row), reported by MessageList. */
+  const [scrollbarNodes, setScrollbarNodes] = React.useState<ReadonlyArray<ScrollbarNode>>([])
   const [selectionActive, setSelectionActive] = React.useState(false)
   const [selectedId, setSelectedId] = React.useState<number | null>(null)
   const [expandedRows, setExpandedRows] = React.useState<ReadonlySet<number>>(
@@ -1588,7 +1593,12 @@ export function Chat({
     const el = rowRefsRef.current.get(forceMountRowId)
     if (el) {
       handle?.scrollToElement(el)
-      setForceMountRowId(null)
+      // Clear deferred to a macrotask: clearing here would let React's
+      // synchronous re-render narrow the virtualization window and unmount
+      // the row BEFORE the renderer's deferred pass reads its Yoga top
+      // (scrollAnchor processing runs in a microtask) — the seek would
+      // silently no-op (detached anchor element).
+      setTimeout(() => setForceMountRowId(null), 0)
     }
   })
 
@@ -2454,7 +2464,8 @@ export function Chat({
           }}
         />
       )}
-      <ScrollBox ref={setHandle} flexDirection="column" flexGrow={1} flexShrink={1} stickyScroll>
+      <Box flexDirection="row" flexGrow={1} flexShrink={1} width="100%">
+        <ScrollBox ref={setHandle} flexDirection="column" flexGrow={1} flexShrink={1} stickyScroll>
         <LogoHeader
           key={logoNonce}
           model={channel.model}
@@ -2499,9 +2510,16 @@ export function Chat({
           newSinceRowId={isSticky ? null : lastSeenRowIdRef.current}
           onUnseenCount={setUnseenCount}
           onAnchorUserRow={setAnchorUserRowId}
+          onScrollbarNodes={setScrollbarNodes}
           onOpenSubagent={(agentId) => setSubagentDetailId(agentId)}
         />
-      </ScrollBox>
+        </ScrollBox>
+        <TranscriptScrollbar
+          handle={handle}
+          nodes={scrollbarNodes}
+          anchorRowId={anchorUserRowId}
+        />
+      </Box>
       {/* Bottom chrome (pill, spinners, dialogs, prompt, statusline): never
           let flex shrink squeeze these fixed-height rows — the ScrollBox
           above absorbs all overflow (it is the scroll container). */}
