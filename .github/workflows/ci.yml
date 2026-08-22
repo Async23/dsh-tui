@@ -84,6 +84,10 @@ jobs:
       # 空转重渲染风暴回归（issue #433）：长历史 + 30ms 空转 commit 风暴下
       # renderScrollTop / 画面 / 输入框行数必须逐帧恒定，几何不震荡。
       - run: node --import tsx/esm scripts/repro-idle-oscillation.tsx
+      # settled 子代理卡片不得永久持有动画时钟（空闲帧归零回归）：
+      # 曾以 120ms/卡片持续驱动 React commit，N 张相位错开合成 ~30ms
+      # 均匀帧 cadence。
+      - run: node --import tsx/esm scripts/verify-subagent-settle.tsx
 
       # 消息列表虚拟化回归：连续高度校正的嵌套更新上限（#129, React #185）、
       # 滚动窗口与 shrink 边界。measure-depth 需生产模式（minified #185）。
