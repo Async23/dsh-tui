@@ -4,6 +4,7 @@ import { logForDebugging } from "../../utils/debug.js";
 import { stopCapturingEarlyInput } from "../../utils/earlyInput.js";
 import { isEnvTruthy } from "../../utils/envUtils.js";
 import { isMouseClicksDisabled } from "../../utils/fullscreen.js";
+import { isInputSuppressed } from "../input-suppression.js";
 import { logMouseDebug } from "../../utils/debug.js";
 import { logError } from "../../utils/log.js";
 import { EventEmitter } from "../events/emitter.js";
@@ -712,13 +713,17 @@ function processKeysInBatch(
 		// never fires — exactly one layer scrolls. Events without coords
 		// (shouldn't happen for wheel) or over non-scroll areas fall
 		// through to the normal input path (Chat scrolls the transcript).
+		// Skipped during the post-handoff suppression window: a terminal
+		// replay burst can contain mouse-wheel fragments, and use-input's
+		// choke point never sees events consumed here.
 		if (
 			(item.name === "wheelup" ||
 				item.name === "wheeldown" ||
 				item.name === "wheelleft" ||
 				item.name === "wheelright") &&
 			item.mouseCol !== undefined &&
-			item.mouseRow !== undefined
+			item.mouseRow !== undefined &&
+			!isInputSuppressed()
 		) {
 			const step =
 				(item.name === "wheelup" || item.name === "wheelleft") ? -3 : 3;
