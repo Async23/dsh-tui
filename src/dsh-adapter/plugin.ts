@@ -891,6 +891,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   const handleExit = funnel.handleExit
 
+  // Chat's `fullscreen` prop must match the root wrap below, or the
+  // full-screen surfaces inside Chat (session browser, settings, trajectory,
+  // subagent pages) would nest a SECOND <AlternateScreen> — whose unmount
+  // writes DEC 1049 exit and drops the whole app back to the main screen
+  // (the stable /resume→Esc "exited fullscreen" repro). The prop is captured
+  // when the element is created, so wait for the settings first-application
+  // BEFORE creating Chat: the element must see the same bootedFullscreen the
+  // root tree resolves after settingsReady below.
+  await settingsReady
   const chat = React.createElement(Chat, {
     channel,
     questionStore,
@@ -947,11 +956,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     },
   })
   // Freeze the fullscreen decision only NOW, right before the tree mounts:
-  // the settings first-application (awaited above via settingsReady) must
-  // have resolved bootedFullscreen already, and a mid-session /settings
+  // Chat above was created after the same settingsReady await, so the root
+  // wrap and the `fullscreen` prop share one value; a mid-session /settings
   // edit from here on is persisted for the next boot (the watch notifies),
   // never applied live (swapping layouts requires re-mounting the tree).
-  await settingsReady
   // Host recompose hardening: never regress a fullscreen session to inline
   // on a re-mount whose settings application arrived late (see the module
   // latch note). A fresh process still resolves from config + settings
