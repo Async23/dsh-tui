@@ -2635,6 +2635,17 @@ export function Chat({
                   models={models}
                   focusIndex={modelIndex}
                   currentModel={`${channel.provider}/${channel.model}`}
+                  onPick={(index) => {
+                    // 点击行 = 设焦点 + 应用（与 Enter 同一条路径）
+                    const model = models[index]
+                    if (!model) return
+                    setModelIndex(index)
+                    setModelPickerOpen(false)
+                    channel.notify(t('model-switching', { name: model.name }))
+                    void channel.switchModel(model.provider, model.id).then((ok) => {
+                      if (ok) channel.notify(t('model-switched', { name: model.name }))
+                    })
+                  }}
                 />
               )}
             </Box>
@@ -2647,6 +2658,13 @@ export function Chat({
                 <SkillsPicker
                   skills={skillsList}
                   focusIndex={skillsIndex}
+                  onPick={(index) => {
+                    const skill = skillsList[index]
+                    if (!skill) return
+                    setSkillsIndex(index)
+                    setSkillsPickerOpen(false)
+                    if (skill.userInvocable) setHistoryFill(`/${skill.name} `)
+                  }}
                 />
               )}
             </Box>
@@ -2656,6 +2674,12 @@ export function Chat({
               <ActivityPicker
                 focusIndex={activityIndex}
                 currentPreset={channel.activityFrames}
+                onPick={(index) => {
+                  setActivityIndex(index)
+                  setActivityPickerOpen(false)
+                  const name = PRESET_NAMES[index]
+                  if (name) channel.setActivityFrames(name)
+                }}
               />
             </Box>
           )}
@@ -2665,6 +2689,12 @@ export function Chat({
                 options={effortOptions}
                 focusIndex={effortIndex}
                 currentId={channel.reasoningEffort}
+                // 点击档位 = 移到该档并即时应用（与 ←/→ 同语义）
+                onPick={(index) => {
+                  setEffortIndex(index)
+                  const option = effortOptions[index]
+                  if (option) void channel.setEffort(option.id)
+                }}
               />
             </Box>
           )}
@@ -2674,6 +2704,12 @@ export function Chat({
                 presets={presetOptions}
                 focusIndex={presetIndex}
                 currentPreset={channel.agentPreset}
+                onPick={(index) => {
+                  setPresetIndex(index)
+                  setPresetPickerOpen(false)
+                  const option = presetOptions[index]
+                  if (option) void channel.switchPreset(option.id)
+                }}
               />
             </Box>
           )}
@@ -2683,22 +2719,68 @@ export function Chat({
                 focusIndex={permissionIndex}
                 currentMode={channel.mode.sandbox}
                 cwd={channel.cwd}
+                onPick={(index) => {
+                  setPermissionIndex(index)
+                  setPermissionPickerOpen(false)
+                  const id = PERMISSION_PRESET_IDS[index]
+                  if (id !== undefined) {
+                    void channel.runExternalCommand('permission', ` ${id}`).then((text) => {
+                      if (text !== undefined && text !== '') channel.notify(text)
+                    })
+                  }
+                }}
               />
             </Box>
           )}
           {planPickerOpen && (
             <Box flexDirection="column" marginTop={1}>
-              <PlanPicker focusIndex={planIndex} currentOn={channel.mode.plan === true} />
+              <PlanPicker
+                focusIndex={planIndex}
+                currentOn={channel.mode.plan === true}
+                onPick={(index) => {
+                  setPlanIndex(index)
+                  setPlanPickerOpen(false)
+                  const on = index === 0
+                  void channel.runExternalCommand('plan', on ? '' : ' off').then((text) => {
+                    if (text !== undefined && text !== '') channel.notify(text)
+                  })
+                }}
+              />
             </Box>
           )}
           {langPickerOpen && (
             <Box flexDirection="column" marginTop={1}>
-              <LangPicker focusIndex={langIndex} currentLang={getLang()} />
+              <LangPicker
+                focusIndex={langIndex}
+                currentLang={getLang()}
+                onPick={(index) => {
+                  const lang = LANGS[index]
+                  if (lang === undefined) return
+                  setLangIndex(index)
+                  setLangPickerOpen(false)
+                  applyLang(lang)
+                }}
+              />
             </Box>
           )}
           {themePickerOpen && (
             <Box flexDirection="column" marginTop={1}>
-              <ThemePicker focusIndex={themeIndex} currentTheme={themeName} />
+              <ThemePicker
+                focusIndex={themeIndex}
+                currentTheme={themeName}
+                onPick={(index) => {
+                  setThemeIndex(index)
+                  setThemePickerOpen(false)
+                  const name = getThemeOptions()[index]?.value
+                  if (name !== undefined) {
+                    const ok = setTheme(name)
+                    channel.notify(
+                      ok ? t('theme-switched-saved', { name }) : t('theme-switch-failed', { name }),
+                      { color: ok ? 'success' : 'error' },
+                    )
+                  }
+                }}
+              />
             </Box>
           )}
           {historyOpen && (
