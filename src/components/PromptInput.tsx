@@ -8,6 +8,7 @@ import { EffortInputBorder } from './EffortInputBorder.js'
 import { EffortTierBadge } from './EffortTierBadge.js'
 import { isLightThemeActive } from '../theme.js'
 import { useDeclaredCursor } from '../ink/hooks/use-declared-cursor.js'
+import type { ClickEvent } from '../ink/events/click-event.js'
 import { noteAuxNumber } from '../ink/geometry-trace.js'
 import instances from '../ink/instances.js'
 import { stringWidth } from '../ink/stringWidth.js'
@@ -1143,6 +1144,22 @@ export function PromptInput({
     active: !selectionActive,
   })
 
+  /**
+   * Click-to-position the caret: map a click inside the value box (local
+   * row/column relative to the box) to a UTF-16 cursor offset via the same
+   * grapheme walk the renderer wraps with — exact under CJK widths, wrapped
+   * rows and multi-codepoint clusters. Clicks land on the boundary nearest
+   * the clicked cell (mid-grapheme snaps to its start).
+   */
+  const handleValueClick = React.useCallback(
+    (e: ClickEvent) => {
+      const clickedVisual = windowStart + e.localRow
+      const clamped = Math.max(0, Math.min(clickedVisual, visualLines.length - 1))
+      setCursor(clickToCursorOffset(value, inputWidth, clamped, e.localCol))
+    },
+    [windowStart, visualLines.length, value, inputWidth],
+  )
+
   // 浮层整体挂载条件：与内部面板可见条件精确同值。关闭时必须把整个
   // absolute 浮层移除——渲染器的 absolute-removed 检测只看被移除节点自身
   // 的 style.position，常驻浮层 + 移除普通子节点不会触发 blit 解毒，被
@@ -1270,7 +1287,12 @@ export function PromptInput({
             levels={channel.effortLevels}
             working={channel.working}
           />
-          <Box ref={valueBoxRef} flexGrow={1} flexShrink={1}>
+          <Box
+            ref={valueBoxRef}
+            flexGrow={1}
+            flexShrink={1}
+            onClick={handleValueClick}
+          >
             {value.length === 0 ? (
               // Solid block caret on a BLANK cell: the terminal paints the
               // IME preedit (pinyin) at the physical cursor, which is parked
@@ -1331,4 +1353,50 @@ function wrapToWidth(text: string, width: number): string[] {
     rows.push(current)
   }
   return rows
+}
+
+/**
+ * Inverse of {@link wrapToWidth}: map a click position (visual row index +
+ * visual column) back to a UTF-16 offset in the original text. Walks the
+ * same grapheme boundaries with the same break rule, so every visual row's
+ * start offset is known exactly. Within the clicked row, the caret snaps to
+ * the boundary nearest the click: a grapheme whose midpoint lies past the
+ * click column takes the caret before it, otherwise after.
+ */
+function clickToCursorOffset(
+  text: string,
+  width: number,
+  visualLine: number,
+  visualCol: number,
+): number {
+  const segmenter = getGraphemeSegmenter()
+  let row = 0
+  let offset = 0
+  for (const line of text.split('\n')) {
+    if (line === '') {
+      if (row === visualLine) return offset
+      row++
+      offset++ // the '\n'
+      continue
+    }
+    let currentWidth = 0
+    for (const { segment } of segmenter.segment(line)) {
+      const w = stringWidth(segment)
+      if (currentWidth + w > width && currentWidth > 0) {
+        if (row === visualLine) return offset // end of the clicked wrapped row
+        row++
+        currentWidth = 0
+      }
+      if (row === visualLine) {
+        if (currentWidth + w / 2 > visualCol) return offset
+        if (currentWidth + w > visualCol) return offset + segment.length
+      }
+      currentWidth += w
+      offset += segment.length
+    }
+    if (row === visualLine) return offset
+    row++
+    offset++ // the '\n'
+  }
+  return offset
 }
