@@ -539,10 +539,11 @@ export interface Channel {
   readonly contextBarEnabled: boolean
   /**
    * Current same-session goal projection, when a goal exists. Derived live
-   * from the durable `goal/change` context events (round-zero goal-sourced
-   * user messages) in the session log — every goal mutation appends one, so
-   * this snapshot tracks create/edit/pause/resume/complete/block/clear in
-   * real time and replays correctly on resume/rewind.
+   * from the durable goal events in the session log — top-level
+   * `goal/change` snapshots (every goal mutation appends one) plus the
+   * goal-sourced continuation rounds that advance the counter — so this
+   * snapshot tracks create/edit/pause/resume/complete/block/clear in real
+   * time and replays correctly on resume/rewind.
    */
   readonly goal: ChannelGoal | undefined
   /**
@@ -4831,28 +4832,49 @@ ${output}
   }
 
   /**
+   * One durable goal mutation as the goal service records it (the `data` of
+   * a top-level `goal/change` session event, and of the snapshot a round-zero
+   * goal-sourced `user/message` may inline). Declared structurally: the
+   * pinned peer's `SessionEvent` union predates the event type, so the fold
+   * admits the payload by shape, not by union membership.
+   */
+  type GoalChangePayload = {
+    kind: 'goal/change'
+    version: number
+    operation:
+      | 'create'
+      | 'edit'
+      | 'pause'
+      | 'resume'
+      | 'complete'
+      | 'block'
+      | 'clear'
+    goal?: Omit<ChannelGoal, 'roundsStarted'>
+    roundsStarted?: number
+  }
+
+  /** Fold one goal mutation into the channel's goal projection. */
+  const applyGoalChange = (change: GoalChangePayload): void => {
+    if (change.operation === 'clear') {
+      state.goal = undefined
+    } else if (change.goal !== undefined) {
+      state.goal = {
+        ...change.goal,
+        roundsStarted: change.roundsStarted ?? state.goal?.roundsStarted ?? 0,
+      }
+    }
+  }
+
+  /**
    * Fold one goal-sourced message into the channel's goal projection.
-   * Round-zero goal messages carry the full durable snapshot (or a clear
+   * Round-zero goal messages may carry the full durable snapshot (or a clear
    * tombstone) in their source; positive-round messages are admitted
    * continuation prompts that only advance the rounds counter.
    */
   const applyGoalEvent = (event: SessionEvent<'user/message'>): void => {
     const source = event.data.source as unknown as {
       round: number
-      change?: {
-        kind: 'goal/change'
-        version: 1
-        operation:
-          | 'create'
-          | 'edit'
-          | 'pause'
-          | 'resume'
-          | 'complete'
-          | 'block'
-          | 'clear'
-        goal?: ChannelGoal
-        roundsStarted?: number
-      }
+      change?: GoalChangePayload
     }
     if (source.round > 0) {
       // Admitted continuation round — the snapshot itself is unchanged.
@@ -4867,14 +4889,7 @@ ${output}
     const change = source.change
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- durable replay data may not match the static type
     if (change === undefined || change.kind !== 'goal/change') return
-    if (change.operation === 'clear') {
-      state.goal = undefined
-    } else if (change.goal !== undefined) {
-      state.goal = {
-        ...change.goal,
-        roundsStarted: change.roundsStarted ?? state.goal?.roundsStarted ?? 0,
-      }
-    }
+    applyGoalChange(change)
   }
 
   /** True while the durable transcript is being replayed (boot /resume /
@@ -4902,6 +4917,15 @@ ${output}
   }
 
   const renderEvent = (event: SessionEvent): void => {
+    // Top-level `goal/change` events are how the goal service actually
+    // records durable goal mutations (create/edit/pause/resume/complete/
+    // block/clear) — confirmed in production logs. The pinned peer's
+    // SessionEvent union predates the type, so admit it structurally: the
+    // goal chip and panel stay dark without this fold.
+    if ((event as { type: string }).type === 'goal/change') {
+      applyGoalChange((event as { data: GoalChangePayload }).data)
+      return
+    }
     switch (event.type) {
       case 'user/message': {
         // Compaction checkpoint: `source = { kind: 'plugin', plugin:
@@ -4947,10 +4971,13 @@ ${output}
           contextWarned = false
           break
         }
-        // Same-session goal domain: round-zero goal-sourced messages carry
-        // the durable goal snapshot (or clear tombstone) in their source.
-        // They are not transcript bubbles — they drive the goal panel's
-        // live projection (replayed on resume/rewind like every other event).
+        // Same-session goal domain: goal-sourced messages are the round
+        // driver's continuation prompts (positive rounds advance the
+        // counter); some hosts also inline the durable snapshot in a
+        // round-zero source. They are not transcript bubbles — they drive
+        // the goal panel's live projection (replayed on resume/rewind like
+        // every other event; the snapshot itself arrives as the top-level
+        // `goal/change` event admitted above).
         if ((event.data.source as { kind: string }).kind === 'goal') {
           applyGoalEvent(event)
           break
