@@ -530,8 +530,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           path: ['fullscreen'],
           label: 'Fullscreen mode',
           descriptions: { zh: '全屏模式' },
-          hint: 'Alt-screen fullscreen layout with in-app mouse selection and wheel scroll; off keeps the terminal-native scrollback and selection. Saved for the next launch.',
-          hintDescriptions: { zh: '开启：alt-screen 全屏布局，应用内鼠标选择与滚轮滚动；关闭：保留终端原生滚动与选择。保存后下次启动生效。' },
+          // 故意不用 "alt-screen" 这类终端术语：读者要的是行为差异。鼠标
+          // 两种模式都可用（整屏页面自带鼠标跟踪），别让描述暗示关掉就
+          // 没有鼠标——最常见的误解。长度对齐既有最长 hint（单行假设）。
+          hint: 'On: app takes the whole screen (vim/less style), in-app mouse. Off: native scrollback; full-page screens keep the mouse. Restart to apply.',
+          hintDescriptions: { zh: '开启：接管整个终端（同 vim/less），应用内鼠标；关闭：终端原生滚动选择；整屏页两种模式都有鼠标。重启生效。' },
           kind: 'boolean',
           format(value: unknown): string {
             // Unset in settings.yaml: show what THIS session booted with

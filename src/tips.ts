@@ -609,8 +609,8 @@ export const TIPS: readonly Tip[] = [
   {
     id: 'pit-mouse-mode',
     group: 'pitfalls',
-    zh: '鼠标操作仅在全屏模式（fullscreen）下生效',
-    en: 'Mouse support only works in fullscreen mode',
+    zh: '主界面鼠标需开 fullscreen；轨迹/resume 整屏页两种模式都带鼠标',
+    en: 'Main-chat mouse needs fullscreen; full-page screens (trajectory, /resume) have it in both modes',
   },
   {
     id: 'pit-env-rename',
