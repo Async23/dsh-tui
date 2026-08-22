@@ -2850,6 +2850,30 @@ export function Chat({
                 modes={rewindModes}
                 modeIndex={rewindModeIndex}
                 busy={rewindBusy}
+                onPickRow={(index) => {
+                  // 列表页点击只选中：进入确认态保留键盘 Enter 显式触发
+                  setRewindIndex(index)
+                }}
+                onConfirm={() => {
+                  // 确认页即显式确认层，点击直接执行（与 Enter 同路径）
+                  const row = rewindConfirm
+                  if (row === null) return
+                  setRewindOpen(false)
+                  setRewindConfirm(null)
+                  void performRewind(row)
+                }}
+                onPickMode={(index) => {
+                  // 模式列表点击直接执行该模式（与 Enter 同路径）
+                  const row = rewindConfirm
+                  if (row === null) return
+                  // 模式页仅当 rewindModes 非空才渲染，这里空安全取值
+                  const mode = index === 0 ? null : (rewindModes?.[index - 1]?.id ?? null)
+                  setRewindModeIndex(index)
+                  setRewindOpen(false)
+                  setRewindConfirm(null)
+                  setRewindModes(null)
+                  void performRewind(row, mode)
+                }}
               />
             </Box>
           )}
