@@ -78,11 +78,21 @@ export function TimelineRail({
   hoverEnabled: boolean
 }): React.ReactNode {
   const [, setTick] = React.useState(0)
+  const [hover, setHover] = React.useState<Hover>(null)
   React.useEffect(() => {
     if (!handle) return
-    return handle.subscribe(() => setTick(t => t + 1))
+    return handle.subscribe(() => {
+      setTick(t => t + 1)
+      // A scroll (wheel over the rail, tick/chevron jump, header click)
+      // slides the tick window under a STATIONARY pointer — without this,
+      // the hover card keeps re-narrating whatever turn now sits under the
+      // pointer cell, flapping previews across turns every frame (reads as
+      // ghosting). OpenCode's modality rule: only a real mouse move may
+      // re-enter hover; Grok likewise clears the hover popup on tick click.
+      // setHover(null) on an already-null hover is a React no-op.
+      setHover(null)
+    })
   }, [handle])
-  const [hover, setHover] = React.useState<Hover>(null)
 
   if (!handle) return null
   const viewport = handle.getViewportHeight()
