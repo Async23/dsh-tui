@@ -732,7 +732,10 @@ function TranscriptRow({
     },
     [setRowRef, rowId],
   )
-  const onClick = React.useCallback((event: ClickEvent): void => {
+  // 点击折叠只保留在工具卡：纯文本/思考/摘要行的折叠切换对鼠标用户没有
+  // 价值（用户反馈：hover 变色碍眼、点击无用），转录区的鼠标职责是选字；
+  // 工具卡的 "(ctrl+o to expand)" 提示与完整输出展开是真实交互。
+  const toolOnClick = React.useCallback((event: ClickEvent): void => {
     // 全宽行右侧的空白（屏幕缓冲未写入单元格）不触发折叠——点击空白
     // 想选字/拖拽时不再误触展开/收起（审计 C-03/cellIsBlank 零消费）。
     if (event.cellIsBlank) return
@@ -747,7 +750,6 @@ function TranscriptRow({
             text={text}
             addMargin={addMargin}
             isSelected={isSelected}
-            onClick={onClick}
           />
         </Box>
       )
@@ -760,7 +762,6 @@ function TranscriptRow({
           width="100%"
           backgroundColor={background}
           ref={ref}
-          onClick={onClick}
         >
           <Box minWidth={2}>
             <Text color="text">●</Text>
@@ -794,7 +795,6 @@ function TranscriptRow({
             addMargin={addMargin}
             isSelected={isSelected}
             isExpanded={isExpanded}
-            onClick={onClick}
           />
         </Box>
       )
@@ -817,7 +817,6 @@ function TranscriptRow({
             verbose={isExpanded || expanded || streaming}
             durationMs={durationMs}
             isSelected={isSelected}
-            onClick={onClick}
           />
         </Box>
       )
@@ -858,7 +857,7 @@ function TranscriptRow({
             footnote={toolFootnote}
             diffLayout={diffLayout}
             toolBackground={toolBackground}
-            onClick={onClick}
+            onClick={toolOnClick}
           />
         </Box>
       )
@@ -898,7 +897,6 @@ function TranscriptRow({
           paddingLeft={2}
           backgroundColor={background}
           ref={ref}
-          onClick={onClick}
         >
           {expanded || isExpanded ? (
             <Text dimColor>{text}</Text>
@@ -919,7 +917,6 @@ function TranscriptRow({
             addMargin={addMargin}
             activityFrames={activityFrames}
             isExpanded={isExpanded}
-            onClick={() => onToggleRow(rowId)}
           />
         </Box>
       )

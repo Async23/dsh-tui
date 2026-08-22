@@ -1,8 +1,7 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { Box, NoSelect, Text } from '../../ui.js'
 import { BLACK_CIRCLE } from '../../cc/figures.js'
 import { Markdown } from '../Markdown.js'
-import type { ClickEvent } from '../../ink/events/click-event.js'
 
 type Props = {
   text: string
@@ -12,23 +11,21 @@ type Props = {
   isSelected?: boolean
   /** Row expanded on its own (persistent hover-grey background, CC). */
   isExpanded?: boolean
-  onClick?(event: ClickEvent): void
 }
 
 /**
  * Assistant text message:  bullet + markdown body (mirroring Claude Code's  default branch).
+ *
+ * Deliberately not clickable: the transcript is reading material and the
+ * mouse's job there is text selection (user feedback — row hover tints and
+ * fold toggling were noise, not affordance).
  */
 export function AssistantTextMessage({
   text,
   addMargin,
   isSelected = false,
   isExpanded = false,
-  onClick,
 }: Props): React.ReactNode {
-  // Hover highlight only on clickable rows — the mouse affordance over the
-  // full-width row (the palette matches isExpanded's persistent tint).
-  const [hovered, setHovered] = useState(false)
-  const showHoverTint = hovered && !isSelected && !isExpanded
   return (
     <Box
       alignItems="flex-start"
@@ -39,13 +36,10 @@ export function AssistantTextMessage({
       backgroundColor={
         isSelected
           ? 'messageActionsBackground'
-          : isExpanded || showHoverTint
+          : isExpanded
             ? 'userMessageBackgroundHover'
             : undefined
       }
-      onClick={onClick}
-      onMouseEnter={onClick !== undefined ? () => setHovered(true) : undefined}
-      onMouseLeave={onClick !== undefined ? () => setHovered(false) : undefined}
     >
       <Box flexDirection="row">
         <NoSelect fromLeftEdge minWidth={2}>

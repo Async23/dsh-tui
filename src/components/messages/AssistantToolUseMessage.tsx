@@ -313,7 +313,6 @@ export function AssistantToolUseMessage({
 }: Props): React.ReactNode {
   const isRunning = tool.status === 'running'
   const isError = tool.status === 'error'
-  const [hovered, setHovered] = React.useState(false)
   const displayArgs = verbose ? tool.argsFull ?? tool.argsText : tool.argsText
   const result = tool.resultFull ?? tool.resultText
   const name = displayName(tool.name)
@@ -376,13 +375,6 @@ export function AssistantToolUseMessage({
     : ordinaryToolBackground === 'strong'
       ? 'toolCardBackground'
       : undefined
-  // Mouse affordance: a clickable card picks up the dim tint on hover (the
-  // same surface selection/expanded already use), unless a stronger
-  // background is already painted.
-  const hoverBackground =
-    onClick !== undefined && hovered && !isSelected && !isExpanded && ordinaryBackground === undefined
-      ? 'toolCardBackgroundDim'
-      : undefined
 
   return (
     <Box
@@ -392,11 +384,11 @@ export function AssistantToolUseMessage({
       marginTop={addMargin ? 1 : 0}
       width="100%"
       onClick={onClick}
-      onMouseEnter={onClick !== undefined ? () => setHovered(true) : undefined}
-      onMouseLeave={onClick !== undefined ? () => setHovered(false) : undefined}
       // Only selection paints a highlight; the configured treatment applies
       // to an ordinary card. Diff line tints stay - they are content, not chrome.
-      backgroundColor={isSelected ? 'messageActionsBackground' : ordinaryBackground ?? hoverBackground}
+      // No hover tint: the card stays visually quiet until clicked (user
+      // feedback — row-hover color changes read as noise in the transcript).
+      backgroundColor={isSelected ? 'messageActionsBackground' : ordinaryBackground}
     >
       <Box flexDirection="column" flexGrow={1}>
         <Box flexDirection="row" flexWrap="nowrap" minWidth={minWidth}>

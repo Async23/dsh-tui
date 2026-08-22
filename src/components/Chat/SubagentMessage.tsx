@@ -57,12 +57,12 @@ function clipLine(text: string, maxWidth: number): string {
  * working-activity preset (`/activity`), so the indicator follows the same
  * setting as the main spinner.
  */
-export function SubagentMessage({ subagent, addMargin, activityFrames, onClick }: {
+export function SubagentMessage({ subagent, addMargin, activityFrames }: {
   subagent: SubagentRow
   addMargin: boolean
   activityFrames?: string
   isExpanded: boolean
-  onClick(event: ClickEvent): void
+  onClick?(event: ClickEvent): void
 }): React.ReactNode {
   const settled = subagent.status === 'completed' || subagent.status === 'failed' || subagent.status === 'cancelled'
   // 动画订阅仅限运行中的卡片：settled 后传 null 退出共享 clock（keepAlive
@@ -82,7 +82,9 @@ export function SubagentMessage({ subagent, addMargin, activityFrames, onClick }
   const runningGlyph = preset.frames[Math.floor(time / preset.intervalMs) % preset.frames.length] ?? '·'
   const rowWidth = Math.max(20, (columns ?? 80) - WATERFALL_GUTTER)
 
-  return <Box flexDirection="column" marginTop={addMargin ? 1 : 0} paddingLeft={2} onClick={onClick} ref={viewportRef}>
+  // 转录内子代理卡不再挂点击折叠（用户反馈：行点击无用）——鼠标职责是
+  // 选字；详细输出走 dashboard / Ctrl+O。
+  return <Box flexDirection="column" marginTop={addMargin ? 1 : 0} paddingLeft={2} ref={viewportRef}>
     <Box flexDirection="row" gap={1}>
       <Text color={info.color}>{settled ? info.glyph : ` ${runningGlyph}`}</Text>
       <Text bold>{`${t('subagent-card-prefix')}${subagent.description}`}</Text>
