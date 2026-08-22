@@ -70,11 +70,30 @@ let scrollHint: ScrollHint | null = null
 let absoluteRectsPrev: Rectangle[] = []
 let absoluteRectsCur: Rectangle[] = []
 
+// position:absolute nodes of the CURRENT frame with their paint rects, for
+// pointer hit-testing. hitTest's containment recursion cannot reach an
+// absolute child that paints OUTSIDE its parent's rect (OverlayAbove uses
+// bottom:'100%' to float pickers over the transcript — the click point is
+// inside the overlay but outside every ancestor's rect, so the subtree is
+// skipped and the overlay's handlers are unreachable). Dispatchers consult
+// this list first, in reverse paint order (later = visually on top).
+export type AbsoluteHitEntry = { node: DOMElement; rect: Rectangle }
+let absoluteHitList: AbsoluteHitEntry[] = []
+
+/**
+ * The current frame's absolute-positioned nodes in paint order.
+ * @returns read-only list; reverse-iterate for topmost-first hit-testing.
+ */
+export function getAbsoluteHitList(): readonly AbsoluteHitEntry[] {
+  return absoluteHitList
+}
+
 /** Reset the scroll hint for the next frame and rotate the absolute-rect buffers. */
 export function resetScrollHint(): void {
   scrollHint = null
   absoluteRectsPrev = absoluteRectsCur
   absoluteRectsCur = []
+  absoluteHitList = []
 }
 
 /**
@@ -531,6 +550,7 @@ function renderNodeToOutput(
       output.blit(prevScreen, fx, fy, fw, fh)
       if (node.style.position === 'absolute') {
         absoluteRectsCur.push(cached)
+        absoluteHitList.push({ node, rect: cached })
       }
       // Absolute descendants can paint outside this node's layout bounds
       // (e.g. a slash menu with position='absolute' bottom='100%' floats
@@ -1397,6 +1417,7 @@ function renderNodeToOutput(
     nodeCache.set(node, rect)
     if (node.style.position === 'absolute') {
       absoluteRectsCur.push(rect)
+      absoluteHitList.push({ node, rect })
     }
     node.dirty = false
   }
@@ -1528,6 +1549,7 @@ function blitEscapingAbsoluteDescendants(
       const cached = nodeCache.get(elem)
       if (cached) {
         absoluteRectsCur.push(cached)
+        absoluteHitList.push({ node: elem, rect: cached })
         const cx = Math.floor(cached.x)
         const cy = Math.floor(cached.y)
         const cw = Math.floor(cached.width)

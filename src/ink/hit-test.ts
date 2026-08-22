@@ -5,6 +5,7 @@ import { PointerEvent } from './events/pointer-event.js'
 import { WheelEvent } from './events/wheel-event.js'
 import { logError } from '../utils/log.js'
 import { nodeCache } from './node-cache.js'
+import { getAbsoluteHitList } from './render-node-to-output.js'
 import { dispatcher } from './reconciler.js'
 
 /**
@@ -49,6 +50,42 @@ export function hitTest(
 }
 
 /**
+ * hitTest, but overlay-aware: absolute-positioned nodes can paint OUTSIDE
+ * every ancestor's rect (OverlayAbove's `bottom:'100%'` pickers float over
+ * the transcript), so the plain containment recursion never reaches them —
+ * a click on the picker lands in the ScrollBox's rows instead. Check the
+ * frame's absolute hit list FIRST, in reverse paint order (later = visually
+ * on top), then fall back to the in-flow tree.
+ * @param root - the tree root for the in-flow fallback.
+ * @param col - the screen column to test.
+ * @param row - the screen row to test.
+ * @returns the deepest element at (col, row), or null.
+ */
+export function hitTestWithOverlays(
+  root: DOMElement,
+  col: number,
+  row: number,
+): DOMElement | null {
+  const overlays = getAbsoluteHitList()
+  for (let i = overlays.length - 1; i >= 0; i--) {
+    const { node, rect } = overlays[i]!
+    if (
+      col >= rect.x &&
+      col < rect.x + rect.width &&
+      row >= rect.y &&
+      row < rect.y + rect.height
+    ) {
+      // hitTest re-checks containment via nodeCache and descends normally;
+      // nested absolutes deeper inside are themselves in the list and were
+      // already offered (later paint order) above.
+      const hit = hitTest(node, col, row)
+      if (hit) return hit
+    }
+  }
+  return hitTest(root, col, row)
+}
+
+/**
  * Hit-test the root at (col, row) and bubble a ClickEvent from the deepest
  * containing node up through parentNode. Only nodes with an onClick handler
  * fire. Stops when a handler calls stopImmediatePropagation(). Returns
@@ -72,7 +109,8 @@ export function dispatchClick(
   cellIsBlank = false,
   button = 0,
 ): boolean {
-  let target: DOMElement | undefined = hitTest(root, col, row) ?? undefined
+  let target: DOMElement | undefined =
+    hitTestWithOverlays(root, col, row) ?? undefined
   if (!target) return false
 
   // Click-to-focus: find the closest focusable ancestor and focus it.
@@ -137,7 +175,7 @@ export function dispatchWheel(
   deltaX = 0,
   button = 0,
 ): boolean {
-  const target = hitTest(root, col, row)
+  const target = hitTestWithOverlays(root, col, row)
   if (!target) return false
   // Does any ancestor (target inclusive) carry an onWheel handler?
   let node: DOMElement | undefined = target
@@ -178,7 +216,8 @@ export function dispatchHover(
   hovered: Set<DOMElement>,
 ): void {
   const next = new Set<DOMElement>()
-  let node: DOMElement | undefined = hitTest(root, col, row) ?? undefined
+  let node: DOMElement | undefined =
+    hitTestWithOverlays(root, col, row) ?? undefined
   while (node) {
     const h = node._eventHandlers as EventHandlerProps | undefined
     if (h?.onMouseEnter || h?.onMouseLeave) next.add(node)
