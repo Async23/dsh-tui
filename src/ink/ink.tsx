@@ -20,7 +20,7 @@ import { beginGeometryFrame, endGeometryFrame, GEOMETRY_TRACE_ENABLED, noteFrame
 import { KeyboardEvent } from './events/keyboard-event.js';
 import { FocusManager } from './focus.js';
 import { emptyFrame, type Frame, type FrameEvent } from './frame.js';
-import { dispatchClick, dispatchHover } from './hit-test.js';
+import { dispatchClick, dispatchHover, dispatchWheel } from './hit-test.js';
 import { logMouseDebug } from '../utils/debug.js';
 import instances from './instances.js';
 import { suppressInputFor } from './input-suppression.js';
@@ -356,6 +356,13 @@ export default class Ink {
     this.terminalColumns = cols;
     this.terminalRows = rows;
     this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows);
+    // Reflow moved every rect the pointer state was tracking: hover sets
+    // and the multi-click chain reference pre-resize geometry. Drop them
+    // so a post-resize click is a fresh single click and hover re-fires
+    // from scratch. (Coordinates in in-flight events are clamped at the
+    // App boundary against the new dimensions.)
+    this.hoveredNodes.clear();
+    this.app?.resetPointerState();
 
     // Invalidate every render that was scheduled against the OLD size: a
     // queued microtask generation or a scroll-drain timer would otherwise
@@ -1063,6 +1070,13 @@ export default class Ink {
     if (this.altScreenActive === active) return;
     this.altScreenActive = active;
     this.altScreenMouseTracking = active && mouseTracking;
+    // Screen geometry/context just changed wholesale: hover sets, the
+    // multi-click chain, and any pending hyperlink open belong to the old
+    // screen. Drop them so the new screen starts from a clean pointer
+    // state (a stale clickCount would turn the first click into a
+    // double-click; stale hovered nodes would suppress real onMouseEnter).
+    this.hoveredNodes.clear();
+    this.app?.resetPointerState();
     if (active) {
       this.mainScreenFrameState = {
         frontFrame: this.frontFrame,
@@ -1556,15 +1570,38 @@ export default class Ink {
    * Returns true if a DOM handler consumed the click. Gated on
    * altScreenActive — clicks only make sense with a fixed viewport where
    * nodeCache rects map 1:1 to terminal cells (no scrollback offset).
+   * The button byte is the raw SGR release code; its modifier bits land
+   * on ClickEvent.shift/alt/ctrl.
    */
-  dispatchClick(col: number, row: number): boolean {
+  dispatchClick(col: number, row: number, button = 0): boolean {
     if (!this.altScreenActive) {
       logMouseDebug('dispatchClick skipped — alt screen inactive', { col, row });
       return false;
     }
     const blank = isEmptyCellAt(this.frontFrame.screen, col, row);
-    const handled = dispatchClick(this.rootNode, col, row, blank);
+    const handled = dispatchClick(this.rootNode, col, row, blank, button);
     logMouseDebug('dispatchClick', { col, row, handled });
+    return handled;
+  }
+  /**
+   * Route a wheel event to the ScrollBox (any onWheel handler) under the
+   * pointer. Returns true when a handler consumed it, so App can skip the
+   * legacy global wheel-key path and exactly one layer scrolls. Gated on
+   * altScreenActive like dispatchClick — without mouse tracking there are
+   * no wheel coordinates to route by.
+   */
+  dispatchWheelAt(
+    col: number,
+    row: number,
+    deltaY: number,
+    deltaX = 0,
+    button = 0,
+  ): boolean {
+    if (!this.altScreenActive) return false;
+    const handled = dispatchWheel(this.rootNode, col, row, deltaY, deltaX, button);
+    if (handled) {
+      logMouseDebug('dispatchWheelAt consumed', { col, row, deltaY, deltaX });
+    }
     return handled;
   }
   dispatchHover(col: number, row: number): void {
@@ -1764,7 +1801,7 @@ export default class Ink {
   }
   render(node: ReactNode): void {
     this.currentNode = node;
-    const tree = <App ref={this.setAppRef} stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
+    const tree = <App ref={this.setAppRef} stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} onWheelAt={this.dispatchWheelAt} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
         <TerminalWriteProvider value={this.writeRaw}>
           {node}
         </TerminalWriteProvider>
