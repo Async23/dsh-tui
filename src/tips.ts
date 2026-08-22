@@ -160,6 +160,12 @@ export const TIPS: readonly Tip[] = [
     zh: '工具卡/thinking/摘要点击展开，子代理卡点击看详情；输入框点击定位光标',
     en: 'Click tool/thinking/summary rows to fold; subagent cards open detail; click input to move caret',
   },
+  {
+    id: 'keys-mouse-scenes',
+    group: 'keys',
+    zh: '轨迹与 /settings 支持鼠标：行点击跳转/编辑，滚轮移动光标或焦点',
+    en: 'Trajectory and /settings take the mouse: row clicks jump/edit, the wheel moves cursor or focus',
+  },
 
   // ── 命令 ──────────────────────────────────────────────────
   {

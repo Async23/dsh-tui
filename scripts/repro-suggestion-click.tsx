@@ -226,6 +226,100 @@ if (menuIdx >= 0) {
 }
 await inst3.unmount()
 
+// ═══════════════ 第四幕：rewind 点击选中→确认页点击执行 + workspace 菜单点击 ═══════════════
+const term4 = makeTerm()
+const s4 = makeStreams(term4)
+let rewindCalls = 0
+const notifyTexts: string[] = []
+const ch4 = {
+  ...channel,
+  rows: [
+    { id: 1, kind: 'user', text: 'first user message' },
+    { id: 2, kind: 'user', text: 'second user message' },
+  ],
+  promptRewind: () => Promise.resolve(undefined),
+  rewindTo: () => { rewindCalls += 1; return Promise.resolve('first user message') },
+  workspaceCommands: () => [],
+  notify: (text: string) => { notifyTexts.push(text) },
+  subscribe: (cb: () => void) => { listeners.add(cb); return () => listeners.delete(cb) },
+}
+const inst4 = await render(
+  <AlternateScreen>
+    <Chat channel={ch4} questionStore={new QuestionStore()} />
+  </AlternateScreen>,
+  { stdout: s4.stdout as any, stdin: s4.stdin as any, stderr: s4.stderr as any, exitOnCtrlC: false, patchConsole: false },
+)
+await sleep(500)
+
+// 双击 Esc（空输入）打开 rewind 选择器
+s4.stdin.write('\x1b')
+await sleep(150)
+s4.stdin.write('\x1b')
+await sleep(400)
+lines = screenLines(term4)
+check('rewind 选择器打开', lines.some(l => l.includes('回退')))
+// 候选行在浮层里（OverlayAbove 钉在输入框上方）：从后往前找——
+// 转录区同样渲染这条消息，但它不是浮层行
+let firstMsgRow = -1
+for (let i = lines.length - 1; i >= 0; i--) {
+  if (lines[i]!.includes('first user message')) { firstMsgRow = i; break }
+}
+check('rewind 候选行可见', firstMsgRow >= 0, firstMsgRow >= 0 ? `行${firstMsgRow}` : '未找到')
+
+if (firstMsgRow >= 0) {
+  // 列表页：点击只选中（❯ 移到被点行，不进确认）
+  clickCell(s4.stdin, lines[firstMsgRow]!.indexOf('first') + 2, firstMsgRow + 1)
+  await sleep(300)
+  lines = screenLines(term4)
+  let pickedRow = -1
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i]!.includes('first user message')) { pickedRow = i; break }
+  }
+  check('列表页点击 → 只选中（❯ 落在被点行）',
+    pickedRow >= 0 && lines[pickedRow]!.trimStart().startsWith('❯'),
+    pickedRow >= 0 ? lines[pickedRow]!.trim().slice(0, 32) : '未找到')
+
+  // Enter 进确认页，确认页点击 = 直接执行（用户决策：确认层点击即确认）
+  s4.stdin.write('\r')
+  await sleep(400)
+  lines = screenLines(term4)
+  const confirmRow = lines.findIndex(l => l.includes('将对话回退到这条消息？'))
+  check('Enter 进入确认页', confirmRow >= 0, confirmRow >= 0 ? `行${confirmRow}` : '未出现确认标题')
+  if (confirmRow >= 0) {
+    const confirmTarget = lines.findIndex((l, i) => i > confirmRow && l.includes('first user message'))
+    check('确认页展示消息预览行', confirmTarget >= 0, confirmTarget >= 0 ? `行${confirmTarget}` : '未找到')
+    if (confirmTarget >= 0) {
+      clickCell(s4.stdin, lines[confirmTarget]!.indexOf('first') + 2, confirmTarget + 1)
+      await sleep(500)
+      lines = screenLines(term4)
+      check('确认页点击 → rewind 执行一次', rewindCalls === 1, `rewindCalls=${rewindCalls}`)
+      check('确认页点击后选择器关闭、消息回到输入框',
+        !lines.some(l => l.includes('将对话回退到这条消息？')) && lines.some(l => l.includes('first user message')),
+        (lines.find(l => l.includes('first user message')) ?? '').trim().slice(0, 30))
+    }
+  }
+}
+
+// workspace 裸菜单：点击 rename 行 = 执行该菜单项（notify 用法提示）
+s4.stdin.write('\x1b') // 清空输入（回填的消息）
+await sleep(250)
+s4.stdin.write('/workspace')
+await sleep(300)
+s4.stdin.write('\r')
+await sleep(400)
+lines = screenLines(term4)
+const renameRow = lines.findIndex(l => /^\s*❯?\s*rename/.test(l) || l.includes('rename'))
+check('workspace 菜单打开（含 rename 行）', lines.some(l => l.includes('resume')) && renameRow >= 0,
+  renameRow >= 0 ? `行${renameRow}: ${lines[renameRow]!.trim().slice(0, 30)}` : '未找到')
+if (renameRow >= 0) {
+  clickCell(s4.stdin, lines[renameRow]!.indexOf('rename') + 2, renameRow + 1)
+  await sleep(400)
+  check('点击 rename 行 → 菜单项执行（用法提示已发）',
+    notifyTexts.some(text => text.includes('用法') || text.includes('Usage')),
+    `notify 数=${notifyTexts.length}`)
+}
+await inst4.unmount()
+
 // 诊断：打印本次运行追加的 mouse-debug 日志
 try {
   const fd = readFileSync(mouseLogPath)
