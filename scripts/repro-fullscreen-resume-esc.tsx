@@ -191,6 +191,23 @@ writes.length = 0 // 只看页面交互期的模式写
   }
 }
 
+// ── 滚轮下滚 = 焦点下移（❯ 随行移动；位置路由无 onWheel → 回落
+// wheelDown 键 → 浏览器 step(1)，与 ↓ 同路径） ──
+{
+  const pointerRow = (): number => screenLines().findIndex(l => l.trimStart().startsWith('❯'))
+  const p0 = pointerRow()
+  check('聚焦行 ❯ 可见', p0 >= 0, `行${p0}`)
+  if (p0 >= 0) {
+    stdin.write(`\x1b[<65;40;${p0 + 3}M`) // SGR 65 = wheel down，列表中部
+    await sleep(250)
+    const p1 = pointerRow()
+    check('滚轮下滚 → ❯ 下移到下一会话行', p1 > p0, `❯ ${p0} → ${p1}`)
+    stdin.write(`\x1b[<64;40;${p1 + 3}M`) // wheel up 滚回
+    await sleep(250)
+    check('滚轮上滚 → ❯ 回到原位', pointerRow() === p0, `❯ → ${pointerRow()}`)
+  }
+}
+
 // ── 停留 >5s 后 Esc（触发 stdin-gap 重断言路径） ──
 await sleep(5300)
 stdin.write('\x1b')

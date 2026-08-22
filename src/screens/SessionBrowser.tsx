@@ -421,6 +421,11 @@ export function SessionBrowser({
       step(-1)
     } else if (key.downArrow) {
       step(1)
+    } else if (key.wheelUp) {
+      // 滚轮在列表上：与 ↑ 同路径——焦点跟随窗口下移焦点即滚动
+      step(-1)
+    } else if (key.wheelDown) {
+      step(1)
     } else if (key.pageUp || key.pageDown) {
       // A page is "as many rows as the window holds", taken as repeated single
       // steps so it lands on a selectable row like every other move.

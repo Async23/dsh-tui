@@ -1287,8 +1287,20 @@ export default class Ink {
    *    ONLY on a positive "reset" answer, so iTerm2's
    *    enter-clears-when-already-in-alt quirk can never fire on a healthy
    *    screen, and terminals that ignore DECRQM stay inert.
+   *
+   * Called from every interaction dispatch (click/hover/wheel/key) plus the
+   * focus/resize/stdin-gap triggers. The 250ms throttle keeps the round
+   * trip bounded while active use is going on — a dropped 1049 heals on
+   * the FIRST interaction after the drop instead of waiting for a focus
+   * event or a >5s idle gap (mouse motion keeps lastStdinTime fresh, so
+   * the gap path never fires during active use — the exact pattern that
+   * left the app broken until the user gave up).
    */
+  private lastHealthProbeAt = 0;
   probeAltScreenHealth = (): void => {
+    const now = Date.now();
+    if (now - this.lastHealthProbeAt < 250) return;
+    this.lastHealthProbeAt = now;
     if (!this.options.stdout.isTTY || this.isPaused || !this.altScreenActive) return;
     if (this.altScreenMouseTracking) {
       this.options.stdout.write(ENABLE_MOUSE_TRACKING);
@@ -1618,6 +1630,11 @@ export default class Ink {
    * on ClickEvent.shift/alt/ctrl.
    */
   dispatchClick(col: number, row: number, button = 0): boolean {
+    // Interaction-level health probe: the first click after a conpty-side
+    // mode drop triggers the heal (probe is throttled + no-op on healthy
+    // screens). Runs before the gate so a dropped 1049 is re-entered
+    // within a round trip instead of the click silently missing.
+    this.probeAltScreenHealth();
     if (!this.altScreenActive) {
       logMouseDebug('dispatchClick skipped — alt screen inactive', { col, row });
       return false;
@@ -1641,6 +1658,7 @@ export default class Ink {
     deltaX = 0,
     button = 0,
   ): boolean {
+    this.probeAltScreenHealth();
     if (!this.altScreenActive) return false;
     const handled = dispatchWheel(this.rootNode, col, row, deltaY, deltaX, button);
     if (handled) {
@@ -1649,10 +1667,12 @@ export default class Ink {
     return handled;
   }
   dispatchHover(col: number, row: number): void {
+    this.probeAltScreenHealth();
     if (!this.altScreenActive) return;
     dispatchHover(this.rootNode, col, row, this.hoveredNodes);
   }
   dispatchKeyboardEvent(parsedKey: ParsedKey): void {
+    this.probeAltScreenHealth();
     const target = this.focusManager.activeElement ?? this.rootNode;
     const event = new KeyboardEvent(parsedKey);
     dispatcher.dispatchDiscrete(target, event);
