@@ -104,9 +104,11 @@ export type ChatOverlayAction =
    * `count <= 0` move is a no-op (an empty list has no focus to move).
    */
   | { type: 'move'; delta: 1 | -1; count: number }
-  /** An async loader landed with the authoritative focus index (model list /
-   *  preset roster). Ignored unless that picker is still up. */
-  | { type: 'set-index'; kind: 'model' | 'preset'; index: number }
+  /** Set the focused row to an absolute index — an async loader landing
+   *  with the authoritative focus (model list / preset roster), or a mouse
+   *  click on a row of a panel that stays open (effort slider, workspace
+   *  flow). Ignored unless that panel is still up. */
+  | { type: 'set-index'; kind: 'model' | 'preset' | 'effort' | 'workspace-flow' | 'rewind'; index: number }
   /** Edit the history-search draft (query text, caret, focused match). */
   | { type: 'history-edit'; query?: string; cursor?: number; focus?: number }
   /** Workspace flow: an action is running (keys except Esc are swallowed). */
