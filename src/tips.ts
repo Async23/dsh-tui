@@ -157,8 +157,8 @@ export const TIPS: readonly Tip[] = [
   {
     id: 'keys-mouse-click',
     group: 'keys',
-    zh: '工具卡点击展开；picker、审批面板和命令菜单的行都能直接点；输入框点击定位光标',
-    en: 'Click tool cards to fold; picker/approval/menu rows are clickable; click the input to move the caret',
+    zh: '工具卡/thinking/摘要点击展开，子代理卡点击看详情；输入框点击定位光标',
+    en: 'Click tool/thinking/summary rows to fold; subagent cards open detail; click input to move caret',
   },
 
   // ── 命令 ──────────────────────────────────────────────────
