@@ -2790,6 +2790,14 @@ export function Chat({
                 cursorOffset={historyCursor}
                 matches={historyMatches}
                 focusIndex={historyFocus}
+                onPick={(index) => {
+                  // 点击行 = 填入该历史命令（与 Enter 同路径）
+                  const entry = historyMatches[index]
+                  if (entry) {
+                    setHistoryFill(entry.text)
+                    setHistoryOpen(false)
+                  }
+                }}
               />
             </Box>
           )}
