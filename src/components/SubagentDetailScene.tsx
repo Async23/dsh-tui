@@ -188,9 +188,14 @@ export function SubagentDetailScene({
     const active = page === name
     return (
       <React.Fragment key={name}>
-        <Text color={active ? 'claude' : undefined} bold={active} inverse={active}>
-          {` ${label} `}
-        </Text>
+        <Box
+          onClick={() => setPage(name)}
+          backgroundColor={!active ? 'userMessageBackgroundHover' : undefined}
+        >
+          <Text color={active ? 'claude' : undefined} bold={active} inverse={active}>
+            {` ${label} `}
+          </Text>
+        </Box>
         <Text dimColor>{name === PAGES[PAGES.length - 1] ? '' : '│'}</Text>
       </React.Fragment>
     )
@@ -301,12 +306,19 @@ export function SubagentDetailScene({
 
       <Divider color="subtle" title="" padding={4} />
       {/* Footer hint */}
-      <Box marginTop={0}>
+      <Box marginTop={0} flexDirection="row">
         <Text dimColor>
           {`←/→ ${t('subagent-hint-page')} · ↑/↓ ${t('subagent-hint-scroll')}`}
-          {isRunning && onInterrupt ? ' · X interrupt' : ''}
-          {` · Esc ${t('subagent-hint-back')}`}
         </Text>
+        {isRunning && onInterrupt && (
+          <>
+            <Text dimColor>{' · '}</Text>
+            <Box onClick={() => onInterrupt(subagent.agentId)}>
+              <Text dimColor bold color="warning">X interrupt</Text>
+            </Box>
+          </>
+        )}
+        <Text dimColor>{` · Esc ${t('subagent-hint-back')}`}</Text>
       </Box>
     </Box>
   )
