@@ -48,8 +48,12 @@ export function AlternateScreen(t0) {
       // harnesses render with a stdout that is not process.stdout, so the
       // strict key lookup would miss the only live instance and the
       // alt-screen flag would never flip — silently killing click/hover
-      // dispatch (both are gated on altScreenActive).
-      const ink = instances.get(process.stdout) ?? instances.values().next().value;
+      // dispatch (both are gated on altScreenActive). The "any instance"
+      // fallback is deliberately narrowed to the SINGLE-instance case:
+      // with several live Ink instances (multi-app embedding, tests
+      // running in parallel) guessing the first one would flip the wrong
+      // app's alt-screen state.
+      const ink = instances.get(process.stdout) ?? (instances.size === 1 ? instances.values().next().value : undefined);
       logMouseDebug('alt-screen enter', { mouseTracking, inkFound: ink !== undefined, writeRaw: !!writeRaw });
       if (!writeRaw) {
         return;
