@@ -512,6 +512,14 @@ export function TrajectoryScene({
         matches={matchColumns}
         tick={tick}
         alertTick={alertTick}
+        onColumnClick={column => {
+          // 点击波形列（或标尺行）= 跳到该列最近事件；空列继承前驱的
+          // firstIndex，空档区点击落在空档开始处。查询过滤掉的行不跳。
+          const nodeIndex = band.buckets[column]?.firstIndex ?? -1
+          if (nodeIndex < 0) return
+          const target = indexes.indexOf(nodeIndex)
+          if (target >= 0) jumpTo(target)
+        }}
       />
       <Box height={1} flexShrink={0}><Text> </Text></Box>
       {/* Content region with the wheel: raw ink-box host — ThemedBox drops
