@@ -1182,6 +1182,11 @@ export function PromptInput({
               viewportHeight={helpViewportHeight}
               viewportWidth={columns}
               scrollRef={helpScrollRef}
+              onCommandPick={(name) => {
+                // 点击命令行 = 填入 /name 并关闭帮助（Tab 补全的鼠标等价）
+                setInput(`/${name} `)
+                onToggleHelp()
+              }}
             />
           </Box>
         )}

@@ -134,6 +134,8 @@ export function SessionBrowser({
   const topRef = React.useRef(0)
   const [mode, setMode] = React.useState<BrowserMode>('list')
   const [renameText, setRenameText] = React.useState('')
+  /** Hover state for the confirm rows (only one is ever mounted). */
+  const [confirmHovered, setConfirmHovered] = React.useState(false)
   // The browser owns the whole screen, so it has to carry its own messages.
   // `channel.notify` renders into the conversation — which is exactly what is
   // NOT on screen right now — so a failed delete, a refused resume, or an
@@ -577,14 +579,34 @@ export function SessionBrowser({
         </Box>
       )}
       {mode === 'confirm-delete' && focused !== undefined && (
-        <Box flexShrink={0}>
+        <Box
+          flexShrink={0}
+          onClick={() => {
+            // 点击确认行 = 确认删除（与 Enter 同路径）；确认屏本身就是
+            // 显式确认层，取消保留键盘 Esc，防误点
+            setMode('list')
+            runDelete(focused)
+          }}
+          onMouseEnter={(): void => setConfirmHovered(true)}
+          onMouseLeave={(): void => setConfirmHovered(false)}
+          backgroundColor={confirmHovered ? 'userMessageBackgroundHover' : undefined}
+        >
           <Text color="error">
             {` ${truncateWidth(t('resume-delete-confirm', { name: focused.title.text }), inputBudget)}`}
           </Text>
         </Box>
       )}
       {mode === 'confirm-clean' && (
-        <Box flexShrink={0}>
+        <Box
+          flexShrink={0}
+          onClick={() => {
+            setMode('list')
+            runClean()
+          }}
+          onMouseEnter={(): void => setConfirmHovered(true)}
+          onMouseLeave={(): void => setConfirmHovered(false)}
+          backgroundColor={confirmHovered ? 'userMessageBackgroundHover' : undefined}
+        >
           <Text color="warning">
             {` ${truncateWidth(t('session-clean-confirm', { n: view.emptyCount }), inputBudget)}`}
           </Text>
