@@ -1,6 +1,7 @@
 import indentString from 'indent-string'
 import { applyTextStyles } from './colorize.js'
 import type { DOMElement } from './dom.js'
+import { GEOMETRY_TRACE_ENABLED, noteScrollGeometry } from './geometry-trace.js'
 import getMaxWidth from './get-max-width.js'
 import type { Rectangle } from './layout/geometry.js'
 import { LayoutDisplay, LayoutEdge, type LayoutNode } from './layout/node.js'
@@ -953,6 +954,28 @@ function renderNodeToOutput(
         // only after clamp so a wasted no-op frame isn't scheduled.
         if (scrollTop !== cur) node.pendingScrollDelta = undefined
         if (node.pendingScrollDelta !== undefined) scrollDrainNode = node
+        // Geometry forensics (#421/#433): everything that decides where this
+        // viewport painted — captured AFTER all clamps so the trace shows the
+        // final renderScrollTop, not the requested one.
+        if (GEOMETRY_TRACE_ENABLED) {
+          noteScrollGeometry({
+            sticky,
+            shrunk,
+            grew,
+            atBottom,
+            scrollTopBeforeFollow,
+            cur,
+            scrollTop,
+            renderScrollTop: clamped,
+            scrollHeight,
+            prevScrollHeight,
+            innerHeight,
+            maxScroll,
+            prevMaxScroll,
+            clampMin: cMin ?? null,
+            clampMax: cMax ?? null,
+          })
+        }
         // Wheel-drain selection translate (#438): the drain moved content
         // by (scrollTop - scrollTopBeforeFollow) rows this frame, minus
         // what at-bottom follow already reported above (followDelta is 0
