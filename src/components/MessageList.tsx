@@ -223,6 +223,14 @@ export function MessageList({
         tool?.resultText?.length ?? 0,
         tool?.resultFull?.length ?? 0,
         tool?.errorText?.length ?? 0,
+        // Subagent 卡片的高度输入：running→settled 折叠 waterfall+tool 行
+        // （高度 5→1），failed 增加 error 行。这些字段不进签名的话，
+        // offscreen 卡片结算后 cached height 永不过期 → offsets/bottomPad
+        // 用不存在的几何 → 滚回时 blank band / 滚不到底。
+        row.subagent?.status ?? '',
+        row.subagent?.toolCalls.length ?? 0,
+        row.subagent?.outputLines.length ?? 0,
+        row.subagent?.error?.length ?? 0,
         row.id === failureHintRowId ? failureHint ?? '' : '',
       ].join('|')
       if (sigs.get(row.id) !== sig) {
@@ -489,11 +497,6 @@ export function MessageList({
     registerRowRef?.(rowId, el)
   }, [registerRowRef])
 
-  // Second-resolution clock for the running tool card's live elapsed time.
-  // Computed per render (cheap) but only forwarded to running rows, so
-  // settled rows never see a changing prop.
-  const nowSec = Math.floor(Date.now() / 1000)
-
   return (
     <>
       {rows.some(row => row.folded) && (
@@ -548,7 +551,6 @@ export function MessageList({
               toolResultView={tool?.resultView}
               toolStartedAt={tool?.startedAt}
               toolDurationMs={tool?.durationMs}
-              nowSec={tool?.status === 'running' ? nowSec : undefined}
               subagent={subagent}
               onToggleRow={onToggleRow}
               setRowRef={setRowRef}
@@ -607,9 +609,6 @@ type MemoRowProps = {
   toolResultView: ToolResultView | undefined
   toolStartedAt: number | undefined
   toolDurationMs: number | undefined
-  /** Second-resolution clock, forwarded only while the tool runs so the
-   *  live elapsed label ticks; settled rows never receive a changing prop. */
-  nowSec: number | undefined
   // SubagentRow, stable ref (subagent lifecycle events update the store, not
   // the row ref itself, so a plain ref compare stays correct).
   subagent: SubagentRow | undefined
