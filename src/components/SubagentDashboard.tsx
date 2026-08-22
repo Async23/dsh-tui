@@ -101,6 +101,10 @@ export function SubagentDashboard({
                 <SubagentCard
                   subagent={subagent}
                   focused={index === focusIndex}
+                  onClick={onSelect !== undefined
+                    // Click = view detail, same as Enter on the focused card.
+                    ? () => onSelect(subagent.agentId)
+                    : undefined}
                 />
                 {index < subagents.length - 1 && (
                   <Text dimColor>{'─'.repeat(Math.max(20, Math.min(72, columns - 6)))}</Text>

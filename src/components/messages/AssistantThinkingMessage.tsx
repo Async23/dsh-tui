@@ -12,6 +12,7 @@ import {
 import { BRAND, ICE } from '../shimmer.js'
 import { interpolateColor } from '../Spinner/spinnerUtils.js'
 import { isMinimalMode } from '../../minimalMode.js'
+import type { ClickEvent } from '../../ink/events/click-event.js'
 
 /** Preview body rows — a FIXED row count (kimicode-style constant-height
  *  ticker). Ink's truncate slices the whole string across newlines as one
@@ -39,7 +40,7 @@ type Props = {
   durationMs?: number
   /** Message-selection mode highlight. */
   isSelected?: boolean
-  onClick?(): void
+  onClick?(event: ClickEvent): void
 }
 
 /**

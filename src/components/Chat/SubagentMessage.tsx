@@ -7,6 +7,7 @@ import { resolvePreset } from '../activityFrames.js'
 import { toolNameColor } from '../messages/AssistantToolUseMessage.js'
 import { stringWidth } from '../../ink/stringWidth.js'
 import { isMinimalMode } from '../../minimalMode.js'
+import type { ClickEvent } from '../../ink/events/click-event.js'
 
 /** The waterfall window is a Kimi Code style constant-height region. */
 const WATERFALL_ROWS = 3
@@ -61,7 +62,7 @@ export function SubagentMessage({ subagent, addMargin, activityFrames, onClick }
   addMargin: boolean
   activityFrames?: string
   isExpanded: boolean
-  onClick: () => void
+  onClick(event: ClickEvent): void
 }): React.ReactNode {
   const settled = subagent.status === 'completed' || subagent.status === 'failed' || subagent.status === 'cancelled'
   // 动画订阅仅限运行中的卡片：settled 后传 null 退出共享 clock（keepAlive

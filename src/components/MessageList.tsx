@@ -1,6 +1,7 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { t } from '../i18n.js'
 import { Box, Text, useTerminalSize, type ScrollBoxHandle } from '../ui.js'
+import type { ClickEvent } from '../ink/events/click-event.js'
 import type { ChatRow, ToolRow, ToolCallView, ToolResultView, SubagentRow } from '../dsh-adapter/channel.js'
 import type { DOMElement } from '../ink/dom.js'
 import { Divider } from './design-system/Divider.js'
@@ -561,14 +562,10 @@ export function MessageList({
   return (
     <>
       {rows.some(row => row.folded) && (
-        <Box marginTop={1} onClick={onLoadOlder}>
-          <Divider title={t('load-earlier')} />
-        </Box>
+        <ClickableDivider title={t('load-earlier')} onClick={onLoadOlder} />
       )}
       {!showAll && hiddenCount > 0 && (
-        <Box marginTop={1} onClick={onToggleAll}>
-          <Divider title={t('show-previous-messages', { n: hiddenCount })} />
-        </Box>
+        <ClickableDivider title={t('show-previous-messages', { n: hiddenCount })} onClick={onToggleAll} />
       )}
       {topPad > 0 && <Box height={topPad} flexShrink={0} />}
       {visibleRows
@@ -677,6 +674,23 @@ type MemoRowProps = {
   setRowRef: (rowId: number, el: DOMElement | null) => void
 }
 
+/** Load-earlier / show-previous divider row with a mouse hover tint — the
+ *  clickability is otherwise invisible (audit C-04). */
+function ClickableDivider({ title, onClick }: { title: string; onClick?: () => void }): React.ReactNode {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <Box
+      marginTop={1}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      backgroundColor={hovered ? 'userMessageBackgroundHover' : undefined}
+    >
+      <Divider title={title} />
+    </Box>
+  )
+}
+
 function TranscriptRow({
   rowId,
   kind,
@@ -718,7 +732,10 @@ function TranscriptRow({
     },
     [setRowRef, rowId],
   )
-  const onClick = React.useCallback((): void => {
+  const onClick = React.useCallback((event: ClickEvent): void => {
+    // 全宽行右侧的空白（屏幕缓冲未写入单元格）不触发折叠——点击空白
+    // 想选字/拖拽时不再误触展开/收起（审计 C-03/cellIsBlank 零消费）。
+    if (event.cellIsBlank) return
     onToggleRow(rowId)
   }, [onToggleRow, rowId])
 
@@ -743,6 +760,7 @@ function TranscriptRow({
           width="100%"
           backgroundColor={background}
           ref={ref}
+          onClick={onClick}
         >
           <Box minWidth={2}>
             <Text color="text">●</Text>
@@ -840,6 +858,7 @@ function TranscriptRow({
             footnote={toolFootnote}
             diffLayout={diffLayout}
             toolBackground={toolBackground}
+            onClick={onClick}
           />
         </Box>
       )
