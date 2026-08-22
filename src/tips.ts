@@ -339,8 +339,8 @@ export const TIPS: readonly Tip[] = [
   {
     id: 'cmd-permission',
     group: 'commands',
-    zh: '/permission 切换权限预设（read-only/workspace/full）',
-    en: '/permission switches permission presets (read-only/workspace/full)',
+    zh: '/permission 弹出权限预设选择器（只读/工作区读写/完全访问）',
+    en: '/permission opens the permission-preset picker (read-only/workspace-write/full)',
   },
   {
     id: 'cmd-plan-goal',
@@ -423,6 +423,36 @@ export const TIPS: readonly Tip[] = [
     group: 'display',
     zh: '底栏 TPS、轨迹条、上下文条默认关，/settings 里打开',
     en: 'TPS, trajectory, context bars are off by default — enable in /settings',
+  },
+  {
+    id: 'disp-statusbar-session-id',
+    group: 'display',
+    zh: '底栏可显示短会话 ID（# 前 8 位），与日志文件名对应，/settings 里开',
+    en: 'Footer can show the short session id (# + 8 chars, matches the log filename) — enable in /settings',
+  },
+  {
+    id: 'disp-statusbar-title',
+    group: 'display',
+    zh: '底栏可显示会话标题；/rename 随时改',
+    en: 'Footer can show the session title; rename anytime with /rename',
+  },
+  {
+    id: 'disp-statusbar-fields',
+    group: 'display',
+    zh: '底栏字段逐项开关：token 总量、git 分支、模式、活动摘要…… /settings 里配',
+    en: 'Footer fields are per-field switches: token totals, git branch, mode, activity — set in /settings',
+  },
+  {
+    id: 'disp-statusbar-compact',
+    group: 'display',
+    zh: '底栏 compact 开=单行收纳；关=左右分组（指标在左、位置在右）',
+    en: 'Footer compact on = one merged line; off = metrics left, location right',
+  },
+  {
+    id: 'disp-statusbar-hint',
+    group: 'display',
+    zh: "空闲时 '? 查看快捷键' 常驻提示也是底栏开关（shortcutHint）",
+    en: 'The idle "? for shortcuts" reminder is itself a footer switch (shortcutHint)',
   },
   {
     id: 'disp-context-warn',

@@ -42,12 +42,14 @@ import { explicitModelRoute, recordedModelRoute, resolveModelRoute, validateMode
 import type { ProviderSetupHost } from './providerWizard.js'
 import { readPresetPref, writePresetPref } from '../presetPrefs.js'
 import { composePreset, resolvePersistedPreset, rosterOf, runningPresetOf, serviceForAgent, type AgentPresetInfo } from './presets.js'
-import { isPresetName } from '../components/activityFrames.js'
+import { isPresetName, PRESET_NAMES } from '../components/activityFrames.js'
 import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { logForDebugging } from '../utils/debug.js'
 import { homeDir, LEGACY_DATA_DIR } from '../utils/paths.js'
 import { extractMentions } from '../utils/mentions.js'
-import { t } from '../i18n.js'
+import { getLang, LANGS, t } from '../i18n.js'
+import { AUTO_THEME_NAME, THEME_NAMES } from '../theme.js'
+import { listCustomThemes } from '../customTheme.js'
 import { modeDisplayName, resolveSessionModes, type SessionModeSpec } from '../sessionModes.js'
 import { normalizeStatusBar, normalizeToolBackground, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SubagentActivityStore, type SubagentState } from './subagents.js'
@@ -537,10 +539,11 @@ export interface Channel {
   readonly contextBarEnabled: boolean
   /**
    * Current same-session goal projection, when a goal exists. Derived live
-   * from the durable `goal/change` context events (round-zero goal-sourced
-   * user messages) in the session log — every goal mutation appends one, so
-   * this snapshot tracks create/edit/pause/resume/complete/block/clear in
-   * real time and replays correctly on resume/rewind.
+   * from the durable goal events in the session log — top-level
+   * `goal/change` snapshots (every goal mutation appends one) plus the
+   * goal-sourced continuation rounds that advance the counter — so this
+   * snapshot tracks create/edit/pause/resume/complete/block/clear in real
+   * time and replays correctly on resume/rewind.
    */
   readonly goal: ChannelGoal | undefined
   /**
@@ -1193,6 +1196,72 @@ function toolResultText(event: SessionEvent<'tool/result'>): string {
   return block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
 }
 
+/** Phase badge for the harness goal card — mirrors the panel's PhaseBadge. */
+const GOAL_RESULT_BADGE: Record<string, string> = {
+  active: '● active',
+  paused: '⏸ paused',
+  blocked: '⛔ blocked',
+  complete: '✓ complete',
+}
+
+/**
+ * Summary cards for the harness's goal/todo tools. Their results are machine
+ * JSON (`{"goal":{…}}` / `{"todos":[…]}`) that would otherwise dump under the
+ * tool card as a raw `⎿ {"goal":…}` line. Matched by tool-name substring AND
+ * payload shape, so unrelated tools and plain-text results pass through to
+ * the registry/raw-text path untouched. Runs on the live stream and replay.
+ */
+function harnessToolResultView(
+  name: string,
+  data: SessionEvent<'tool/result'>['data'],
+): ToolResultView | undefined {
+  const lower = name.toLowerCase()
+  const isGoalTool = lower.includes('goal')
+  const isTodoTool = lower.includes('todo')
+  if (!isGoalTool && !isTodoTool) return undefined
+  const block = data.message.content[0]
+  if (block === undefined || block.type !== 'tool-result') return undefined
+  const text = block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
+  if (text === '' || !text.startsWith('{')) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const record = parsed as Record<string, unknown>
+
+  if (isGoalTool && typeof record.goal === 'object' && record.goal !== null) {
+    const goal = record.goal as Record<string, unknown>
+    if (typeof goal.objective === 'string' && typeof goal.phase === 'string') {
+      const badge = GOAL_RESULT_BADGE[goal.phase] ?? goal.phase
+      const rounds = typeof goal.roundsStarted === 'number' && typeof goal.maxGoalRounds === 'number'
+        ? ` · ${goal.roundsStarted}/${goal.maxGoalRounds}`
+        : ''
+      const activation = typeof record.activation === 'string' ? ` · ${record.activation}` : ''
+      const lines = [`🎯 ${goal.objective}`, `${badge}${rounds}${activation}`]
+      const blocked = (goal.blockedReason as { message?: unknown } | undefined)?.message
+      if (typeof blocked === 'string') lines.push(`⛔ ${blocked}`)
+      return { card: 'generic', content: lines.map(line => ({ type: 'text', text: line })) }
+    }
+  }
+
+  if (isTodoTool && Array.isArray(record.todos)) {
+    const rows = record.todos as Array<Record<string, unknown>>
+    const done = rows.filter(row => row.status === 'completed').length
+    const lines = [`todos ✓ ${done}/${rows.length}`]
+    for (const row of rows) {
+      if (row.status !== 'in_progress' || typeof row.content !== 'string') continue
+      lines.push(`● ${row.content}`)
+      if (lines.length >= 4) break
+    }
+    return { card: 'generic', content: lines.map(line => ({ type: 'text', text: line })) }
+  }
+
+  return undefined
+}
+
 function toolErrorText(event: SessionEvent<'tool/result'>): string {
   const failure = event.data.error
   if (failure === undefined) return ''
@@ -1357,8 +1426,7 @@ export function createChannel(
       try {
         runtime.interrupt(target, { kind: 'ancestor', agent })
         subagentStore.onCancelled(agentId, 'interrupted')
-        state.subagents = subagentStore.snapshot()
-        syncSubagentRows()
+        syncSubagentsNow()
         state.emit()
         return true
       } catch {
@@ -1392,9 +1460,12 @@ export function createChannel(
   /**
    * Sync subagentStore state into ChatRows (insert/update in state.rows).
    * Called whenever subagent state changes (spawned/completed/failed/output).
+   * Accepts a caller-taken snapshot to avoid the double copy on the hot path
+   * (session/event fires per subagent token: snapshot here + snapshot in the
+   * caller = two full state copies before emitStream's 16ms throttle).
    */
-  const syncSubagentRows = (): void => {
-    const snapshot = subagentStore.snapshot()
+  const syncSubagentRows = (preSnapshot?: readonly SubagentState[]): void => {
+    const snapshot = preSnapshot ?? subagentStore.snapshot()
     for (const sub of snapshot) {
       let row = subagentRowsByAgentId.get(sub.agentId)
       if (!row) {
@@ -1477,6 +1548,31 @@ export function createChannel(
   const listeners = new Set<() => void>()
   /** True while a frame-aligned stream notification is pending (emitStream). */
   let streamNotifyScheduled = false
+  /** True while subagent assistant/chunk deltas have deferred their
+   *  snapshot+projection to the frame-aligned flush (emitStream's timer).
+   *  Chunks arrive at token rate (100-300 events/s) and the projection is a
+   *  full deep state copy (SubagentActivityStore.snapshot) plus a SubagentRow
+   *  rebuild per tracked agent — running that per token sits BEFORE
+   *  emitStream's 16ms coalescing and defeats it. Non-chunk events
+   *  (tool/call, subagent/end, interrupt) project immediately and clear
+   *  this flag, so lifecycle transitions stay synchronous. */
+  let subagentStreamDirty = false
+  /** Deferred projection for the frame-aligned flush: runs INSIDE the
+   *  emitStream timer, before listeners wake, so React always reads fully
+   *  projected rows. No-op unless a chunk marked the projection dirty. */
+  const flushSubagentStream = (): void => {
+    if (!subagentStreamDirty) return
+    subagentStreamDirty = false
+    state.subagents = subagentStore.snapshot()
+    syncSubagentRows(state.subagents)
+  }
+  /** Immediate projection; supersedes any pending deferred flush (the fresh
+   *  snapshot already contains everything the deferred pass would project). */
+  const syncSubagentsNow = (): void => {
+    subagentStreamDirty = false
+    state.subagents = subagentStore.snapshot()
+    syncSubagentRows(state.subagents)
+  }
   // foldRows incremental cursor (see foldRows): rows only append past the
   // fold line, so each pass touches only newly-eligible rows.
   const foldCursor: { rows: unknown; index: number } = { rows: null, index: 0 }
@@ -2146,6 +2242,68 @@ export function createChannel(
   // another directory's listing.
   const fileCandidateCache = { cwd: '', load: undefined as Promise<readonly FileCandidate[]> | undefined }
 
+  // `/model <provider/id>` completion: the model catalog is async (one llm
+  // listModels per provider), so the first keystrokes that could be heading
+  // for /model warm a session-lifetime cache — the shared promise dedupes
+  // concurrent triggers, children() synchronously serves whatever has landed,
+  // and the arrival state.emit() reopens the menu mid-typing. switchModel's
+  // success path drops the cache so the [current] tag re-resolves against
+  // the new route.
+  const modelNodeCache = {
+    nodes: undefined as readonly CommandCompletionNode[] | undefined,
+    load: undefined as Promise<void> | undefined,
+  }
+  const warmModelNodes = (): void => {
+    if (modelNodeCache.load !== undefined) return
+    modelNodeCache.load = state.listModels().then((list) => {
+      modelNodeCache.nodes = list.map((model) => ({
+        name: `${model.provider}/${model.id}`,
+        description: model.name,
+        ...(state.provider === model.provider && state.model === model.id
+          ? { tag: 'current' }
+          : {}),
+      }))
+      state.emit()
+    }).catch(() => {
+      // listModels already swallows per-provider failures; this only fires
+      // when the llm service shape itself is missing — settle on an empty
+      // menu rather than retrying on every keystroke.
+      modelNodeCache.nodes = []
+    })
+  }
+
+  // `/preset <id>` completion: same warm-cache pattern as models. The
+  // current/default tags resolve at children() time (sync state reads), so
+  // no cache invalidation is needed on switch.
+  const presetOptionCache = {
+    list: undefined as readonly PresetOption[] | undefined,
+    load: undefined as Promise<void> | undefined,
+  }
+  const warmPresetOptions = (): void => {
+    if (presetOptionCache.load !== undefined) return
+    presetOptionCache.load = state.listPresets().then((list) => {
+      presetOptionCache.list = list
+      state.emit()
+    }).catch(() => {
+      presetOptionCache.list = []
+    })
+  }
+
+  // `/effort <id>` completion: state.effortLevels is the sync vocabulary
+  // (populated on route changes); when still unknown, one best-effort
+  // resolveEfforts warms it. `tried` caps the retry — resolveEfforts
+  // notifies on hard errors, so keystroke-time retries would spam.
+  const effortWarm = { tried: false }
+  const warmEffortLevels = (): void => {
+    if (state.effortLevels !== undefined || effortWarm.tried) return
+    effortWarm.tried = true
+    void resolveEfforts().then((resolved) => {
+      if (resolved === 'unavailable' || resolved === 'error') return
+      effortWarm.tried = false
+      state.emit()
+    }).catch(() => {})
+  }
+
   const state: ChannelState = {
     effortLevels: undefined,
     version: 0,
@@ -2191,7 +2349,91 @@ export function createChannel(
     pending: [],
     commandList: LOCAL_COMMANDS,
     commandCompletions(input: string) {
+      // Warm the async vocabularies as soon as the input could be heading
+      // for their commands (`/m`, `/pre`, …) — by the time a trailing space
+      // asks children() for nodes, the fetch has usually landed.
+      const head = input.slice(1).split(/[\t ]/)[0]?.toLowerCase() ?? ''
+      if (head !== '') {
+        if ('model'.startsWith(head)) warmModelNodes()
+        if ('preset'.startsWith(head)) warmPresetOptions()
+        if ('effort'.startsWith(head)) warmEffortLevels()
+      }
       return completeCommands(input, state.commandList, (path) => {
+        if (path.length === 1 && path[0] === 'model') {
+          // provider/id specs, current model tagged; see modelNodeCache.
+          warmModelNodes()
+          return modelNodeCache.nodes ?? []
+        }
+        if (path.length === 1 && path[0] === 'lang') {
+          return [
+            { name: 'status', description: 'Show the current UI language', descriptionKey: 'sugg-status-desc' },
+            ...LANGS.map((lang) => ({
+              name: lang,
+              description: `Switch the UI language to ${lang}`,
+              descriptionKey: lang === 'zh' ? 'sugg-lang-zh-desc' : 'sugg-lang-en-desc',
+              ...(getLang() === lang ? { tag: 'current' } : {}),
+            })),
+          ]
+        }
+        if (path.length === 1 && path[0] === 'theme') {
+          return [
+            { name: 'status', description: 'Show the current theme', descriptionKey: 'sugg-status-desc' },
+            { name: AUTO_THEME_NAME, description: 'Follow the terminal background', descriptionKey: 'sugg-theme-auto-desc' },
+            ...THEME_NAMES.map((name) => ({
+              name,
+              description: `Built-in theme ${name}`,
+              descriptionKey: 'sugg-theme-builtin-desc',
+            })),
+            ...listCustomThemes()
+              .filter((spec) => spec.name !== AUTO_THEME_NAME)
+              .map((spec) => ({
+                name: spec.name,
+                description: `User theme (${spec.base} base)`,
+                descriptionKey: 'sugg-theme-user-desc',
+              })),
+          ]
+        }
+        if (path.length === 1 && path[0] === 'effort') {
+          warmEffortLevels()
+          return [
+            { name: 'status', description: 'Show the current reasoning effort', descriptionKey: 'sugg-status-desc' },
+            ...(state.effortLevels ?? []).map((id) => ({
+              name: id,
+              description: 'Reasoning effort level',
+              descriptionKey: 'sugg-effort-level-desc',
+              ...(state.reasoningEffort === id ? { tag: 'current' } : {}),
+            })),
+          ]
+        }
+        if (path.length === 1 && path[0] === 'preset') {
+          warmPresetOptions()
+          return [
+            { name: 'status', description: 'Show the current agent preset', descriptionKey: 'sugg-status-desc' },
+            ...(presetOptionCache.list ?? []).map((preset) => ({
+              name: preset.id,
+              description: preset.description ?? preset.name ?? preset.id,
+              ...(preset.id === state.agentPreset
+                ? { tag: 'current' }
+                : preset.isDefault
+                  ? { tag: 'default' }
+                  : {}),
+            })),
+          ]
+        }
+        if (path.length === 1 && path[0] === 'activity') {
+          return [
+            { name: 'status', description: 'Show the current activity preset', descriptionKey: 'sugg-status-desc' },
+            { name: 'frames', description: 'List or switch frame presets', descriptionKey: 'sugg-activity-frames-desc' },
+          ]
+        }
+        if (path.length === 2 && path[0] === 'activity' && path[1] === 'frames') {
+          return PRESET_NAMES.map((name) => ({
+            name,
+            description: 'Animation frame preset',
+            descriptionKey: 'sugg-activity-frame-desc',
+            ...(state.activityFrames === name ? { tag: 'current' } : {}),
+          }))
+        }
         if (path.length === 1 && path[0] === 'workspace') {
           const builtins: CommandCompletionNode[] = [
             { name: 'resume', description: 'Switch to another workspace', descriptionKey: 'cmd-desc-workspace-resume' },
@@ -2208,6 +2450,21 @@ export function createChannel(
                 aliases: command.aliases,
                 description: command.description,
               })),
+          ]
+        }
+        if (path.length === 1 && path[0] === 'permission') {
+          // Sandbox-preset vocabulary of the `/permission` picker — Tab
+          // completes it for keyboard users, Enter still dispatches.
+          return [
+            { name: 'read-only', description: 'Read-only session: no file writes, no commands', descriptionKey: 'permission-preset-readonly-desc' },
+            { name: 'workspace-write', description: 'Read/write inside the workspace; writes need a prior read', descriptionKey: 'permission-preset-workspace-write-desc' },
+            { name: 'danger-full-access', description: 'Unrestricted access, no approvals', descriptionKey: 'permission-preset-full-access-desc' },
+          ]
+        }
+        if (path.length === 1 && path[0] === 'plan') {
+          return [
+            { name: 'on', description: 'Enter plan mode: read-only, plan before acting', descriptionKey: 'plan-mode-on-desc' },
+            { name: 'off', description: 'Exit plan mode, back to normal execution', descriptionKey: 'plan-mode-off-desc' },
           ]
         }
         return commandTrees?.children(path) ?? []
@@ -2248,6 +2505,9 @@ export function createChannel(
       streamNotifyScheduled = true
       const timer = setTimeout(() => {
         streamNotifyScheduled = false
+        // Deferred subagent projection rides this same frame: flush BEFORE
+        // the listeners wake so React reads fully projected rows.
+        flushSubagentStream()
         foldRows(state.rows, MAX_ROWS, foldCursor)
         for (const listener of listeners) listener()
       }, 16)
@@ -3069,6 +3329,11 @@ export function createChannel(
       state.agentPreset = modelComposed.agentPreset
       state.model = model
       state.provider = provider
+      // /model completion cache: the [current] tag was resolved at fetch
+      // time — drop the cache so the next `/model ` refetches for the new
+      // route.
+      modelNodeCache.nodes = undefined
+      modelNodeCache.load = undefined
       state.tps = undefined
       state.tpsSamples = []
       state.lastUsage = undefined
@@ -4457,6 +4722,11 @@ ${output}
    *  its result-time contextual diff back from here). */
   const presentResultView = (name: string, rawArgs: string, data: SessionEvent<'tool/result'>['data']): ToolResultView | undefined => {
     try {
+      // Harness goal/todo tools first: their raw JSON reads as noise in the
+      // transcript — fold recognizable shapes into a summary card before the
+      // registry gets a chance to (not) know them.
+      const local = harnessToolResultView(name, data)
+      if (local !== undefined) return local
       const tool = toolsRegistry?.get(name, agent)
       if (tool?.presentResult === undefined) return undefined
       const block = data.message.content[0]
@@ -4592,28 +4862,49 @@ ${output}
   }
 
   /**
+   * One durable goal mutation as the goal service records it (the `data` of
+   * a top-level `goal/change` session event, and of the snapshot a round-zero
+   * goal-sourced `user/message` may inline). Declared structurally: the
+   * pinned peer's `SessionEvent` union predates the event type, so the fold
+   * admits the payload by shape, not by union membership.
+   */
+  type GoalChangePayload = {
+    kind: 'goal/change'
+    version: number
+    operation:
+      | 'create'
+      | 'edit'
+      | 'pause'
+      | 'resume'
+      | 'complete'
+      | 'block'
+      | 'clear'
+    goal?: Omit<ChannelGoal, 'roundsStarted'>
+    roundsStarted?: number
+  }
+
+  /** Fold one goal mutation into the channel's goal projection. */
+  const applyGoalChange = (change: GoalChangePayload): void => {
+    if (change.operation === 'clear') {
+      state.goal = undefined
+    } else if (change.goal !== undefined) {
+      state.goal = {
+        ...change.goal,
+        roundsStarted: change.roundsStarted ?? state.goal?.roundsStarted ?? 0,
+      }
+    }
+  }
+
+  /**
    * Fold one goal-sourced message into the channel's goal projection.
-   * Round-zero goal messages carry the full durable snapshot (or a clear
+   * Round-zero goal messages may carry the full durable snapshot (or a clear
    * tombstone) in their source; positive-round messages are admitted
    * continuation prompts that only advance the rounds counter.
    */
   const applyGoalEvent = (event: SessionEvent<'user/message'>): void => {
     const source = event.data.source as unknown as {
       round: number
-      change?: {
-        kind: 'goal/change'
-        version: 1
-        operation:
-          | 'create'
-          | 'edit'
-          | 'pause'
-          | 'resume'
-          | 'complete'
-          | 'block'
-          | 'clear'
-        goal?: ChannelGoal
-        roundsStarted?: number
-      }
+      change?: GoalChangePayload
     }
     if (source.round > 0) {
       // Admitted continuation round — the snapshot itself is unchanged.
@@ -4628,14 +4919,7 @@ ${output}
     const change = source.change
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- durable replay data may not match the static type
     if (change === undefined || change.kind !== 'goal/change') return
-    if (change.operation === 'clear') {
-      state.goal = undefined
-    } else if (change.goal !== undefined) {
-      state.goal = {
-        ...change.goal,
-        roundsStarted: change.roundsStarted ?? state.goal?.roundsStarted ?? 0,
-      }
-    }
+    applyGoalChange(change)
   }
 
   /** True while the durable transcript is being replayed (boot /resume /
@@ -4663,6 +4947,15 @@ ${output}
   }
 
   const renderEvent = (event: SessionEvent): void => {
+    // Top-level `goal/change` events are how the goal service actually
+    // records durable goal mutations (create/edit/pause/resume/complete/
+    // block/clear) — confirmed in production logs. The pinned peer's
+    // SessionEvent union predates the type, so admit it structurally: the
+    // goal chip and panel stay dark without this fold.
+    if ((event as { type: string }).type === 'goal/change') {
+      applyGoalChange((event as { data: GoalChangePayload }).data)
+      return
+    }
     switch (event.type) {
       case 'user/message': {
         // Compaction checkpoint: `source = { kind: 'plugin', plugin:
@@ -4708,10 +5001,13 @@ ${output}
           contextWarned = false
           break
         }
-        // Same-session goal domain: round-zero goal-sourced messages carry
-        // the durable goal snapshot (or clear tombstone) in their source.
-        // They are not transcript bubbles — they drive the goal panel's
-        // live projection (replayed on resume/rewind like every other event).
+        // Same-session goal domain: goal-sourced messages are the round
+        // driver's continuation prompts (positive rounds advance the
+        // counter); some hosts also inline the durable snapshot in a
+        // round-zero source. They are not transcript bubbles — they drive
+        // the goal panel's live projection (replayed on resume/rewind like
+        // every other event; the snapshot itself arrives as the top-level
+        // `goal/change` event admitted above).
         if ((event.data.source as { kind: string }).kind === 'goal') {
           applyGoalEvent(event)
           break
@@ -5298,10 +5594,17 @@ ${output}
         const subagentId = subagentStore.getSubagentIdBySession(session)
         if (subagentId) {
           subagentStore.onSessionEvent(subagentId, event)
-          state.subagents = subagentStore.snapshot()
-          syncSubagentRows()
-          if (event.type === 'assistant/chunk') state.emitStream()
-          else state.emit()
+          if (event.type === 'assistant/chunk') {
+            // Token-rate path (100-300 events/s): the store append stays
+            // synchronous (cheap); the expensive snapshot + row projection
+            // defers to the frame-aligned flush inside emitStream's 16ms
+            // timer, so it coalesces exactly like the main-agent stream.
+            subagentStreamDirty = true
+            state.emitStream()
+          } else {
+            syncSubagentsNow()
+            state.emit()
+          }
           return
         }
         // Otherwise handle main agent session
@@ -5360,8 +5663,7 @@ ${output}
           } catch {
             // Session discovery is best-effort and must not break the parent turn.
           }
-          state.subagents = subagentStore.snapshot()
-          syncSubagentRows()
+          syncSubagentsNow()
           state.emit()
         })
         const disposeEnd = ctx.on('subagent/end' as any, (info: { id: string; stopReason: string; lastAssistantMessage?: unknown[] }) => {
@@ -5379,8 +5681,7 @@ ${output}
           if (info.stopReason === 'completed') subagentStore.onCompleted(info.id, output, info.stopReason)
           else if (info.stopReason === 'cancelled' || info.stopReason === 'aborted') subagentStore.onCancelled(info.id, info.stopReason, output)
           else subagentStore.onFailed(info.id, info.stopReason || 'Unknown error')
-          state.subagents = subagentStore.snapshot()
-          syncSubagentRows()
+          syncSubagentsNow()
           state.emit()
         })
         return () => {
