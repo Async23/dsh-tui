@@ -140,6 +140,7 @@ export function MessageList({
   onUnseenCount,
   failureHintRowId,
   failureHint,
+  onOpenSubagent,
 }: {
   rows: readonly ChatRow[]
   expanded: boolean
@@ -181,6 +182,8 @@ export function MessageList({
   failureHintRowId?: number | null
   /** Footnote text, e.g. `ctrl+t for the full trajectory`. */
   failureHint?: string
+  /** 打开子代理详情场景（transcript 内点击子代理卡）。 */
+  onOpenSubagent?: (agentId: string) => void
 }) {
   const hiddenCount = rows.length - MAX_RENDERED_ROWS
   // The thinking filter runs BEFORE virtualization so window indices line up.
@@ -611,6 +614,7 @@ export function MessageList({
               toolDurationMs={tool?.durationMs}
               subagent={subagent}
               onToggleRow={onToggleRow}
+              onOpenSubagent={onOpenSubagent}
               setRowRef={setRowRef}
             />
           )
@@ -671,6 +675,7 @@ type MemoRowProps = {
   // the row ref itself, so a plain ref compare stays correct).
   subagent: SubagentRow | undefined
   onToggleRow: (rowId: number) => void
+  onOpenSubagent: ((agentId: string) => void) | undefined
   setRowRef: (rowId: number, el: DOMElement | null) => void
 }
 
@@ -724,6 +729,7 @@ function TranscriptRow({
   toolDurationMs,
   subagent,
   onToggleRow,
+  onOpenSubagent,
   setRowRef,
 }: MemoRowProps): React.ReactNode {
   const ref = React.useCallback(
@@ -732,15 +738,20 @@ function TranscriptRow({
     },
     [setRowRef, rowId],
   )
-  // 点击折叠只保留在工具卡：纯文本/思考/摘要行的折叠切换对鼠标用户没有
-  // 价值（用户反馈：hover 变色碍眼、点击无用），转录区的鼠标职责是选字；
-  // 工具卡的 "(ctrl+o to expand)" 提示与完整输出展开是真实交互。
-  const toolOnClick = React.useCallback((event: ClickEvent): void => {
-    // 全宽行右侧的空白（屏幕缓冲未写入单元格）不触发折叠——点击空白
-    // 想选字/拖拽时不再误触展开/收起（审计 C-03/cellIsBlank 零消费）。
+  // 可折叠行（工具卡/思考/compact 摘要）共用：点击切换展开，全宽行右侧
+  // 空白（屏幕缓冲未写入单元格）不触发——点击空白想选字/拖拽时不再误触
+  // 展开/收起（审计 C-03/cellIsBlank 零消费）。纯文本行（user/assistant）
+  // 保持不可点：转录是阅读区（用户反馈），折叠语义留给带视觉指示的行。
+  const foldOnClick = React.useCallback((event: ClickEvent): void => {
     if (event.cellIsBlank) return
     onToggleRow(rowId)
   }, [onToggleRow, rowId])
+  // 子代理卡：点击打开详情场景（不是折叠）。
+  const openSubagent = React.useCallback(() => {
+    if (subagent !== undefined) onOpenSubagent?.(subagent.agentId)
+  }, [onOpenSubagent, subagent])
+  // compact 摘要折叠行 hover 轻指示（∴ 提亮，不刷背景）。
+  const [compactHovered, setCompactHovered] = useState(false)
 
   switch (kind) {
     case 'user':
@@ -817,6 +828,7 @@ function TranscriptRow({
             verbose={isExpanded || expanded || streaming}
             durationMs={durationMs}
             isSelected={isSelected}
+            onClick={foldOnClick}
           />
         </Box>
       )
@@ -857,7 +869,7 @@ function TranscriptRow({
             footnote={toolFootnote}
             diffLayout={diffLayout}
             toolBackground={toolBackground}
-            onClick={toolOnClick}
+            onClick={foldOnClick}
           />
         </Box>
       )
@@ -889,20 +901,24 @@ function TranscriptRow({
       )
     case 'compact':
       // The post-compaction summary defaults to a folded one-liner with a
-      // text preview; Ctrl+O (global) or message-selection Enter reveals
-      // the full summary.
+      // text preview; Ctrl+O (global), message-selection Enter, or a click
+      // reveals the full summary.
       return (
         <Box
           marginTop={addMargin ? 1 : 0}
           paddingLeft={2}
           backgroundColor={background}
           ref={ref}
+          onClick={foldOnClick}
+          onMouseEnter={() => setCompactHovered(true)}
+          onMouseLeave={() => setCompactHovered(false)}
         >
           {expanded || isExpanded ? (
             <Text dimColor>{text}</Text>
           ) : (
-            <Text dimColor italic>
-              ∴ {t('compact-summary-folded')} · {compactPreview(text)}{' '}
+            <Text dimColor italic color={compactHovered ? 'text' : undefined}>
+              <Text color={compactHovered ? 'text' : undefined}>∴</Text>
+              {' '}{t('compact-summary-folded')} · {compactPreview(text)}{' '}
               {t('hint-expand-ctrl-o')}
             </Text>
           )}
@@ -917,6 +933,7 @@ function TranscriptRow({
             addMargin={addMargin}
             activityFrames={activityFrames}
             isExpanded={isExpanded}
+            onClick={openSubagent}
           />
         </Box>
       )

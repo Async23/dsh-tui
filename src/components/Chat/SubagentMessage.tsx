@@ -57,7 +57,7 @@ function clipLine(text: string, maxWidth: number): string {
  * working-activity preset (`/activity`), so the indicator follows the same
  * setting as the main spinner.
  */
-export function SubagentMessage({ subagent, addMargin, activityFrames }: {
+export function SubagentMessage({ subagent, addMargin, activityFrames, onClick }: {
   subagent: SubagentRow
   addMargin: boolean
   activityFrames?: string
@@ -72,6 +72,8 @@ export function SubagentMessage({ subagent, addMargin, activityFrames }: {
   const [viewportRef, time] = useAnimationFrame(settled ? null : 120)
   const { columns } = useTerminalSize()
   const info = status(subagent)
+  const [hovered, setHovered] = React.useState(false)
+  const clickable = onClick !== undefined
   const elapsed = subagent.completedAt ? subagent.durationMs : Date.now() - subagent.startedAt
   const lastRunning = [...subagent.toolCalls].reverse().find(tool => tool.status === 'running')
   const previousDone = lastRunning
@@ -82,12 +84,20 @@ export function SubagentMessage({ subagent, addMargin, activityFrames }: {
   const runningGlyph = preset.frames[Math.floor(time / preset.intervalMs) % preset.frames.length] ?? '·'
   const rowWidth = Math.max(20, (columns ?? 80) - WATERFALL_GUTTER)
 
-  // 转录内子代理卡不再挂点击折叠（用户反馈：行点击无用）——鼠标职责是
-  // 选字；详细输出走 dashboard / Ctrl+O。
-  return <Box flexDirection="column" marginTop={addMargin ? 1 : 0} paddingLeft={2} ref={viewportRef}>
+  // 点击打开详情场景；hover 不刷整行背景（转录视觉保持安静），只把状态
+  // glyph 提亮为品牌色作为可点指示。
+  return <Box
+    flexDirection="column"
+    marginTop={addMargin ? 1 : 0}
+    paddingLeft={2}
+    ref={viewportRef}
+    onClick={onClick}
+    onMouseEnter={clickable ? () => setHovered(true) : undefined}
+    onMouseLeave={clickable ? () => setHovered(false) : undefined}
+  >
     <Box flexDirection="row" gap={1}>
-      <Text color={info.color}>{settled ? info.glyph : ` ${runningGlyph}`}</Text>
-      <Text bold>{`${t('subagent-card-prefix')}${subagent.description}`}</Text>
+      <Text color={hovered && clickable ? 'claude' : info.color}>{settled ? info.glyph : ` ${runningGlyph}`}</Text>
+      <Text bold color={hovered && clickable ? 'claude' : undefined}>{`${t('subagent-card-prefix')}${subagent.description}`}</Text>
       <Text dimColor>·</Text><Text>{subagent.model ?? subagent.provider ?? 'default'}</Text>
       {subagent.effort && <><Text dimColor>·</Text><Text dimColor>{subagent.effort}</Text></>}
       <Text dimColor>·</Text><Text dimColor>{duration(elapsed)}</Text>

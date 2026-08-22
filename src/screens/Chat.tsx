@@ -2456,6 +2456,7 @@ export function Chat({
           forceMountRowId={forceMountRowId}
           newSinceRowId={isSticky ? null : lastSeenRowIdRef.current}
           onUnseenCount={setUnseenCount}
+          onOpenSubagent={(agentId) => setSubagentDetailId(agentId)}
         />
       </ScrollBox>
       {/* Bottom chrome (pill, spinners, dialogs, prompt, statusline): never

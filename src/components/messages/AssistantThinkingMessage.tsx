@@ -87,6 +87,12 @@ export function AssistantThinkingMessage({
   const pulse = (Math.sin(frame * 0.9) + 1) / 2
   const pulseColor = interpolateColor(BRAND, ICE, pulse)
   const frameText = THINKING_SPINNER_FRAMES[frame % THINKING_SPINNER_FRAMES.length]!
+  // Hover 轻指示：可点击折叠时折叠头从 dim 提亮为正常色（不刷整行背景，
+  // 转录视觉保持安静）。
+  const [hovered, setHovered] = React.useState(false)
+  const hoverProps = onClick !== undefined
+    ? { onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) }
+    : {}
   const header =
     streaming ? (
       <Box flexDirection="row">
@@ -94,7 +100,7 @@ export function AssistantThinkingMessage({
         <Text dimColor italic>{` ${label}`}</Text>
       </Box>
     ) : (
-      <Text dimColor italic>{`${minimal ? '*' : THINKING_SETTLED_MARKER} ${label}`}</Text>
+      <Text italic dimColor={!hovered} color={hovered ? 'text' : undefined}>{`${minimal ? '*' : THINKING_SETTLED_MARKER} ${label}`}</Text>
     )
 
   if (preview) {
@@ -120,6 +126,7 @@ export function AssistantThinkingMessage({
         marginTop={addMargin ? 1 : 0}
         backgroundColor={isSelected ? 'messageActionsBackground' : undefined}
         onClick={onClick}
+        {...hoverProps}
       >
         {header}
         <Box
@@ -157,6 +164,7 @@ export function AssistantThinkingMessage({
         marginTop={addMargin ? 1 : 0}
         backgroundColor={isSelected ? 'messageActionsBackground' : undefined}
         onClick={onClick}
+        {...hoverProps}
       >
         {header}
       </Box>
@@ -171,6 +179,7 @@ export function AssistantThinkingMessage({
       width="100%"
       backgroundColor={isSelected ? 'messageActionsBackground' : undefined}
       onClick={onClick}
+      {...hoverProps}
     >
       {header}
       <Box paddingLeft={2}>
