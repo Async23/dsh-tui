@@ -131,6 +131,10 @@ type Props = {
 	// fullscreen) re-enters alt-screen + mouse tracking. Idempotent on the
 	// terminal side. Optional so testing.tsx doesn't need to stub it.
 	readonly onStdinResume?: () => void;
+	// Called on DECSET-1004 focus events. Ink probes the alt-screen/mouse
+	// mode state on refocus — the moment a conpty-side mode reset (DPI
+	// change, renderer restart) becomes observable — and self-heals.
+	readonly onTerminalFocus?: (focused: boolean) => void;
 	// Receives the declared native-cursor position from useDeclaredCursor
 	// so ink.tsx can park the terminal cursor there after each frame.
 	// Enables IME composition at the input caret and lets screen readers /
@@ -676,6 +680,10 @@ function processKeysInBatch(
 		// Handle terminal focus events (DECSET 1004)
 		if (sequence === FOCUS_IN) {
 			app.handleTerminalFocus(true);
+			// Refocus is the first observable moment after a terminal-side
+			// mode reset (conpty drops 1049/mouse on DPI moves, renderer
+			// restarts, window snapping): probe and self-heal.
+			app.props.onTerminalFocus?.(true);
 			const event = new TerminalFocusEvent("terminalfocus");
 			app.internal_eventEmitter.emit("terminalfocus", event);
 			continue;

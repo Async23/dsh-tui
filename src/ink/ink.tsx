@@ -40,6 +40,7 @@ import { isDecstbmSafe, SYNC_OUTPUT_SUPPORTED, supportsExtendedKeys, supportsWin
 import { CURSOR_HOME, cursorMove, cursorPosition, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE, ENABLE_KITTY_KEYBOARD, ENABLE_MODIFY_OTHER_KEYS, ENABLE_WIN32_INPUT_MODE, ERASE_SCREEN, ERASE_SCROLLBACK, SGR_RESET } from './termio/csi.js';
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, ENTER_ALT_SCREEN, EXIT_ALT_SCREEN, SHOW_CURSOR } from './termio/dec.js';
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, setClipboard, supportsTabStatus, wrapForMultiplexer } from './termio/osc.js';
+import { decrqm } from './terminal-querier.js';
 import { TerminalWriteProvider } from './useTerminalNotification.js';
 
 // Alt-screen: renderer.ts sets cursor.visible = !isTTY || screen.height===0,
@@ -400,9 +401,12 @@ export default class Ink {
     // doesn't exit alt-screen. Do NOT write ERASE_SCREEN: render() below
     // can take ~80ms; erasing first leaves the screen blank that whole time.
     if (this.altScreenActive && !this.isPaused && this.options.stdout.isTTY) {
-      if (this.altScreenMouseTracking) {
-        this.options.stdout.write(ENABLE_MOUSE_TRACKING);
-      }
+      // Blind mouse re-assert + 1049 probe: conpty resets modes on resize
+      // too, and a dropped 1049 means every subsequent frame paints onto
+      // the MAIN screen (looks like the app spontaneously exited
+      // fullscreen). The probe's re-entry is gated on a positive DECRPM
+      // "reset" answer, so this stays inert on healthy terminals.
+      this.probeAltScreenHealth();
       this.resetFramesForAltScreen();
       this.needsEraseBeforePaint = true;
     }
@@ -1161,10 +1165,10 @@ export default class Ink {
       this.renderNow();
       return;
     }
-    // Mouse tracking — idempotent, safe to re-assert on every stdin gap.
-    if (this.altScreenMouseTracking) {
-      this.options.stdout.write(ENABLE_MOUSE_TRACKING);
-    }
+    // Mouse tracking + alt-screen health — the probe re-asserts mouse
+    // blindly (idempotent) and re-enters alt only if the terminal answers
+    // DECRPM with "1049 reset".
+    this.probeAltScreenHealth();
     // Alt-screen re-entry — destructive (ERASE_SCREEN). Only for callers that
     // have a strong signal the terminal actually dropped mode 1049.
     if (includeAltScreen) {
@@ -1270,6 +1274,43 @@ export default class Ink {
   drainStdin(): void {
     drainStdin(this.options.stdin);
   }
+
+  /**
+   * Self-heal after a terminal-side mode reset. Windows conpty drops DEC
+   * private modes on DPI changes, window moves between monitors and renderer
+   * restarts — the user sees the app "exit fullscreen" with a dead mouse
+   * while altScreenActive still claims we are in alt. Two layers:
+   *
+   * 1. Blind, idempotent mouse-tracking re-assert (covers the mode reset
+   *    without a round trip; ~30 bytes).
+   * 2. DECRQM probe of mode 1049. Re-entry (destructive: ERASE) happens
+   *    ONLY on a positive "reset" answer, so iTerm2's
+   *    enter-clears-when-already-in-alt quirk can never fire on a healthy
+   *    screen, and terminals that ignore DECRQM stay inert.
+   */
+  probeAltScreenHealth = (): void => {
+    if (!this.options.stdout.isTTY || this.isPaused || !this.altScreenActive) return;
+    if (this.altScreenMouseTracking) {
+      this.options.stdout.write(ENABLE_MOUSE_TRACKING);
+    }
+    const querier = this.app?.querier;
+    if (querier === undefined) return;
+    void Promise.all([querier.send(decrqm(1049)), querier.flush()]).then(([reply]) => {
+      // DECRPM status: 1/3 = set, 2/4 = reset, 0/undefined = unknown.
+      // Heal only on a POSITIVE reset — an unanswered probe must not
+      // trigger the destructive re-entry.
+      if (reply !== undefined && (reply.status === 2 || reply.status === 4)) {
+        this.reenterAltScreen();
+      }
+    }).catch(() => {
+      /* probe is best-effort; the next trigger retries */
+    });
+  };
+
+  /** Refocus = first observable moment after a conpty-side mode reset. */
+  handleTerminalFocusProbe = (focused: boolean): void => {
+    if (focused) this.probeAltScreenHealth();
+  };
 
   /**
    * Re-enter alt-screen, clear, home, re-enable mouse tracking, and reset
@@ -1804,7 +1845,7 @@ export default class Ink {
   }
   render(node: ReactNode): void {
     this.currentNode = node;
-    const tree = <App ref={this.setAppRef} stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} onWheelAt={this.dispatchWheelAt} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
+    const tree = <App ref={this.setAppRef} stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} onWheelAt={this.dispatchWheelAt} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onTerminalFocus={this.handleTerminalFocusProbe} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
         <TerminalWriteProvider value={this.writeRaw}>
           {node}
         </TerminalWriteProvider>
