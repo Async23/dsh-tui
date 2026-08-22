@@ -1204,6 +1204,11 @@ export function PromptInput({
             columns={columns}
             query={mention?.query ?? ''}
             accent={promptAccent}
+            // 点击行 = 接受该项（与 Enter 同路径）
+            onPick={(index) => {
+              const file = fileMatches[index]
+              if (file) acceptFile(file)
+            }}
           />
         )}
         {overlayOpen && (
@@ -1213,6 +1218,11 @@ export function PromptInput({
             columns={columns}
             query={value}
             accent={promptAccent}
+            // 点击行 = 运行该命令（与 Enter 同路径）
+            onPick={(index) => {
+              const command = suggestions[index]
+              if (command) tryRunCommand(command.commandLine)
+            }}
           />
         )}
       </OverlayAbove>

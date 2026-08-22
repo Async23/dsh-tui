@@ -29,6 +29,7 @@ export function CommandSuggestions({
   columns,
   query = '',
   accent,
+  onPick,
 }: {
   commands: readonly (LocalCommand & { descriptionKey?: string })[]
   selectedIndex: number
@@ -36,6 +37,9 @@ export function CommandSuggestions({
   /** 原始 `/…` 输入；其最后一段 token 用于名字前缀高亮。 */
   query?: string
   accent?: 'promptBorder' | 'planMode'
+  /** 鼠标点击行（fullscreen）：上报过滤后列表的绝对索引（与键盘
+   *  selectedIndex 同一索引空间），接受路径由 PromptInput 复用。 */
+  onPick?: (index: number) => void
 }): React.ReactNode {
   if (commands.length === 0) return null
 
@@ -79,6 +83,7 @@ export function CommandSuggestions({
       columns={columns}
       accent={accent}
       footer={footer}
+      onRowPick={onPick ? index => onPick(startIndex + index) : undefined}
       rows={visible.map(command => {
         const isSelected = command.name === commands[selectedIndex]?.name
         const tagText = command.tag ? `[${command.tag}] ` : ''
