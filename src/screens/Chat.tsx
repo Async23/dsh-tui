@@ -27,7 +27,9 @@ import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
 import { LogoHeader, MessageList } from '../components/MessageList.js'
 import { TimelineRail } from '../components/TimelineRail.js'
+import { ScrollbarGutter } from '../components/ScrollbarGutter.js'
 import type { TimelineSnapshot } from '../ink/timeline-rail.js'
+import { normalizeScrollGutter } from '../tuiDisplayPrefs.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { PromptInput, type PromptController } from '../components/PromptInput.js'
 import { GoalTodoPanel } from '../components/GoalTodoPanel.js'
@@ -1612,6 +1614,18 @@ export function Chat({
     }
     setForceMountRowId(rowId)
   }
+  /**
+   * Reveal-and-seek for a row folded behind the recent-rows window (the
+   * rail's tick for an old turn, the doc's revealAndSeekRow): expand the
+   * fold first, then the ordinary seek takes over — the completion effect
+   * below force-mounts the row and scrollToElement lands it once its ref
+   * (and Yoga top) exist. The fold toggle is idempotent, so calling this
+   * for an already-revealed row is harmless.
+   */
+  const revealAndSeekRow = (rowId: number): void => {
+    if (!showAllMessages) setShowAllMessages(true)
+    seekRow(rowId)
+  }
   React.useLayoutEffect(() => {
     if (forceMountRowId === null) return
     const el = rowRefsRef.current.get(forceMountRowId)
@@ -2521,15 +2535,30 @@ export function Chat({
           onOpenSubagent={(agentId) => setSubagentDetailId(agentId)}
         />
         </ScrollBox>
-        <TimelineRail
-          handle={handle}
-          turns={timeline.turns}
-          activeId={timeline.activeId}
-          upId={timeline.upId}
-          downId={timeline.downId}
-          terminalWidth={terminalColumns}
-          hoverEnabled={!promptSelectionActive}
-        />
+        {(() => {
+          // Gutter mode (settings `dsh-tui.scrollGutter`): the timeline
+          // rail (default), the proportional scrollbar, or nothing. The
+          // slot keeps its 2 columns in both rendered modes (Qwen's
+          // permanent-gutter rule — an appearing/disappearing gutter
+          // changes the transcript width and rewraps everything).
+          const gutter = normalizeScrollGutter(channel.scrollGutter)
+          if (gutter === 'hidden') return null
+          if (gutter === 'scrollbar') {
+            return <ScrollbarGutter handle={handle} terminalWidth={terminalColumns} />
+          }
+          return (
+            <TimelineRail
+              handle={handle}
+              turns={timeline.turns}
+              activeId={timeline.activeId}
+              upId={timeline.upId}
+              downId={timeline.downId}
+              terminalWidth={terminalColumns}
+              hoverEnabled={!promptSelectionActive}
+              onRevealTurn={revealAndSeekRow}
+            />
+          )
+        })()}
       </Box>
       {/* Bottom chrome (pill, spinners, dialogs, prompt, statusline): never
           let flex shrink squeeze these fixed-height rows — the ScrollBox

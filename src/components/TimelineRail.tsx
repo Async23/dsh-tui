@@ -61,6 +61,7 @@ export function TimelineRail({
   downId,
   terminalWidth,
   hoverEnabled,
+  onRevealTurn,
 }: {
   handle: ScrollBoxHandle | null
   /** Turns in conversation order (MessageList's measured snapshot). */
@@ -76,6 +77,13 @@ export function TimelineRail({
   /** False while a modal overlay owns the screen — suppress the hover
    *  card (the rail itself stays, but stops narrating). */
   hoverEnabled: boolean
+  /**
+   * Reveal-and-seek for FOLDED turns (older than the recent-rows window):
+   * Chat expands the fold (showAll) and seeks through the force-mount
+   * path — the row's top is unknown until it mounts, so the coordinate
+   * jump below does not apply to it.
+   */
+  onRevealTurn: (rowId: number) => void
 }): React.ReactNode {
   const [, setTick] = React.useState(0)
   const [hover, setHover] = React.useState<Hover>(null)
@@ -125,9 +133,14 @@ export function TimelineRail({
   // prompt exactly at the viewport top; the renderer clamps unreachable
   // tail tops to maxScroll (their turns stay on screen, just short of
   // owning the top row — and ▼ never names them, see timeline-rail.ts).
+  // FOLDDED turns have no measured top (-1): their click (and ▲ naming
+  // one) routes through onRevealTurn instead — expand the fold, then the
+  // existing force-mount seek lands the row once it measures.
   const jumpToIndex = (index: number) => {
     const turn = turns[index]
-    if (turn) handle.scrollTo(turn.top)
+    if (!turn) return
+    if (turn.folded) onRevealTurn(turn.id)
+    else handle.scrollTo(turn.top)
   }
   const jumpToId = (id: number | null) => {
     if (id === null) return

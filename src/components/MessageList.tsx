@@ -583,21 +583,42 @@ export function MessageList({
     if (previewCache.size > 2000) previewCache.clear()
     const viewTop = scrollTop + pending
     const maxScroll = Math.max(0, (scrollHandle?.getScrollHeight() ?? 0) - viewport)
-    let index = 0
+    // Measured tops for turns INSIDE the fold window (user rows are never
+    // filtered by the thinking toggle, so a user row absent from
+    // visibleRows is exactly a folded one).
+    const measuredTops = new Map<number, number>()
     for (let i = 0; i < visibleRows.length; i++) {
       const row = visibleRows[i]!
       if (row.kind !== 'user') continue
-      const textTop = base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0)
+      measuredTops.set(row.id, base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0))
+    }
+    // Walk ALL rows (not the fold window): the rail must cover the whole
+    // conversation — a tool-heavy session packs 300 rows into a handful
+    // of turns, and window-only turns made the rail show "2-3 nodes".
+    // Folded turns carry folded:true + top:-1; their tops are unknown
+    // until revealed (they are all ABOVE the viewport, so active/down
+    // over measured turns is unaffected; ▲ may name a folded turn — its
+    // click goes through the reveal path, not scrollTo).
+    let index = 0
+    for (const row of rows) {
+      if (row.kind !== 'user') continue
       let cached = previewCache.get(row.id)
       if (cached === undefined || cached.len !== row.text.length) {
         cached = { len: row.text.length, preview: clipPreview(row.text) }
         previewCache.set(row.id, cached)
       }
-      timelineTurns.push({ id: row.id, top: textTop, preview: cached.preview })
-      if (textTop <= viewTop) activeTurnIndex = index
-      if (textTop < viewTop) upTurnIndex = index
-      if (downTurnIndex === null && textTop > viewTop && textTop <= maxScroll) {
-        downTurnIndex = index
+      const textTop = measuredTops.get(row.id)
+      if (textTop !== undefined) {
+        timelineTurns.push({ id: row.id, top: textTop, preview: cached.preview })
+        if (textTop <= viewTop) activeTurnIndex = index
+        if (textTop < viewTop) upTurnIndex = index
+        if (downTurnIndex === null && textTop > viewTop && textTop <= maxScroll) {
+          downTurnIndex = index
+        }
+      } else {
+        timelineTurns.push({ id: row.id, top: -1, preview: cached.preview, folded: true })
+        // Above the fold ⇒ strictly above the viewport: a legal ▲ target.
+        upTurnIndex = index
       }
       index++
     }
@@ -611,8 +632,11 @@ export function MessageList({
   }
   const lastTimelineReportRef = React.useRef('')
   React.useEffect(() => {
+    // Preview text never mutates for a given row id, so ids+tops+fold
+    // flags fully determine the snapshot — skipping previews keeps the
+    // per-frame signature O(turns) small integers, not O(preview chars).
     const sig =
-      timelineTurns.map(t => `${t.id}:${t.top}:${t.preview}`).join('|') +
+      timelineTurns.map(t => `${t.id}:${t.top}:${t.folded ? 1 : 0}`).join('|') +
       `#a${timeline.activeId}#u${timeline.upId}#d${timeline.downId}`
     if (sig !== lastTimelineReportRef.current) {
       lastTimelineReportRef.current = sig
