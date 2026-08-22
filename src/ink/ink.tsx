@@ -20,7 +20,7 @@ import { beginGeometryFrame, endGeometryFrame, GEOMETRY_TRACE_ENABLED, noteFrame
 import { KeyboardEvent } from './events/keyboard-event.js';
 import { FocusManager } from './focus.js';
 import { emptyFrame, type Frame, type FrameEvent } from './frame.js';
-import { dispatchClick, dispatchHover, dispatchWheel } from './hit-test.js';
+import { dispatchClick, dispatchHover, dispatchWheel, clearHovered } from './hit-test.js';
 import { logMouseDebug } from '../utils/debug.js';
 import instances from './instances.js';
 import { suppressInputFor } from './input-suppression.js';
@@ -357,11 +357,13 @@ export default class Ink {
     this.terminalRows = rows;
     this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows);
     // Reflow moved every rect the pointer state was tracking: hover sets
-    // and the multi-click chain reference pre-resize geometry. Drop them
-    // so a post-resize click is a fresh single click and hover re-fires
+    // and the multi-click chain reference pre-resize geometry. Fire the
+    // leave handlers FIRST — a bare clear() strands the crossed rows'
+    // hovered=true React state forever (stuck highlights) — then drop the
+    // set so a post-resize click is a fresh single click and hover re-fires
     // from scratch. (Coordinates in in-flight events are clamped at the
     // App boundary against the new dimensions.)
-    this.hoveredNodes.clear();
+    clearHovered(this.hoveredNodes);
     this.app?.resetPointerState();
 
     // Invalidate every render that was scheduled against the OLD size: a
@@ -1072,10 +1074,11 @@ export default class Ink {
     this.altScreenMouseTracking = active && mouseTracking;
     // Screen geometry/context just changed wholesale: hover sets, the
     // multi-click chain, and any pending hyperlink open belong to the old
-    // screen. Drop them so the new screen starts from a clean pointer
-    // state (a stale clickCount would turn the first click into a
-    // double-click; stale hovered nodes would suppress real onMouseEnter).
-    this.hoveredNodes.clear();
+    // screen. Fire leave handlers before dropping the set — a bare clear()
+    // strands the old screen's rows with hovered=true forever (stuck
+    // highlights). Stale clickCount would turn the first click into a
+    // double-click; stale hovered nodes would suppress real onMouseEnter.
+    clearHovered(this.hoveredNodes);
     this.app?.resetPointerState();
     if (active) {
       this.mainScreenFrameState = {

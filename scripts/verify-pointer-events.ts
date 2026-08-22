@@ -20,7 +20,7 @@ import {
 } from '../src/ink/parse-keypress.js'
 import { ClickEvent } from '../src/ink/events/click-event.js'
 import { PointerEvent } from '../src/ink/events/pointer-event.js'
-import { dispatchClick, dispatchHover, dispatchWheel, hitTest } from '../src/ink/hit-test.js'
+import { dispatchClick, dispatchHover, dispatchWheel, clearHovered, hitTest } from '../src/ink/hit-test.js'
 import { nodeCache } from '../src/ink/node-cache.js'
 import type { DOMElement } from '../src/ink/dom.js'
 import { createNode } from '../src/ink/dom.js'
@@ -188,6 +188,35 @@ function makeTree(): { root: DOMElement; parent: DOMElement; child: DOMElement }
   enterArg = undefined
   dispatchHover(root, 1, 1, hovered) // outside parent → leave
   check('hover leave fired', enterArg !== undefined && !hovered.has(parent))
+}
+
+{
+  // clearHovered（resize / 换屏时的指针态重置）：必须先派发 leave 再清空，
+  // 否则被划过的行 hovered=true 永远滞留（用户报告：resume 页高亮不消失）
+  const { root } = makeTree()
+  const rowA = createNode('ink-box')
+  const rowB = createNode('ink-box')
+  root.childNodes.push(rowA, rowB)
+  rowA.parentNode = root
+  rowB.parentNode = root
+  nodeCache.set(rowA, { x: 0, y: 2, width: 20, height: 1 })
+  nodeCache.set(rowB, { x: 0, y: 3, width: 20, height: 1 })
+  let aLeft = 0
+  let bLeft = 0
+  rowA._eventHandlers = { onMouseLeave: () => { aLeft++ } }
+  rowB._eventHandlers = { onMouseLeave: () => { bLeft++ } }
+  const hovered = new Set<DOMElement>()
+  dispatchHover(root, 4, 2, hovered)
+  dispatchHover(root, 4, 3, hovered)
+  check('moving between rows leaves the old row', aLeft === 1 && hovered.has(rowB) && !hovered.has(rowA))
+  clearHovered(hovered)
+  check('clearHovered fires leave on every tracked row', aLeft === 1 && bLeft === 1, `a=${aLeft} b=${bLeft}`)
+  check('clearHovered empties the set', hovered.size === 0)
+  // 再移动到新行：旧行不再重放 leave（恰好一次），新行正常 enter
+  let bEnter = 0
+  rowB._eventHandlers = { onMouseEnter: () => { bEnter++ }, onMouseLeave: () => { bLeft++ } }
+  dispatchHover(root, 4, 3, hovered)
+  check('post-clear motion re-enters cleanly', bEnter === 1 && bLeft === 1 && hovered.has(rowB))
 }
 
 // ── 4. App 边界防护（最小 fake app）─────────────────────────

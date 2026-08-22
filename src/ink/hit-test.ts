@@ -154,6 +154,45 @@ export function dispatchClick(
 }
 
 /**
+ * Fire onMouseLeave on every tracked hover node, then empty the set.
+ *
+ * The pointer-state resets (alt-screen swap, terminal resize) drop the hover
+ * set because the geometry it was computed against is gone. But the React
+ * components behind those nodes still hold their `hovered=true` state: a bare
+ * `set.clear()` never tells them the pointer "left", so every row crossed
+ * before the reset keeps its highlight forever — the next motion event only
+ * fires enter on the new row (the old nodes are no longer in the set, so no
+ * diff ever produces their leave). Firing leave first is what makes the
+ * reset invisible to the rows.
+ *
+ * @param hovered - the tracked hover set; emptied in place.
+ * @param col - pointer column for the synthetic leave events (-1 = unknown).
+ * @param row - pointer row for the synthetic leave events.
+ */
+export function clearHovered(
+  hovered: Set<DOMElement>,
+  col = -1,
+  row = -1,
+): void {
+  for (const node of hovered) {
+    hovered.delete(node)
+    // Detached nodes (screen already swapped out from under us) can no
+    // longer re-render — skip them; their component state dies with the
+    // subtree anyway.
+    if (!node.parentNode) continue
+    const handler = (node._eventHandlers as EventHandlerProps | undefined)
+      ?.onMouseLeave
+    if (handler) {
+      try {
+        handler(new PointerEvent('hover', col, row, { action: 'move' }))
+      } catch (error) {
+        logError(error)
+      }
+    }
+  }
+}
+
+/**
  * Route a wheel event to the ScrollBox (or any onWheel handler) under the
  * pointer. Dispatches through the shared Dispatcher at continuous priority
  * so the event bubbles from the deepest hit node and React schedules any
