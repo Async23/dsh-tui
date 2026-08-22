@@ -626,6 +626,31 @@ export function Chat({
   }
 
   /**
+   * Run one /workspace menu row (Enter path, shared with the mouse click):
+   * built-ins dispatch locally, extension commands go through the channel.
+   */
+  const runWorkspaceMenuOption = (option: { id: string } | undefined): void => {
+    setWorkspaceMenuOpen(false)
+    if (option === undefined) return
+    if (option.id === 'resume') {
+      openWorkspaceResume()
+    } else if (option.id === 'rename') {
+      channel.notify(t('workspace-rename-usage'))
+    } else if (option.id === 'open') {
+      channel.notify(t('workspace-open-usage'))
+    } else {
+      void channel.runWorkspaceCommand(option.id, '').then((result) => {
+        if (result !== undefined) handleWorkspaceResult(result)
+      }).catch((error: unknown) => {
+        channel.notify(
+          t('workspace-command-failed', { err: error instanceof Error ? error.message : String(error) }),
+          { color: 'error', timeoutMs: 8000 },
+        )
+      })
+    }
+  }
+
+  /**
    * Dispatch a slash command; false lets the input flow to the model.
    * Built-in names run the local switch; anything registered by a DSH
    * plugin (plan/goal/…) dispatches through the command registry, whose
@@ -1855,24 +1880,7 @@ export function Chat({
         setWorkspaceMenuIndex(index => (index >= menu.length - 1 ? 0 : index + 1))
       } else if (plainReturn) {
         const option = menu[workspaceMenuIndex]
-        setWorkspaceMenuOpen(false)
-        if (option === undefined) return
-        if (option.id === 'resume') {
-          openWorkspaceResume()
-        } else if (option.id === 'rename') {
-          channel.notify(t('workspace-rename-usage'))
-        } else if (option.id === 'open') {
-          channel.notify(t('workspace-open-usage'))
-        } else {
-          void channel.runWorkspaceCommand(option.id, '').then((result) => {
-            if (result !== undefined) handleWorkspaceResult(result)
-          }).catch((error: unknown) => {
-            channel.notify(
-              t('workspace-command-failed', { err: error instanceof Error ? error.message : String(error) }),
-              { color: 'error', timeoutMs: 8000 },
-            )
-          })
-        }
+        runWorkspaceMenuOption(option)
       } else if (key.escape) {
         setWorkspaceMenuOpen(false)
       }
@@ -2600,6 +2608,14 @@ export function Chat({
             <ThinkingToggle
               currentValue={thinkingVisible}
               focusIndex={thinkingFocus}
+              onPick={(index) => {
+                // 点击行 = 设焦点 + 应用（与 Enter 同一条路径）
+                const visible = index === 0
+                setThinkingFocus(index)
+                setThinkingVisible(visible)
+                setThinkingOpen(false)
+                channel.notify(t('thinking-toggled', { state: visible ? t('thinking-on') : t('thinking-off') }))
+              }}
             />
           )}
           {workspacePickerOpen && workspaceTargets.length > 0 && (
@@ -2608,12 +2624,27 @@ export function Chat({
                 targets={workspaceTargets}
                 focusIndex={workspaceIndex}
                 currentCwd={channel.cwd}
+                onPick={(index) => {
+                  // 点击行 = 设焦点 + 切换（与 Enter 同一条路径）
+                  const target = workspaceTargets[index]
+                  setWorkspaceIndex(index)
+                  setWorkspacePickerOpen(false)
+                  if (target !== undefined) void channel.switchWorkspace(target)
+                }}
               />
             </Box>
           )}
           {workspaceMenuOpen && (
             <Box flexDirection="column" marginTop={1}>
-              <WorkspaceMenuPicker options={workspaceMenuOptions} focusIndex={workspaceMenuIndex} />
+              <WorkspaceMenuPicker
+                options={workspaceMenuOptions}
+                focusIndex={workspaceMenuIndex}
+                onPick={(index) => {
+                  // 点击行 = 设焦点 + 执行（与 Enter 同一条路径）
+                  setWorkspaceMenuIndex(index)
+                  runWorkspaceMenuOption(workspaceMenuOptions[index])
+                }}
+              />
             </Box>
           )}
           {workspaceFlow !== null && (
@@ -2624,6 +2655,14 @@ export function Chat({
                 focusIndex={workspaceFlowIndex}
                 busy={workspaceFlowBusy}
                 input={workspaceFlowInput}
+                onPick={(index) => {
+                  // 点击行 = 设焦点 + 执行分支（与 Enter 同一条路径）；
+                  // busy/输入态在组件侧禁点
+                  const choice = workspaceFlow.choices[index]
+                  if (choice === undefined) return
+                  setWorkspaceFlowIndex(index)
+                  runWorkspaceFlowAction(signal => choice.choose(signal))
+                }}
               />
             </Box>
           )}
