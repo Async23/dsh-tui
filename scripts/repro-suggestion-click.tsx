@@ -195,6 +195,37 @@ if (inputRowIdx >= 0) {
 }
 await inst2.unmount()
 
+// ═══════════════ 第三幕：命令菜单滚轮选择 ═══════════════
+const term3 = makeTerm()
+const s3 = makeStreams(term3)
+const ch3 = { ...channel, subscribe: (cb: () => void) => { listeners.add(cb); return () => listeners.delete(cb) } }
+const inst3 = await render(
+  <AlternateScreen>
+    <Chat channel={ch3} questionStore={new QuestionStore()} />
+  </AlternateScreen>,
+  { stdout: s3.stdout as any, stdin: s3.stdin as any, stderr: s3.stderr as any, exitOnCtrlC: false, patchConsole: false },
+)
+await sleep(500)
+
+s3.stdin.write('/')
+await sleep(400)
+lines = screenLines(term3)
+const menuIdx = lines.findIndex(l => l.includes('❯ /') || /\s❯\s*\w/.test(l))
+check('菜单出现且指针行可见', menuIdx >= 0, menuIdx >= 0 ? `行${menuIdx}` : '未找到')
+if (menuIdx >= 0) {
+  const pointerBefore = lines[menuIdx]!
+  // 菜单中部滚轮下滚 2 格
+  s3.stdin.write(`\x1b[<65;30;${menuIdx + 2}M`)
+  s3.stdin.write(`\x1b[<65;30;${menuIdx + 2}M`)
+  await sleep(400)
+  lines = screenLines(term3)
+  const pointerAfter = lines.find(l => l.includes('❯')) ?? ''
+  check('滚轮下滚移动选中行（❯ 下移）',
+    pointerAfter.trim() !== pointerBefore.trim() && pointerAfter !== '',
+    `before="${pointerBefore.trim().slice(0, 24)}" after="${pointerAfter.trim().slice(0, 24)}"`)
+}
+await inst3.unmount()
+
 // 诊断：打印本次运行追加的 mouse-debug 日志
 try {
   const fd = readFileSync(mouseLogPath)

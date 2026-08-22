@@ -1226,6 +1226,10 @@ export function PromptInput({
               const file = fileMatches[index]
               if (file) acceptFile(file)
             }}
+            // 滚轮 = 移动选中行（与 ↑/↓ 同路径，窗口跟随）
+            onWheelStep={(step) => {
+              setFileSelected(i => Math.max(0, Math.min(fileMatches.length - 1, i + step)))
+            }}
           />
         )}
         {overlayOpen && (
@@ -1239,6 +1243,10 @@ export function PromptInput({
             onPick={(index) => {
               const command = suggestions[index]
               if (command) tryRunCommand(command.commandLine)
+            }}
+            // 滚轮 = 移动选中行（与 ↑/↓ 同路径，窗口跟随）
+            onWheelStep={(step) => {
+              setSelectedCommand(i => Math.max(0, Math.min(suggestions.length - 1, i + step)))
             }}
           />
         )}
