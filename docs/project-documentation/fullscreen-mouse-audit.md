@@ -324,3 +324,52 @@ hit-test 的 rect 检查天然 miss（点击侧安全）；但**选区侧**：�
 9. **commit 9（P1）**：鼠标坐标越界 clamp（第 7 节）+ 单元测试。
 10. **P2 批次**：C-07/10/11 页签、滑块、补全下拉；M-F3 右键菜单（需先定
     UI 方案）；M-F4/M-F6/M-F7/M-F8/M-F9 需先验证/profile。
+
+## 13. 实施记录（2026-08-22，13 个提交 11ce949..HEAD）
+
+> 按第 12 节路线图实施；每项一个 commit，全量 `pnpm run build`（含
+> verify:build 18 项门禁 + 新增 verify:pointer-events）通过。
+
+**已完成**：
+
+- **事件模型**（11ce949）：PointerEvent 基类（button 原始字节 + shift/alt/
+  ctrl + localCol/localRow）、ClickEvent 继承并规格化按钮位、WheelEvent、
+  handler 注册表挂 onWheel、hover 处理器带事件参数（无参回调向后兼容）、
+  dispatchClick/dispatchHover 逐 handler 错误隔离。
+- **输入管线**（f55ff65）：SGR/X10 滚轮坐标与修饰位保留（ParsedKey.
+  mouseCol/mouseRow）、水平滚轮（wheelleft/wheelright）、X10 点击/拖拽
+  兜底解析（parseX10MouseEvent，X10 无 release 的降级已在注释与文档
+  声明）、handleMouseEvent 入口坐标 clamp、滚轮位置优先路由（App →
+  Ink.dispatchWheelAt → dispatchWheel hit-test 最上层 ScrollBox，命中即
+  吞掉）、ScrollBox 挂 onWheel 走自身 scrollBy 公共路径、alt-screen 进出/
+  resize 时 resetPointerState（清 hover 集/多击链/挂起超链接/收尾中断
+  拖拽）。输入抑制窗口内不路由（防 handoff 回放滚轮片段滚动）。
+- **实例回退**（fc32bfb）：AlternateScreen 多实例回退收紧到单实例场景（F-2）。
+- **浮层滚轮守卫**（2321a7e）：Chat 兜底路径在浮层打开时 yield（M-F2 的
+  picker 穿透部分；位置路由部分在 f55ff65）。
+- **列表能力**（6682029）：ListItem/Select onClick+hover、九个 picker/
+  滑块 onPick、Chat 全部接线（与 Enter 同路径）（C-09/C-10）。
+- **阻断面板**（9509f97）：审批/问卷/计划评审/插件对话框/上下文折叠头/
+  GoalTodo 折叠头（C-13/14/15/16/C-17/C-20）。
+- **转录行**（658225d）：工具卡/streaming 行/子代理卡接线、cellIsBlank
+  空白防误触、AssistantTextMessage hover、load-earlier hover（C-01/02/
+  03/06/C-04）。
+- **回归**（b57eec3）：verify-pointer-events（35 项断言）挂入 build 门禁。
+- **其余 P1/P2**（2f67139/e72319f/93a39f9/ae8725b）：SubagentDetail 页签/
+  interrupt、BtwPanel 复制行、命令/文件补全下拉、Ctrl+R 历史行、/resume
+  会话行（C-07/08/19/11/12/21）。
+
+**明确未做（含理由）**：
+
+- C-05 行点击语义改为聚焦：产品决策，未获用户确认前不改既定交互。
+- C-18 PromptInput click-to-focus：焦点管线改造，收益/风险比低，待需要时做。
+- C-22 SessionBrowser 确认行点击：破坏性操作，键盘 y/n 已足够，防误触。
+- C-23 TrajectoryScene 点击：诊断场景，优先级最低。
+- M-F3 右键菜单 / M-F4 滚轮加速度 / M-F6 hover 节流：需先定 UX 方案或
+  profile 数据（审计原建议保留）。
+- M-F7 hover 事件对象类型已在 handler 层放宽（PointerEvent 参数），Box 的
+  props 类型未动（react-compiler 产物，避免 churn；运行时已传参）。
+- 1003 动态模式 / TerminalModeLease / OSC 52 分块：性能与重构类，需
+  benchmark 与真机验证，本轮范围外。
+- X10 点击的 release 缺失是协议限制：选区经 lost-release 恢复路径收尾，
+  onClick 仍需 SGR（文档已注明）。

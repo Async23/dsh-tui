@@ -157,8 +157,8 @@ export const TIPS: readonly Tip[] = [
   {
     id: 'keys-mouse-click',
     group: 'keys',
-    zh: '单击消息行展开/收起；点链接直接打开浏览器',
-    en: 'Click a message row to expand it; click links to open the browser',
+    zh: '单击消息行/工具卡展开收起；picker、审批面板的行也能直接点',
+    en: 'Click message rows or tool cards to fold them; picker and approval rows are clickable too',
   },
 
   // ── 命令 ──────────────────────────────────────────────────
