@@ -1644,12 +1644,30 @@ export function Chat({
     // Mouse wheel scrolls the transcript even while a question/approval/
     // dialog panel is open — those panels own arrow/Enter/Esc keys, but the
     // transcript above them should still be scrollable in fullscreen mode.
-    // Help is different: its own ScrollBox owns wheel input, so Chat must
-    // yield before stopping propagation or both covered layers would move.
+    //
+    // Wheel routing is position-first: events landing over a ScrollBox
+    // (transcript, help, subagent panels…) are consumed by that box in
+    // App's input batch (onWheelAt) and never reach this branch. What
+    // arrives here is the fallback: wheel over non-scroll areas (prompt,
+    // status bar) or over floating overlays.
+    //   - Help stays yielded: PromptInput's help ScrollBox handles the
+    //     remaining global wheel while help is open (both covered layers
+    //     must not move).
+    //   - Pickers/dialogs are modal: wheel that fell through over them
+    //     must NOT scroll the transcript behind (the audit's
+    //     pass-through gap), so yield like the keyboard guards above.
     // Events only arrive with mouse tracking on; inline mode never sees
     // them, so this is a no-op there.
     if (key.wheelUp || key.wheelDown) {
       if (helpOpen) return
+      const overlayOpen =
+        thinkingOpen || searchOpen || historyOpen || rewindOpen || tipsOpen ||
+        modelPickerOpen || skillsPickerOpen || themePickerOpen ||
+        langPickerOpen || planPickerOpen || permissionPickerOpen ||
+        activityPickerOpen || presetPickerOpen || effortSliderOpen ||
+        workspaceMenuOpen || workspaceFlow !== null ||
+        (workspacePickerOpen && workspaceTargets.length > 0)
+      if (overlayOpen) return
       handle?.scrollBy(key.wheelUp ? -3 : 3)
       event.stopImmediatePropagation()
       return
