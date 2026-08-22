@@ -59,6 +59,7 @@ function layoutSignature(
   columns: number,
   expanded: boolean,
   expandedRows: ReadonlySet<number>,
+  streamFolded: ReadonlySet<number>,
   thinkingVisible: boolean,
   thinkingFold: string,
   diffLayout: string,
@@ -78,8 +79,9 @@ function layoutSignature(
       break
     case 'reasoning':
       // thinkingFold (preview vs full) and the visibility filter change the
-      // folded card's height; streaming shows verbose live.
-      parts.push(row.streaming === true, expanded, expandedRows.has(row.id), thinkingVisible, thinkingFold)
+      // folded card's height; streaming shows verbose live unless the user
+      // clicked it folded (streamFolded collapses to the ticker/header).
+      parts.push(row.streaming === true, expanded, expandedRows.has(row.id), streamFolded.has(row.id), thinkingVisible, thinkingFold)
       break
     case 'tool': {
       const tool = row.tool
@@ -124,6 +126,8 @@ export function MessageList({
   expandedRows,
   selectedId,
   onToggleRow,
+  streamFoldedRows,
+  onToggleStreamFold,
   model,
   diffLayout = 'auto',
   thinkingFold = 'preview',
@@ -147,6 +151,9 @@ export function MessageList({
   expandedRows: ReadonlySet<number>
   selectedId: number | null
   onToggleRow: (rowId: number) => void
+  /** 流式 reasoning 行被用户折叠（点击展开/折叠对流式行同样有效）。 */
+  streamFoldedRows: ReadonlySet<number>
+  onToggleStreamFold: (rowId: number) => void
   model: string
   /** Edit/Write diff presentation preference (forwarded to tool cards). */
   diffLayout?: 'auto' | 'split' | 'unified'
@@ -291,6 +298,7 @@ export function MessageList({
         columns,
         expanded,
         expandedRows,
+        streamFoldedRows,
         thinkingVisible,
         thinkingFold,
         diffLayout,
@@ -614,6 +622,8 @@ export function MessageList({
               toolDurationMs={tool?.durationMs}
               subagent={subagent}
               onToggleRow={onToggleRow}
+              onToggleStreamFold={onToggleStreamFold}
+              streamFolded={streamFoldedRows.has(row.id)}
               onOpenSubagent={onOpenSubagent}
               setRowRef={setRowRef}
             />
@@ -675,6 +685,10 @@ type MemoRowProps = {
   // the row ref itself, so a plain ref compare stays correct).
   subagent: SubagentRow | undefined
   onToggleRow: (rowId: number) => void
+  /** 流式 reasoning 行折叠开关（默认展开 live，点击折叠；落定行用 onToggleRow）。 */
+  onToggleStreamFold: (rowId: number) => void
+  /** 该行是否被用户折叠（仅流式 reasoning 行消费）。 */
+  streamFolded: boolean
   onOpenSubagent: ((agentId: string) => void) | undefined
   setRowRef: (rowId: number, el: DOMElement | null) => void
 }
@@ -729,6 +743,8 @@ function TranscriptRow({
   toolDurationMs,
   subagent,
   onToggleRow,
+  onToggleStreamFold,
+  streamFolded,
   onOpenSubagent,
   setRowRef,
 }: MemoRowProps): React.ReactNode {
@@ -746,6 +762,12 @@ function TranscriptRow({
     if (event.cellIsBlank) return
     onToggleRow(rowId)
   }, [onToggleRow, rowId])
+  // 流式 reasoning 行：点击折叠/展开 live 视图（默认展开，与落定行的
+  // 默认折叠相反——所以走独立开关，落定后语义自动回到 foldOnClick）。
+  const streamFoldOnClick = React.useCallback((event: ClickEvent): void => {
+    if (event.cellIsBlank) return
+    onToggleStreamFold(rowId)
+  }, [onToggleStreamFold, rowId])
   // 子代理卡：点击打开详情场景（不是折叠）。
   const openSubagent = React.useCallback(() => {
     if (subagent !== undefined) onOpenSubagent?.(subagent.agentId)
@@ -818,17 +840,17 @@ function TranscriptRow({
             streaming={streaming}
             preview={
               streaming &&
+              !streamFolded &&
               thinkingFold === 'preview' &&
-              !expanded &&
               !isExpanded
             }
-            // Streaming reasoning shows expanded live, then folds
-            // automatically once the turn settles (unless Ctrl+O or a
-            // single-row expansion keeps it open).
-            verbose={isExpanded || expanded || streaming}
+            // Streaming reasoning shows expanded live (click collapses to the
+            // ticker/header via streamFolded); settled rows keep the
+            // fold-on-settle default and expand via expandedRows/Ctrl+O.
+            verbose={isExpanded || expanded || (streaming && !streamFolded)}
             durationMs={durationMs}
             isSelected={isSelected}
-            onClick={foldOnClick}
+            onClick={streaming ? streamFoldOnClick : foldOnClick}
           />
         </Box>
       )

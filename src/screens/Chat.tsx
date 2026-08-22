@@ -275,6 +275,12 @@ export function Chat({
   const [expandedRows, setExpandedRows] = React.useState<ReadonlySet<number>>(
     () => new Set(),
   )
+  /** 流式 reasoning 行的用户折叠（点击/进入折叠态）。与 expandedRows 分开：
+   *  流式默认展开，用户点一下 = 折叠（preview ticker 或单行头）；落定后
+   *  默认折叠，此集合不再参与——两种默认互不翻转。 */
+  const [streamFoldedRows, setStreamFoldedRows] = React.useState<ReadonlySet<number>>(
+    () => new Set(),
+  )
   const [modelPickerOpen, setModelPickerOpen] = React.useState(false)
   const [models, setModels] = React.useState<readonly LlmModelInfo[]>([])
   const [modelIndex, setModelIndex] = React.useState(0)
@@ -1639,6 +1645,14 @@ export function Chat({
       return next
     })
   }, [])
+  const toggleStreamFolded = React.useCallback((rowId: number) => {
+    setStreamFoldedRows((previous) => {
+      const next = new Set(previous)
+      if (next.has(rowId)) next.delete(rowId)
+      else next.add(rowId)
+      return next
+    })
+  }, [])
   const registerRowRef = React.useCallback((rowId: number, el: DOMElement | null) => {
     if (el) rowRefsRef.current.set(rowId, el)
     else rowRefsRef.current.delete(rowId)
@@ -2450,6 +2464,8 @@ export function Chat({
           expandedRows={expandedRows}
           selectedId={selectionActive ? selectedId : null}
           onToggleRow={toggleRowExpanded}
+          streamFoldedRows={streamFoldedRows}
+          onToggleStreamFold={toggleStreamFolded}
           model={channel.model}
           diffLayout={channel.diffLayout}
           thinkingFold={channel.thinkingFold}

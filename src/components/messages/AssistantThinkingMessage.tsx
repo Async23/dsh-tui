@@ -97,7 +97,8 @@ export function AssistantThinkingMessage({
     streaming ? (
       <Box flexDirection="row">
         <Text>{minimal ? frameText : chalk.rgb(pulseColor.r, pulseColor.g, pulseColor.b).bold(frameText)}</Text>
-        <Text dimColor italic>{` ${label}`}</Text>
+        {/* 流式行同样可点击折叠（hover 提亮标签给出指示，与落定态一致） */}
+        <Text dimColor={!hovered} color={hovered ? 'text' : undefined} italic>{` ${label}`}</Text>
       </Box>
     ) : (
       <Text italic dimColor={!hovered} color={hovered ? 'text' : undefined}>{`${minimal ? '*' : THINKING_SETTLED_MARKER} ${label}`}</Text>
