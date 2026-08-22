@@ -1852,6 +1852,9 @@ export default class Ink {
   // cascades through useContext → <AlternateScreen>'s useLayoutEffect dep
   // array → spurious exit+re-enter of the alt screen on every SIGWINCH.
   private writeRaw(data: string): void {
+    if (data.includes('\x1b[?1049')) {
+      logMouseDebug('stdout:1049', { len: data.length, head: data.slice(0, 60) });
+    }
     this.options.stdout.write(data);
   }
   private setCursorDeclaration: CursorDeclarationSetter = (decl, clearIfNode) => {

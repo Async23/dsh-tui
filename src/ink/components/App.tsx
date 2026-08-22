@@ -246,6 +246,9 @@ export default class App extends PureComponent<Props, State> {
 	// <AlternateScreen>'s insertion effect every frame, flapping the alt
 	// screen on/off.
 	writeRaw = (data: string): void => {
+		if (data.includes("\x1b[?1049")) {
+			logMouseDebug("stdout:1049", { len: data.length, head: data.slice(0, 60) });
+		}
 		this.props.stdout.write(data);
 	};
 
@@ -641,6 +644,11 @@ function processKeysInBatch(
 				(item.name === "wheelup" || item.name === "wheeldown")
 			) {
 				logMouseDebug("wheel arrive", { name: item.name });
+			} else if (item.kind === "key") {
+				logMouseDebug("key arrive", {
+					name: item.name,
+					seq: (item.sequence ?? "").slice(0, 10),
+				});
 			}
 		}
 	}

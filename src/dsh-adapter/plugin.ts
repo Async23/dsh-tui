@@ -30,6 +30,7 @@ import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '
 import { DEFAULT_STATUS_BAR, normalizeStatusBar, normalizeToolBackground, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { detectLegacyEnv, migrateLegacyDataDir, RENAMED_ENV } from '../utils/paths.js'
 import { attachHerdrIntegration } from '../herdr.js'
+import { logMouseDebug } from '../utils/debug.js'
 import { Chat } from '../screens/Chat.js'
 import { getHostDialogStore, type TuiDialogRuntime } from './dialogs.js'
 import { getHostStatusStore, type TuiStatusRuntime } from './status.js'
@@ -53,6 +54,20 @@ import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMult
  * `dsh-jsonrpc`: the surrounding `cordis.yml` supplies the agent spine, the
  * LLM adapter, and the tool plugins.
  */
+/**
+ * Fullscreen decision latched across host recomposes. The launcher disposes
+ * and re-mounts the plugin tree (teardown → apply() runs again) — a fresh
+ * apply() re-resolves `bootedFullscreen` from cordis config, and the
+ * settings user layer (settings.yaml) can arrive after the 300ms
+ * `settingsReady` bound when the recompose is also re-mounting the settings
+ * service. The tree would then mount INLINE and `fullscreenFrozen` would
+ * swallow the late application — the app lands on the main screen
+ * ("exited fullscreen", dead mouse, unpinned input) until restart. A
+ * session that already mounted fullscreen must never regress on a
+ * recompose: latch the decision.
+ */
+let lastBootedFullscreen: boolean | undefined
+
 export async function apply(ctx: Context, config: Config): Promise<void> {
   if (!process.stdout.isTTY) {
     throw new Error('dsh-tui requires an interactive terminal (stdout must be a TTY).')
@@ -937,6 +952,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // edit from here on is persisted for the next boot (the watch notifies),
   // never applied live (swapping layouts requires re-mounting the tree).
   await settingsReady
+  // Host recompose hardening: never regress a fullscreen session to inline
+  // on a re-mount whose settings application arrived late (see the module
+  // latch note). A fresh process still resolves from config + settings
+  // normally — the latch is undefined there.
+  if (bootedFullscreen === false && lastBootedFullscreen === true) {
+    bootedFullscreen = true
+  }
   fullscreenFrozen = true
   // fullscreen: wrap the tree in <AlternateScreen> (DEC 1049 + SGR mouse
   // tracking), which turns on in-app text selection (copy-on-select via
@@ -948,6 +970,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     bootedFullscreen ? React.createElement(AlternateScreen, null, chat) : chat,
   )
   instance = await render(tree, { exitOnCtrlC: false })
+  const isRecompose = lastBootedFullscreen !== undefined
+  lastBootedFullscreen = bootedFullscreen
+  logMouseDebug('apply mount', { bootedFullscreen, isRecompose })
 
   // Check in the background so registry latency never delays the first frame.
   // A failed/offline check is intentionally silent; the manual `/update`
@@ -969,6 +994,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // skill commands (issue #86) would survive this exact recompose and the
   // re-mounted channel would find the names taken, freezing its menu.
   ctx.effect(() => () => {
+    logMouseDebug('apply teardown')
     funnel.markTeardown()
     channel.releaseContributions()
     instance?.unmount()

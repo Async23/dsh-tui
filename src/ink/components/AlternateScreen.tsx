@@ -54,14 +54,14 @@ export function AlternateScreen(t0) {
       // running in parallel) guessing the first one would flip the wrong
       // app's alt-screen state.
       const ink = instances.get(process.stdout) ?? (instances.size === 1 ? instances.values().next().value : undefined);
-      logMouseDebug('alt-screen enter', { mouseTracking, inkFound: ink !== undefined, writeRaw: !!writeRaw });
+      logMouseDebug('alt-screen enter', { mouseTracking, inkFound: ink !== undefined, writeRaw: !!writeRaw, stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
       if (!writeRaw) {
         return;
       }
       writeRaw(ENTER_ALT_SCREEN + "\x1B[2J\x1B[H" + (mouseTracking ? ENABLE_MOUSE_TRACKING : ""));
       ink?.setAltScreenActive(true, mouseTracking);
       return () => {
-        logMouseDebug('alt-screen exit');
+        logMouseDebug('alt-screen exit', { stack: new Error().stack?.split('\n').slice(2, 5).join(' | ') });
         ink?.setAltScreenActive(false);
         ink?.clearTextSelection();
         writeRaw((mouseTracking ? DISABLE_MOUSE_TRACKING : "") + EXIT_ALT_SCREEN);
