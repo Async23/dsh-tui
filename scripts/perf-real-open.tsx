@@ -5,8 +5,10 @@
  * 与 perf-open-heavy 的差别：
  *  1. 行内容是真实尺寸 —— thinking ~2KB、tool result ~4KB、assistant
  *     ~1.5KB markdown（现有 bench 全是十几行小内容，滚入成本被低估）；
- *  2. INLINE（主屏）模式 —— fullscreen 默认 false，historyPaintEnabled
- *     生效，打开时折叠窗口 300 行全挂载；现有 bench 全传 fullscreen。
+ *  2. INLINE（主屏）模式 —— 本基准显式以 inline 挂载（组件默认 false），
+ *     historyPaintEnabled 生效，打开时折叠窗口 300 行全挂载；现有 bench
+ *     全传 fullscreen。（注：应用出厂配置已默认 fullscreen；这里测的是
+ *     inline 形态本身的成本。）
  *
  * 输出：打开阶段（render→静息）总时长 / 帧数 / 帧耗时 / 输出字节，
  * 以及打开后第一批滚轮事件的帧滞后（交互延迟体感来源）。
