@@ -490,3 +490,36 @@ jobs:
       # 插件场景渲染崩溃边界：Thrower 场景必须被 PluginSceneBoundary 接住——
       # onError 精确一次、崩溃场景停止绘制、进程存活；健康场景不受影响。
       - run: node --import tsx/esm scripts/verify-plugin-scene-boundary.tsx
+
+  # CI 门禁：唯一的 required check 候选。汇总所有分组结果——任何一组失败
+  # 或被取消，gate 显式失败并逐组报告状态。if: always() 保证上游失败时
+  # gate 仍然运行（被跳过的 check 不会阻塞合并，失败才会）；后续 CI 内部
+  # 再拆组、改名、加 matrix，branch protection 只需盯住这一个稳定名字。
+  ci-gate:
+    needs: [build, render-scroll, input-terminal, session-workspace, channel-ui]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every group to have succeeded
+        env:
+          BUILD: ${{ needs.build.result }}
+          RENDER_SCROLL: ${{ needs.render-scroll.result }}
+          INPUT_TERMINAL: ${{ needs.input-terminal.result }}
+          SESSION_WORKSPACE: ${{ needs.session-workspace.result }}
+          CHANNEL_UI: ${{ needs.channel-ui.result }}
+        run: |
+          status=0
+          for pair in "build:${BUILD}" \
+                      "render-scroll:${RENDER_SCROLL}" \
+                      "input-terminal:${INPUT_TERMINAL}" \
+                      "session-workspace:${SESSION_WORKSPACE}" \
+                      "channel-ui:${CHANNEL_UI}"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            echo "${name}: ${result}"
+            if [ "${result}" != "success" ]; then
+              echo "::error title=CI gate::${name} 结束状态为 ${result}（要求 success）"
+              status=1
+            fi
+          done
+          exit "${status}"
