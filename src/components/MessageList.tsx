@@ -46,6 +46,13 @@ const DEFAULT_ROW_HEIGHT = 2
 /** Cold-start estimate of the header block above the rows; corrected by the
  *  first layout measurement. */
 const DEFAULT_HEADER_LINES = 14
+/** Stable fallbacks for the stream-fold props: verify/repro harnesses and
+ *  embedders render MessageList with prop sets that predate them, and the
+ *  render must not throw (same rule as Chat's stubbed channel APIs). Module
+ *  scope keeps the identities stable so MemoRow's shallow compare and the
+ *  toggle callback's deps never churn. */
+const NO_STREAM_FOLDED: ReadonlySet<number> = new Set()
+const NOOP_TOGGLE_STREAM_FOLD = (_rowId: number): void => {}
 
 /**
  * Per-kind layout signature: the O(1) identity of every input that decides a
@@ -127,8 +134,8 @@ export function MessageList({
   expandedRows,
   selectedId,
   onToggleRow,
-  streamFoldedRows,
-  onToggleStreamFold,
+  streamFoldedRows = NO_STREAM_FOLDED,
+  onToggleStreamFold = NOOP_TOGGLE_STREAM_FOLD,
   model,
   diffLayout = 'auto',
   thinkingFold = 'preview',
@@ -154,8 +161,8 @@ export function MessageList({
   selectedId: number | null
   onToggleRow: (rowId: number) => void
   /** 流式 reasoning 行被用户折叠（点击展开/折叠对流式行同样有效）。 */
-  streamFoldedRows: ReadonlySet<number>
-  onToggleStreamFold: (rowId: number) => void
+  streamFoldedRows?: ReadonlySet<number>
+  onToggleStreamFold?: (rowId: number) => void
   model: string
   /** Edit/Write diff presentation preference (forwarded to tool cards). */
   diffLayout?: 'auto' | 'split' | 'unified'
