@@ -152,13 +152,13 @@ npm install -g @deepseek-harness-tui/dsh-tui
 `⌘` 需终端支持扩展键盘协议（iTerm2 / kitty / WezTerm / ghostty / tmux）；
 macOS 自带 Terminal.app 会自行消费 `⌘` 快捷键，请继续使用 `Ctrl`。
 
-**鼠标（`fullscreen: true` 全屏模式；默认关，profile 补丁层覆盖开启）**
+**鼠标（全屏模式默认开启；`fullscreen: false` 可退回 inline 主屏模式）**
 
 | 操作 | 功能 |
 |---|---|
 | 拖拽选择 | 应用内文本选区，**松开即复制**（OSC 52 + `wl-copy`/`xclip`/`xsel` 原生兜底；tmux 内走 `load-buffer -w`），复制后自动取消选区并弹出「已复制 N 个字符」提示 |
 | 双击 / 三击 | 选词 / 选行，同样即选即复制 |
-| 滚轮 | 仅在 fullscreen 且鼠标跟踪启用时：Help 打开时滚动帮助，否则滚动消息列表（±3 行/格）；默认 inline 模式不会把滚轮事件交给 TUI |
+| 滚轮 | 仅在 fullscreen 且鼠标跟踪启用时：Help 打开时滚动帮助，否则滚动消息列表（±3 行/格）；inline 模式不会把滚轮事件交给 TUI |
 | `Esc` | 拖拽进行中取消选区（不复制） |
 | 单击消息行 | 展开/收起该行 |
 | 单击「加载更早消息」/「ctrl+e 显示前 N 条」 | 加载更早消息 / 展开全部 |
