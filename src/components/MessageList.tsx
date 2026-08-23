@@ -31,8 +31,14 @@ import type { ToolBackground } from '../tuiDisplayPrefs.js'
  * rows; `selectedId` highlights the selected row.
  */
 /** Render cap for very long sessions (CC's MAX_MESSAGES_WITHOUT_VIRTUALIZATION
- *  equivalent): older rows fold behind a Divider until Ctrl+E expands them. */
-const MAX_RENDERED_ROWS = 300
+ *  equivalent): older rows fold behind a Divider until Ctrl+E expands them.
+ *  120 (was 300): opening a long session paints the whole cap into the
+ *  main-screen scrollback (historyPaint), and each row's first markdown
+ *  lex + wrap costs ~2-5ms — 300 rows saturated the main thread for ~6s
+ *  on open (measured, 800-row inline session). 120 rows ≈ 4-5 screens of
+ *  paint (<1s) with the rest behind the show-previous divider (CC parity:
+ *  the transcript is a viewport, not a printout; load-earlier restores). */
+const MAX_RENDERED_ROWS = 120
 
 // --- layout virtualization constants -------------------------------------
 // Offscreen rows render as fixed-height spacers whose heights come from the
@@ -303,9 +309,20 @@ export function MessageList({
    *  free: those rows sit in scrollback and the diff skips them. */
   const lastStartRef = React.useRef<number>(-1)
   const holdUntilRef = React.useRef<number>(0)
+  /** True when frame-budgeted history painting still has batches left
+   *  (main-screen open): the layout effect schedules the next slice. */
+  const paintPendingRef = React.useRef(false)
+  const paintQueuedRef = React.useRef(false)
+  /** Persistent history-paint edge: how far batched painting has advanced
+   *  (index into visibleRows). -1 = not painting / reset (list head change:
+   *  rewind, new session, loadOlder — must repaint from scratch). */
+  const paintEdgeRef = React.useRef(-1)
   const listHeadId = visibleRows[0]?.id
   if (listHeadId !== undefined && paintedBaseRef.current !== undefined && listHeadId !== paintedBaseRef.current) {
     paintedOnceRef.current = new Set()
+    // History repaints from scratch after a head change too (rewind /
+    // loadOlder prepends rows that must paint again).
+    paintEdgeRef.current = -1
   }
   if (listHeadId !== undefined) paintedBaseRef.current = listHeadId
   /** Content-space offset of visibleRows[0] (header + dividers), measured. */
@@ -458,15 +475,53 @@ export function MessageList({
     // hundreds of markdown rows the user never sees (measured: 4.3s of
     // saturated main thread before first paint on a 960-row session; the
     // virtualization window re-mounts rows on demand as they scroll in).
+    // FRAME-BUDGETED: mounting the whole window in ONE commit saturated the
+    // main thread for seconds (measured 6s wall with ZERO frames in the
+    // first second on an 800-row inline open — every input queued behind
+    // the React render). Extend in batches of ~2 viewports of measured
+    // height per commit instead; the pending-batch effect schedules the
+    // next slice, so the app paints, drains input, and stays interactive
+    // while history streams in above the fold (opencode-style progressive
+    // transcript hydration; the terminal accepts rows whenever they land).
     const paintedOnce = paintedOnceRef.current
+    let paintPending = false
     if (historyPaintEnabled) {
-      for (let i = 0; i < start; i++) {
+      // Persistent batch edge: the sticky floor-walk RESETS start to the
+      // tail every frame, so a per-frame budget walk from `start` re-spends
+      // its whole budget on already-painted rows and never reaches deeper
+      // unpainted ones (measured: an infinite 0.3ms/frame batch loop).
+      // Remember how far painting has advanced; each batch extends THAT
+      // edge upward by the budget.
+      if (paintEdgeRef.current < 0) paintEdgeRef.current = start
+      let firstUnpainted = -1
+      for (let i = 0; i < paintEdgeRef.current; i++) {
         if (!paintedOnce.has(visibleRows[i]!.id)) {
-          start = i
+          firstUnpainted = i
           break
         }
       }
+      if (firstUnpainted !== -1) {
+        // Budget: extend the paint edge upward by ~half a viewport of
+        // measured content per commit (height estimates; unknown rows fall
+        // back to DEFAULT_ROW_HEIGHT and over-mount slightly — harmless).
+        // Measured: larger batches (2 viewports) put 50ms+ of first-wrap
+        // yoga into one frame; half a viewport keeps batches near the
+        // 16ms frame budget while still finishing an 800-row open in
+        // well under two seconds of background batches.
+        let budget = Math.min(viewport, termRows) / 2 + OVERSCAN_LINES
+        let j = paintEdgeRef.current
+        while (j > firstUnpainted && budget > 0) {
+          j--
+          budget -= heightOf(visibleRows[j]!)
+        }
+        paintEdgeRef.current = j
+        start = Math.min(start, j)
+        paintPending = j > 0
+      }
+    } else {
+      paintEdgeRef.current = -1
     }
+    paintPendingRef.current = paintPending
     // Unknown-height extension (layout signature, see sigRef): a row whose
     // cached height was just INVALIDATED must remount to re-measure even
     // when it sits outside the window — its spacer otherwise falls back to
@@ -720,6 +775,22 @@ export function MessageList({
         noteFrameCause('measure')
         setMeasureTick(t => t + 1)
       })
+    }
+    // History-paint continuation (main-screen open): more never-painted
+    // batches remain — schedule the next slice on the macrotask queue so
+    // pending input events (wheel, keys) drain between batches and the app
+    // stays interactive while preset history streams in. A timeout of 0 is
+    // enough: each batch's mount+measure work is bounded (~2 viewports),
+    // unlike the previous single-commit full mount that saturated the main
+    // thread for seconds.
+    if (paintPendingRef.current && !paintQueuedRef.current) {
+      paintQueuedRef.current = true
+      setTimeout(() => {
+        paintQueuedRef.current = false
+        if (!paintPendingRef.current) return
+        noteFrameCause('measure')
+        setMeasureTick(t => t + 1)
+      }, 0)
     }
   })
 
@@ -1144,18 +1215,22 @@ export function LogoHeader({
   effort,
   cwd,
   whale = true,
+  skipIntro = false,
 }: {
   model: string
   effort?: string | undefined
   cwd: string
   whale?: boolean
+  /** Jump straight to the settled header (long-session resume: the ~3.4s
+   *  opening animation competes with transcript mount batches). */
+  skipIntro?: boolean
 }): React.ReactNode {
   // Minimal mode drops the whole splash (whale art AND wordmark) — only the
   // transcript and a bare status bar remain.
   if (isMinimalMode()) return null
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <LogoV2 model={model} effort={effort} cwd={cwd} whale={whale} />
+      <LogoV2 model={model} effort={effort} cwd={cwd} whale={whale} skipIntro={skipIntro} />
     </Box>
   )
 }
