@@ -18,18 +18,18 @@ jobs:
       # DSH_TUI_LANG=en themselves before their dynamic imports.
       DSH_TUI_LANG: zh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Verify generated output is not checked in
         run: test -z "$(git ls-files -- lib)"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -65,7 +65,7 @@ jobs:
       # 根 node_modules 的符号链接即完成解析，无需携带 vendor 的构建
       # 工具链；.tsx 脚本走的 src/ 由各组自己的 checkout 提供。
       - name: Upload compiled output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ci-build-${{ github.run_id }}
           retention-days: 3
@@ -88,15 +88,15 @@ jobs:
     env:
       DSH_TUI_LANG: zh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -105,7 +105,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Restore compiled output
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ci-build-${{ github.run_id }}
       # 带断言的回归：提问面板内联输入（issue #9）+ 工具卡排版
@@ -182,15 +182,15 @@ jobs:
     env:
       DSH_TUI_LANG: zh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -199,7 +199,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Restore compiled output
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ci-build-${{ github.run_id }}
       # 按键解析回归（issue #110）：Option+Enter（ESC CR）精确/合并/分块
@@ -258,15 +258,15 @@ jobs:
     env:
       DSH_TUI_LANG: zh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -275,7 +275,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Restore compiled output
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ci-build-${{ github.run_id }}
       # 审批服务配置回归（issue #49 尾巴）：裸组合 cordis.yml 必须挂载
@@ -374,15 +374,15 @@ jobs:
     env:
       DSH_TUI_LANG: zh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -391,7 +391,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Restore compiled output
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ci-build-${{ github.run_id }}
       # channel 层回归：发送链（submit/steer/撤回/打断重投）、compact 折叠、
@@ -544,15 +544,15 @@ jobs:
     env:
       DSH_TUI_LANG: zh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -561,7 +561,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Restore compiled output
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ci-build-${{ github.run_id }}
 
