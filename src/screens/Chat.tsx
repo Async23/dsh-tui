@@ -452,7 +452,10 @@ export function Chat({
         : -1
     }
   }, [isSticky, channel.rows])
-  const showPill = !isSticky && unseenCount > 0
+  // The pill shows whenever the view is off the bottom (one-click return
+  // home): with unseen rows it counts them, otherwise it is the plain
+  // "return to bottom" affordance (Enter/End/click all land it).
+  const showPill = !isSticky
 
   // Idle Ctrl+C: first press arms an exit, second press exits (CC's
   // double-press semantics, simplified). Under Windows ConPTY the key
@@ -2309,8 +2312,18 @@ export function Chat({
       // the collapsed line keeps the done/total count and the live task
       // preview, so long todo lists stop crowding the prompt.
       setTodoCollapsed(previous => !previous)
-    } else if (plainReturn && showPill) {
+    } else if (plainReturn && !isSticky) {
+      // Enter while scrolled up returns to the bottom (CC's pill: the
+      // affordance now exists whenever the view is off the bottom, not
+      // only with unseen rows).
       handle?.scrollToBottom()
+    } else if (key.end && !isSticky) {
+      // End = jump to bottom, less/vim semantics. Global on the chat
+      // screen (search/history overlays consume their own End first —
+      // cursor-to-line-end there). At the bottom already: no-op, so the
+      // key stays harmless in muscle memory.
+      handle?.scrollToBottom()
+      event.stopImmediatePropagation()
     } else if (extensionShortcuts !== undefined && extensionShortcuts.dispatch(input, key)) {
       // Plugin shortcut (tuiShortcuts seam): matched only after every
       // built-in global binding above declined — locals always win, and the
@@ -3012,7 +3025,11 @@ function NewMessagesPill({
         onMouseLeave={() =>{  setHover(false) }}
       >
         <Text color="inverseText" bold>
-          {' '}↓ {t(count === 1 ? 'new-message' : 'new-messages', { n: count })}{' '}
+          {' '}
+          {count > 0
+            ? t(count === 1 ? 'new-message' : 'new-messages', { n: count })
+            : t('back-to-bottom')}
+          {' '}
         </Text>
       </Box>
     </Box>
