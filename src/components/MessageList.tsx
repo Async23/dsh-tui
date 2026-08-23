@@ -61,14 +61,27 @@ const NO_STREAM_FOLDED: ReadonlySet<number> = new Set()
 const NOOP_TOGGLE_STREAM_FOLD = (_rowId: number): void => {}
 
 /**
- * Per-kind layout signature: the O(1) identity of every input that decides a
- * row's rendered HEIGHT (see sigRef in MessageList). Fields are scoped to the
- * row's own renderer — a global flat signature over-invalidates (a diffLayout
- * switch must not drop user-message heights). Text uses length as the proxy:
- * full-text hashing per row per frame would defeat virtualization's budget,
- * and a same-length miss only degrades to the previous behavior.
+ * Per-kind layout signature PARTS: the O(1) identity of every input that
+ * decides a row's rendered HEIGHT (see sigRef in MessageList). Fields are
+ * scoped to the row's own renderer — a global flat signature
+ * over-invalidates (a diffLayout switch must not drop user-message
+ * heights). Text uses length as the proxy: full-text hashing per row per
+ * frame would defeat virtualization's budget, and a same-length miss only
+ * degrades to the previous behavior.
+ *
+ * Returns a PARTS VECTOR instead of a joined string: the caller compares
+ * slot-by-slot against the cached vector (all primitives), allocating only
+ * when a row's inputs actually changed. Building a joined string per row
+ * per render was O(rows) allocation churn on every scroll tick — the GC
+ * share of the long-session scroll profile.
+ *
+ * The vector is a MODULE-LEVEL SCRATCH BUFFER: single-threaded synchronous
+ * render makes reuse safe, and the unchanged case (the overwhelming
+ * majority) allocates nothing. Callers that retain the vector must copy
+ * (parts.slice()).
  */
-function layoutSignature(
+const signatureScratch: Array<string | number | boolean> = []
+function signatureParts(
   row: ChatRow,
   columns: number,
   expanded: boolean,
@@ -80,26 +93,27 @@ function layoutSignature(
   model: string,
   failureHintRowId: number | null | undefined,
   failureHint: string | undefined,
-): string {
+): Array<string | number | boolean> {
+  signatureScratch.length = 0
   // Universal height inputs: width reflows every row; kind switches height
   // semantics wholesale; text length drives wrapping.
-  const parts: Array<string | number | boolean> = [columns, row.kind, row.text?.length ?? 0]
+  signatureScratch.push(columns, row.kind, row.text?.length ?? 0)
   switch (row.kind) {
     case 'assistant':
       // Streaming vs settled swaps renderers; Ctrl+O/per-row expand adds the
       // metadata row (model only renders expanded — keeps an idle /model
       // switch from touching settled rows).
-      parts.push(row.streaming === true, expanded, expandedRows.has(row.id), expanded ? model : '')
+      signatureScratch.push(row.streaming === true, expanded, expandedRows.has(row.id), expanded ? model : '')
       break
     case 'reasoning':
       // thinkingFold (preview vs full) and the visibility filter change the
       // folded card's height; streaming shows verbose live unless the user
       // clicked it folded (streamFolded collapses to the ticker/header).
-      parts.push(row.streaming === true, expanded, expandedRows.has(row.id), streamFolded.has(row.id), thinkingVisible, thinkingFold)
+      signatureScratch.push(row.streaming === true, expanded, expandedRows.has(row.id), streamFolded.has(row.id), thinkingVisible, thinkingFold)
       break
     case 'tool': {
       const tool = row.tool
-      parts.push(
+      signatureScratch.push(
         expanded,
         expandedRows.has(row.id),
         diffLayout,
@@ -115,7 +129,7 @@ function layoutSignature(
       // 卡片高度输入：running→settled 折叠 waterfall+tool 行（5→1 行），
       // failed 增加 error 行。缺这些字段的话 offscreen 结算后 cached
       // height 永不过期 → 滚回 blank band / 滚不到底。
-      parts.push(
+      signatureScratch.push(
         row.subagent?.status ?? '',
         row.subagent?.toolCalls.length ?? 0,
         row.subagent?.outputLines.length ?? 0,
@@ -124,14 +138,14 @@ function layoutSignature(
       break
     case 'compact':
       // Folded one-liner vs full summary text.
-      parts.push(expanded, expandedRows.has(row.id))
+      signatureScratch.push(expanded, expandedRows.has(row.id))
       break
     default:
       // user / notice / interrupt / local / local-output: height follows
       // text + columns alone (selection/background never change height).
       break
   }
-  return parts.join('|')
+  return signatureScratch
 }
 
 export function MessageList({
@@ -243,34 +257,102 @@ export function MessageList({
   const hiddenCount = rows.length - MAX_RENDERED_ROWS
   // The thinking filter runs BEFORE virtualization so window indices line up.
   //
-  // Empty settled assistant rows (PR #383's duplicate-dot bug): when the
-  // model calls a tool without producing text, the assistant/message event
-  // carries empty text — rendered as a lone `●` bullet dangling above the
-  // tool card. Filter them BEFORE virtualization (not by rendering null in
-  // TranscriptRow): a null row never mounts, never enters paintedOnce, and
-  // would stall the main-screen history-paint batch loop forever. A row
-  // that is STILL STREAMING keeps its place even with empty text — the
-  // live dot is the "model is answering" affordance and content may yet
-  // arrive.
-  const visibleRows = (showAll || hiddenCount <= 0
-    ? rows
-    : rows.slice(hiddenCount)
-  ).filter(row =>
-    !(row.kind === 'assistant' && row.streaming !== true && (row.text ?? '').trim() === '') &&
-    (thinkingVisible || row.kind !== 'reasoning'),
-  )
-
-  // CC addMargin: every rendered block gets a 1-row top margin except the
-  // first. Pre-pass over the FULL list so a windowed row keeps the exact
-  // spacing it would have in a fully-mounted list.
-  const margins = new Map<number, boolean>()
-  {
-    let prev: ChatRow['kind'] | undefined
-    for (const row of visibleRows) {
-      margins.set(row.id, prev !== undefined)
-      prev = row.kind
+  // Fingerprint memo: every scroll tick re-rendered this pipeline even when
+  // nothing changed — slice + filter allocate a fresh rows-length array and
+  // the margins pre-pass allocates a Map with one entry per row (3200-row
+  // session ⇒ ~200KB churn per 16ms tick, the GC share of the scroll
+  // profile). The inputs are all identity-stable across ticks: channel.rows
+  // is a live in-place array (identity changes only on rewind/new session),
+  // showAll/thinkingVisible are React state. Rows APPENDED in place keep the
+  // identity — the cache must key on rows.length too (streaming appends).
+  const visibleRowsCacheRef = React.useRef<{
+    rows: readonly ChatRow[]
+    rowsLength: number
+    showAll: boolean
+    thinkingVisible: boolean
+    out: readonly ChatRow[]
+    margins: ReadonlyMap<number, boolean>
+    /** Per-row `streaming === true` bits. The settle flip (streaming cleared
+     * in place, rows identity/length unchanged) changes empty-assistant
+     * filtering below, so the cache must rebuild on any bit change. */
+    streamBits: Uint8Array
+  } | null>(null)
+  /** Generation counter for the visibleRows cache (timeline memo key). */
+  const visGenRef = React.useRef(0)
+  const visibleCache = visibleRowsCacheRef.current
+  // Streaming-bit fingerprint: in-place `streaming = false` writes (turn
+  // settle) are invisible to the rows-identity/length key above, but an
+  // assistant row that settles with EMPTY text crosses the empty-assistant
+  // filter boundary (visible-while-streaming → filtered-when-settled).
+  // Allocation-free scan; rebuild only when a bit actually flipped.
+  let streamBitsSame = visibleCache !== null && visibleCache.streamBits.length === rows.length
+  if (streamBitsSame) {
+    const bits = visibleCache!.streamBits
+    for (let i = 0; i < rows.length; i++) {
+      if (bits[i] !== (rows[i]!.streaming === true ? 1 : 0)) { streamBitsSame = false; break }
     }
   }
+  if (
+    visibleCache === null ||
+    visibleCache.rows !== rows ||
+    visibleCache.rowsLength !== rows.length ||
+    visibleCache.showAll !== (showAll || hiddenCount <= 0) ||
+    visibleCache.thinkingVisible !== thinkingVisible ||
+    !streamBitsSame
+  ) {
+    const sliced = showAll || hiddenCount <= 0
+      ? rows
+      : rows.slice(hiddenCount)
+    // Empty settled assistant rows (PR #383's duplicate-dot bug): when the
+    // model calls a tool without producing text, the assistant/message event
+    // carries empty text — rendered as a lone `●` bullet dangling above the
+    // tool card. Filter them BEFORE virtualization (not by rendering null in
+    // TranscriptRow): a null row never mounts, never enters paintedOnce, and
+    // would stall the main-screen history-paint batch loop forever. A row
+    // that is STILL STREAMING keeps its place even with empty text — the
+    // live dot is the "model is answering" affordance and content may yet
+    // arrive.
+    let hasEmptyAssistant = false
+    for (const row of sliced) {
+      if (row.kind === 'assistant' && row.streaming !== true && (row.text ?? '').trim() === '') {
+        hasEmptyAssistant = true
+        break
+      }
+    }
+    const out = hasEmptyAssistant
+      ? sliced.filter(row =>
+          !(row.kind === 'assistant' && row.streaming !== true && (row.text ?? '').trim() === '') &&
+          (thinkingVisible || row.kind !== 'reasoning'),
+        )
+      : thinkingVisible
+        ? sliced
+        : sliced.filter(row => row.kind !== 'reasoning')
+    // CC addMargin: every rendered block gets a 1-row top margin except the
+    // first. Pre-pass over the FULL list so a windowed row keeps the exact
+    // spacing it would have in a fully-mounted list.
+    const margins = new Map<number, boolean>()
+    {
+      let prev: ChatRow['kind'] | undefined
+      for (const row of out) {
+        margins.set(row.id, prev !== undefined)
+        prev = row.kind
+      }
+    }
+    const streamBits = new Uint8Array(rows.length)
+    for (let i = 0; i < rows.length; i++) streamBits[i] = rows[i]!.streaming === true ? 1 : 0
+    visibleRowsCacheRef.current = {
+      rows,
+      rowsLength: rows.length,
+      showAll: showAll || hiddenCount <= 0,
+      thinkingVisible,
+      out,
+      margins,
+      streamBits,
+    }
+    visGenRef.current++
+  }
+  const visibleRows = visibleRowsCacheRef.current!.out
+  const margins = visibleRowsCacheRef.current!.margins
   // Selection keeps its highlight; expanded rows render with no fill (the
   // diff line tints inside cards are the only backgrounds in the transcript).
   const rowBackground = (rowId: number) => {
@@ -289,6 +371,9 @@ export function MessageList({
   // DEFAULT_ROW_HEIGHT, which only perturbs deep scrollback estimates.
   const HEIGHTS_CACHE_MAX = 5000
   const heightsRef = React.useRef(new Map<number, number>())
+  /** Geometry version: bumped at EVERY heightsRef mutation so downstream
+   *  memos (timeline tops) can key on it instead of re-deriving offsets. */
+  const heightsVersionRef = React.useRef(0)
   const localRefs = React.useRef(new Map<number, DOMElement>())
   /** Row ids that have been mounted (and therefore painted into the
    *  terminal) at least once. The sticky window may skip a row ONLY after
@@ -336,6 +421,7 @@ export function MessageList({
   if (lastColumns.current !== columns) {
     lastColumns.current = columns
     heightsRef.current.clear()
+    heightsVersionRef.current++
     baseRef.current = null
   }
 
@@ -354,7 +440,13 @@ export function MessageList({
   // Text identity uses length as an O(1) proxy — per-frame full-text
   // hashing over every row would defeat virtualization's budget, and a
   // same-length miss only degrades to the previous behavior.
-  const sigRef = React.useRef(new Map<number, string>())
+  //
+  // VECTORS, not strings: the cache stores the parts VECTOR and the
+  // comparison is slot-by-slot — the unchanged case (every settled row on
+  // every scroll tick) allocates nothing. A joined string per row per
+  // render was O(rows) garbage per tick (3200-row session ⇒ several MB/s
+  // into minor GC; the GC share of the scroll profile).
+  const sigRef = React.useRef(new Map<number, Array<string | number | boolean>>())
   {
     const sigs = sigRef.current
     for (let i = 0; i < visibleRows.length; i++) {
@@ -365,7 +457,7 @@ export function MessageList({
       // reasoning height at once, remounting the widened window over rows
       // whose rendering never changed (Yoga spike + measure churn for
       // nothing). Base parts cover the universal height inputs.
-      const sig = layoutSignature(
+      const parts = signatureParts(
         row,
         columns,
         expanded,
@@ -378,14 +470,23 @@ export function MessageList({
         failureHintRowId,
         failureHint,
       )
-      if (sigs.get(row.id) !== sig) {
-        if (sigs.size >= HEIGHTS_CACHE_MAX) {
-          const oldest = sigs.keys().next().value
-          if (oldest !== undefined) sigs.delete(oldest)
+      const cachedParts = sigs.get(row.id)
+      let same = false
+      if (cachedParts !== undefined && cachedParts.length === parts.length) {
+        same = true
+        for (let s = 0; s < parts.length; s++) {
+          if (parts[s] !== cachedParts[s]) { same = false; break }
         }
-        sigs.set(row.id, sig)
-        heightsRef.current.delete(row.id)
       }
+      if (same) continue
+      if (sigs.size >= HEIGHTS_CACHE_MAX) {
+        const oldest = sigs.keys().next().value
+        if (oldest !== undefined) sigs.delete(oldest)
+      }
+      // Copy out of the module-level scratch buffer — the next row reuses it.
+      sigs.set(row.id, parts.slice())
+      heightsRef.current.delete(row.id)
+      heightsVersionRef.current++
     }
   }
 
@@ -403,7 +504,13 @@ export function MessageList({
 
   const heightOf = (row: ChatRow): number =>
     heightsRef.current.get(row.id) ?? DEFAULT_ROW_HEIGHT
-  const offsets: number[] = new Array<number>(visibleRows.length)
+  // Reused offsets buffer: the prefix-scan itself must run every render
+  // (heightsRef mutates in the measure effect), but the ARRAY need not be
+  // fresh — offsets never escapes this render scope. A new 3200-slot array
+  // per scroll tick was pure GC fodder.
+  const offsetsBufRef = React.useRef<number[]>([])
+  const offsets: number[] = offsetsBufRef.current
+  offsets.length = visibleRows.length
   let total = 0
   for (let i = 0; i < visibleRows.length; i++) {
     offsets[i] = total
@@ -541,9 +648,8 @@ export function MessageList({
     // streaming row below/above the window remounted per chunk — full
     // markdown re-lex + wrap of the whole growing text, invisible to the
     // user reading history (measured: 3s of streaming while scrolled up
-    // burned 2.7s of yoga, max 126ms single-chunk spikes). Its height is
-    // in flux anyway; the final settle invalidates once more and remounts
-    // exactly once.
+    // burned 2.5s of yoga and +84MB heap). Its height is in flux anyway;
+    // the final settle invalidates once more and remounts exactly once.
     for (let i = 0; i < start; i++) {
       if (visibleRows[i]!.streaming === true) continue
       const rowId = visibleRows[i]!.id
@@ -572,8 +678,7 @@ export function MessageList({
   // Runs for non-sticky views; sticky mounts the tail anyway. Streaming
   // rows are skipped — THIS loop is the measured hot path of the
   // read-while-streaming stall (the streaming tail row sits below the
-  // window and its height invalidated per chunk; A/B without the guard:
-  // yoga 总 2674ms / max 126ms over a 3s stream, with it: 13ms / 3.6ms).
+  // window and invalidated per chunk).
   for (let i = end; i < visibleRows.length; i++) {
     if (visibleRows[i]!.streaming === true) continue
     const rowId = visibleRows[i]!.id
@@ -656,60 +761,85 @@ export function MessageList({
   // there, so a turn past it could never own the top row, and naming it
   // would make ▼ repeat itself forever (the stuck-▼ bug). Reported
   // post-commit, only when the signature changes.
-  const timelineTurns: TimelineTurn[] = []
+  let timelineTurns: TimelineTurn[] = []
   let activeTurnIndex: number | null = null
   let upTurnIndex: number | null = null
   let downTurnIndex: number | null = null
+  const timelineMemoRef = React.useRef<{ key: string; turns: TimelineTurn[] } | null>(null)
   {
-    // Preview cache: user rows are immutable once landed, and this loop
-    // runs on EVERY scroll frame (MessageList re-renders per drain tick).
-    // clipPreview scans to the first non-empty line — O(text length) per
-    // row per frame for pasted-content prompts. Cache by row id with a
-    // text-length guard as belt-and-braces against any id reuse.
-    const previewCache = previewCacheRef.current
-    if (previewCache.size > 2000) previewCache.clear()
+    // Split into (a) a GEOMETRY-memoized turns list and (b) a per-frame
+    // allocation-free target scan. Before the split this block rebuilt on
+    // EVERY scroll tick: an 800-object turns array, an 800-entry
+    // measuredTops Map, and the report effect's turns.map().join('|')
+    // signature — several hundred KB of churn per second of scrolling on a
+    // tool-heavy session.
+    //
+    // (a) turns/tops/folded change ONLY when geometry changes: row heights
+    // (heightsVersion — bumped at every heightsRef mutation), the visible
+    // window's content (visGen — bumped when the visibleRows cache
+    // rebuilds), the measured header base, or the rows array growing. Key
+    // on those; previews stay in their own id-keyed cache.
+    const memo = timelineMemoRef.current
+    const memoKey = `${visGenRef.current}:${heightsVersionRef.current}:${base}:${rows.length}:${columns}`
+    if (memo === null || memo.key !== memoKey) {
+      const previewCache = previewCacheRef.current
+      if (previewCache.size > 2000) previewCache.clear()
+      // Measured tops for turns INSIDE the fold window (user rows are never
+      // filtered by the thinking toggle, so a user row absent from
+      // visibleRows is exactly a folded one).
+      const measuredTops = new Map<number, number>()
+      for (let i = 0; i < visibleRows.length; i++) {
+        const row = visibleRows[i]!
+        if (row.kind !== 'user') continue
+        measuredTops.set(row.id, base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0))
+      }
+      // Walk ALL rows (not the fold window): the rail must cover the whole
+      // conversation — a tool-heavy session packs 300 rows into a handful
+      // of turns, and window-only turns made the rail show "2-3 nodes".
+      // Folded turns carry folded:true + top:-1; their tops are unknown
+      // until revealed (they are all ABOVE the viewport, so active/down
+      // over measured turns is unaffected; ▲ may name a folded turn — its
+      // click goes through the reveal path, not scrollTo).
+      const turns: TimelineTurn[] = []
+      for (const row of rows) {
+        if (row.kind !== 'user') continue
+        let cached = previewCache.get(row.id)
+        if (cached === undefined || cached.len !== row.text.length) {
+          cached = { len: row.text.length, preview: clipPreview(row.text) }
+          previewCache.set(row.id, cached)
+        }
+        const textTop = measuredTops.get(row.id)
+        if (textTop !== undefined) {
+          turns.push({ id: row.id, top: textTop, preview: cached.preview })
+        } else {
+          turns.push({ id: row.id, top: -1, preview: cached.preview, folded: true })
+        }
+      }
+      timelineMemoRef.current = { key: memoKey, turns }
+    }
+    timelineTurns = timelineMemoRef.current!.turns
+    // (b) per-frame target scan — pure integer comparisons over the
+    // memoized list; viewTop is projected (scrollTop + pending) so
+    // boundary crossings register during wheel bursts, not one drain
+    // frame late. downId additionally requires top ≤ maxScroll: the
+    // renderer clamps scrollTop there, so a turn past it could never own
+    // the top row, and naming it would make ▼ repeat itself forever.
     const viewTop = scrollTop + pending
     const maxScroll = Math.max(0, (scrollHandle?.getScrollHeight() ?? 0) - viewport)
-    // Measured tops for turns INSIDE the fold window (user rows are never
-    // filtered by the thinking toggle, so a user row absent from
-    // visibleRows is exactly a folded one).
-    const measuredTops = new Map<number, number>()
-    for (let i = 0; i < visibleRows.length; i++) {
-      const row = visibleRows[i]!
-      if (row.kind !== 'user') continue
-      measuredTops.set(row.id, base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0))
-    }
-    // Walk ALL rows (not the fold window): the rail must cover the whole
-    // conversation — a tool-heavy session packs 300 rows into a handful
-    // of turns, and window-only turns made the rail show "2-3 nodes".
-    // Folded turns carry folded:true + top:-1; their tops are unknown
-    // until revealed (they are all ABOVE the viewport, so active/down
-    // over measured turns is unaffected; ▲ may name a folded turn — its
-    // click goes through the reveal path, not scrollTo).
-    let index = 0
-    for (const row of rows) {
-      if (row.kind !== 'user') continue
-      let cached = previewCache.get(row.id)
-      if (cached === undefined || cached.len !== row.text.length) {
-        cached = { len: row.text.length, preview: clipPreview(row.text) }
-        previewCache.set(row.id, cached)
-      }
-      const textTop = measuredTops.get(row.id)
-      if (textTop !== undefined) {
-        timelineTurns.push({ id: row.id, top: textTop, preview: cached.preview })
-        if (textTop <= viewTop) activeTurnIndex = index
-        if (textTop < viewTop) upTurnIndex = index
-        if (downTurnIndex === null && textTop > viewTop && textTop <= maxScroll) {
-          downTurnIndex = index
-        }
-      } else {
-        timelineTurns.push({ id: row.id, top: -1, preview: cached.preview, folded: true })
+    for (let i = 0; i < timelineTurns.length; i++) {
+      const t = timelineTurns[i]!
+      if (t.folded === true) {
         // Above the fold ⇒ strictly above the viewport: a legal ▲ target.
-        upTurnIndex = index
+        upTurnIndex = i
+        continue
       }
-      index++
+      if (t.top <= viewTop) activeTurnIndex = i
+      if (t.top < viewTop) upTurnIndex = i
+      if (downTurnIndex === null && t.top > viewTop && t.top <= maxScroll) {
+        downTurnIndex = i
+      }
     }
-    if (index > 0 && activeTurnIndex === null) activeTurnIndex = 0
+    if (timelineTurns.length > 0 && activeTurnIndex === null) activeTurnIndex = 0
   }
   const timeline: TimelineSnapshot = {
     turns: timelineTurns,
@@ -719,12 +849,12 @@ export function MessageList({
   }
   const lastTimelineReportRef = React.useRef('')
   React.useEffect(() => {
-    // Preview text never mutates for a given row id, so ids+tops+fold
-    // flags fully determine the snapshot — skipping previews keeps the
-    // per-frame signature O(turns) small integers, not O(preview chars).
-    const sig =
-      timelineTurns.map(t => `${t.id}:${t.top}:${t.folded ? 1 : 0}`).join('|') +
-      `#a${timeline.activeId}#u${timeline.upId}#d${timeline.downId}`
+    // O(1) signature: the memo key pins the turns' geometry identity
+    // (heights/window/base/rows-length) and the three ids pin the
+    // viewport-derived targets. Any top change bumps the geometry key, so
+    // the report still fires exactly when the snapshot content changes —
+    // without rebuilding an O(turns) joined string per commit.
+    const sig = `${timelineMemoRef.current?.key ?? ''}#a${timeline.activeId}#u${timeline.upId}#d${timeline.downId}`
     if (sig !== lastTimelineReportRef.current) {
       lastTimelineReportRef.current = sig
       onTimeline?.(timeline)
@@ -749,6 +879,7 @@ export function MessageList({
           if (oldest !== undefined) heightsRef.current.delete(oldest)
         }
         heightsRef.current.set(id, h)
+        heightsVersionRef.current++
         changed = true
       }
     }
