@@ -41,7 +41,7 @@ import { readModelPref, writeModelPref } from '../modelPrefs.js'
 import { explicitModelRoute, recordedModelRoute, resolveModelRoute, validateModelRoute } from '../modelRoute.js'
 import type { ProviderSetupHost } from './providerWizard.js'
 import { readPresetPref, writePresetPref } from '../presetPrefs.js'
-import { composePreset, resolvePersistedPreset, rosterOf, runningPresetOf, serviceForAgent, type AgentPresetInfo } from './presets.js'
+import { composePreset, resolvePersistedPreset, resolvePersistedRoute, rosterOf, runningPresetOf, serviceForAgent, type AgentPresetInfo } from './presets.js'
 import { isPresetName, PRESET_NAMES } from '../components/activityFrames.js'
 import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { logForDebugging } from '../utils/debug.js'
@@ -2921,10 +2921,20 @@ export function createChannel(
         provider: options.configuredProvider,
         model: options.configuredModel,
       })
+      // The recorded route feeds back into agentOptions too — not just the
+      // status line below: a provider-only cordis.yml pin (issue #67) leaves
+      // agentOptions.model undefined on resume, which breaks the `{{model}}`
+      // persona variable for the resumed agent's own assembly AND for every
+      // subagent it spawns (dsh-subagent's resolveChildAgentOptions inherits
+      // `parent.options.model`).
+      const recordedRoute = await resolvePersistedRoute(ctx, SessionId(sessionId))
       try {
         handle = await agents.resume({
           resumeSessionId: SessionId(sessionId),
-          agentOptions: { provider: resumeRoute?.provider, model: resumeRoute?.model },
+          agentOptions: {
+            provider: resumeRoute?.provider ?? recordedRoute?.provider,
+            model: resumeRoute?.model ?? recordedRoute?.model,
+          },
           ...(resumeComposed.setup === undefined ? {} : { setup: resumeComposed.setup }),
         })
       } catch (error) {
