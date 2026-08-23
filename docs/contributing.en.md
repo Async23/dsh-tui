@@ -7,8 +7,10 @@ development contract for humans and coding agents working on `@deepseek-harness-
 
 ## How To Contribute
 
-- **Report bugs or request features** by opening an issue with a clear
-  reproduction and the terminal environment you use.
+- **Report bugs** through the bug issue form: version, terminal environment,
+  and a minimal reproduction.
+- **Request features** in [Discussions Ideas](https://github.com/ccch1mneyyy/dsh-TUI/discussions/new?category=ideas).
+  Issues do not accept feature requests. Accepted proposals get a tracking issue.
 - **Open a pull request** against `main`. Keep changes focused: one logical
   change per PR, with a Chinese or bilingual title and a description that
   covers motivation, what changed, and how it was verified.

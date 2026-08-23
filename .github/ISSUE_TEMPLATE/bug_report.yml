@@ -1,0 +1,81 @@
+name: Bug 报告 / Bug report
+description: 报告一个可复现的问题。功能建议请走 Discussions。
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        只接受可复现的 bug。功能建议、使用问题、插件推广请走 Discussions。
+        没有复现步骤的报告无法处理。
+
+  - type: input
+    id: version
+    attributes:
+      label: dsh-tui 版本
+      description: 运行 `npm ls -g @deepseek-harness-tui/dsh-tui`，或在 TUI 里执行 `/about`。
+      placeholder: "0.9.0"
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: 终端与操作系统
+      description: 终端软件 + 版本，操作系统 + 版本。用 tmux / WSL / SSH 的请写明。
+      placeholder: "Windows Terminal 1.21 + WSL2 Ubuntu 24.04 / iTerm2 3.5 + macOS 15.5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: 现状
+      description: 实际发生了什么。有截图或录屏请贴上来。
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望
+      description: 应该发生什么。
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 最短复现
+      description: 从干净启动开始，能触发问题的最少步骤。写明终端尺寸、是否全屏、按了哪些键。
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: analysis
+    attributes:
+      label: 分析（可选）
+      description: |
+        定位到具体 commit、函数、代码行的分析对处理很有帮助。
+        每条结论请标注「已验证」或「未验证」。未标注的按未验证处理。
+      placeholder: |
+        已验证：git bisect 定位到 a643ee2，父提交 457dbba 通过，两侧各手动复核 3 次。
+        未验证：怀疑与流式行高变化时的宽度失效有关，没有证据。
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我搜索过现有 issue，这不是重复。
+          required: true
+        - label: 这是一个可复现的 bug，不是功能请求。
+          required: true
+        - label: 我没有为一个已经写好的 PR 补开这个 issue。
+          required: true
