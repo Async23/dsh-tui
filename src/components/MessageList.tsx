@@ -908,7 +908,20 @@ export function MessageList({
         scrollHandle.setClampBounds(min, undefined)
       } else {
         const min = Math.max(0, base + topPad - viewport)
-        scrollHandle.setClampBounds(min, Math.max(min, base + mountedBottom - viewport))
+        // Upper clamp only while unmounted content remains below the window
+        // (bottomPad spacer): it exists to pin the paint to the mounted edge
+        // during burst scrolls that outrun React's window re-render. Once the
+        // tail is fully mounted (bottomPad 0) there IS no unmounted gap — the
+        // estimated `mountedBottom` can sit a line short of the real Yoga
+        // extent (engine flex-basis cache vs final child layout drift, see
+        // render-node-to-output's scrollHeight floor), and an estimated clamp
+        // would then cull the last line at every non-sticky paint — the
+        // scrolled-away-and-back tail loss. Leave the max open; the renderer
+        // still caps at the frame's real maxScroll.
+        scrollHandle.setClampBounds(
+          min,
+          bottomPad <= 0 ? undefined : Math.max(min, base + mountedBottom - viewport),
+        )
       }
     }
     if (changed && !measureQueuedRef.current) {
