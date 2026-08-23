@@ -114,9 +114,6 @@ jobs:
       # 对齐合并（token 率 100-300/s 下的全量深拷贝热路径），且生命周期
       # 事件（tool/call、subagent/end）保持同步立即可见。
       - run: node --import tsx/esm scripts/verify-subagent-stream-batching.tsx
-      # resize 时间稳定性（借鉴 Codex 的 resize 漂移维度）：落定后不得
-      # 继续漂、20 次宽度循环无累计漂移、流中 resize 终态 == 冷渲染。
-      - run: node --import tsx/esm scripts/verify-resize-temporal.tsx
 
       # 消息列表虚拟化回归：连续高度校正的嵌套更新上限（#129, React #185）、
       # 滚动窗口与 shrink 边界。measure-depth 需生产模式（minified #185）。
@@ -441,12 +438,6 @@ jobs:
       # 原始颜色值，且必须把对应 ANSI 背景色写入终端。
       - run: node --import tsx/esm scripts/verify-text-background.tsx
 
-      # 轨迹场景回归（issue #80 演进，取代 repro-trace）：xterm headless 驱动
-      # 真实场景——账本行/耗时/光标、窗口滚动、检视窗跟随光标且高度恒定、
-      # 查询过滤、时序⇄热点切换，以及备用屏进出后主屏逐字节还原、
-      # scrollback 零增量、动效帧只含 SGR。
-      - run: node --import tsx/esm scripts/verify-trace-scene.tsx
-
       # 最高档思考强度点焰回归：数学层（波形/缓动/包络/逐列色契约）+
       # 场景（headless xterm）：三幕（双框同步扫光/档名居中聚拢/渐隐
       # 归零）断言帧间文本恒定、零行级 repaint、行数恒定、负路径全暗。
@@ -490,6 +481,46 @@ jobs:
       # 插件场景渲染崩溃边界：Thrower 场景必须被 PluginSceneBoundary 接住——
       # onError 精确一次、崩溃场景停止绘制、进程存活；健康场景不受影响。
       - run: node --import tsx/esm scripts/verify-plugin-scene-boundary.tsx
+
+  # 已知时序 flaky 隔离区：照常运行、照常红，但不接进 ci-gate、不阻塞
+  # 合并。两个成员都有 CI 环境间歇失败记录（Linux runner 负载高时触发，
+  # 本地同内容通过）：
+  #   - verify-resize-temporal：resize 落定/循环/流中竞争三断言对 settle
+  #     窗口敏感（main 自己的 push-CI 挂过，#462/#467 两次重跑即绿）；
+  #   - verify-trace-scene：AGENTS.md 已登记的时序 flake（本地约 1/3 复现，
+  #     4s 轮询窗口被慢渲染打败，下一断言 400ms 后即通过）。
+  # 探针改成真正 deterministic 后移回原组（届时从本 job 删除即可）。
+  flaky-observation:
+    runs-on: ubuntu-latest
+    env:
+      DSH_TUI_LANG: zh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
+      # 复用的 lib/ 与 vendor 构建产物。
+      - run: pnpm install --frozen-lockfile
+
+      # resize 时间稳定性（借鉴 Codex 的 resize 漂移维度）：落定后不得
+      # 继续漂、20 次宽度循环无累计漂移、流中 resize 终态 == 冷渲染。
+      - run: node --import tsx/esm scripts/verify-resize-temporal.tsx
+
+      # 轨迹场景回归（issue #80 演进，取代 repro-trace）：xterm headless 驱动
+      # 真实场景——账本行/耗时/光标、窗口滚动、检视窗跟随光标且高度恒定、
+      # 查询过滤、时序⇄热点切换，以及备用屏进出后主屏逐字节还原、
+      # scrollback 零增量、动效帧只含 SGR。
+      - run: node --import tsx/esm scripts/verify-trace-scene.tsx
 
   # CI 门禁：唯一的 required check 候选。汇总所有分组结果——任何一组失败
   # 或被取消，gate 显式失败并逐组报告状态。if: always() 保证上游失败时
