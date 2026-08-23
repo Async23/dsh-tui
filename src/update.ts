@@ -511,15 +511,16 @@ export async function updateTuiAndRestart(
  * the readable stdin pump.
  *
  * This waits for the replacement's natural exit, exactly like the proven
- * `/update` restart: the shell that ran `dsh-tui` reclaims the console the
- * moment the launch chain (cmd → wrapper → this process) unwinds, and an
- * orphaned replacement still attached to the console then fights the
- * shell's own prompt and line reader for every keypress (field evidence
- * 2026-08-24: healthy child mounted the UI, the old process exited on a
- * 4s survival timer, PS printed its prompt over the TUI and the DA
- * response bytes landed on the prompt line). Waiting is safe because
- * finishExit already paused and unref'd this process's stdin — the child
- * is the console's only key reader (issues #284/#307).
+ * `/update` restart: the outer command interpreter that ran `dsh-tui`
+ * reclaims the console the moment the launch chain (cmd → wrapper → this
+ * process) unwinds, and an orphaned replacement still attached to the
+ * console then fights the interpreter's own prompt and line reader for
+ * every keypress (field evidence 2026-08-24: healthy child mounted the
+ * UI, the old process exited on a 4s survival timer, the interpreter
+ * printed its prompt over the TUI and the DA response bytes landed on
+ * the prompt line). Waiting is safe because finishExit already paused
+ * and unref'd this process's stdin — the child is the console's only
+ * key reader (issues #284/#307).
  *
  * The 4s survival window remains a DIAGNOSIS marker only: a replacement
  * that dies within it never painted the TUI, and its captured stderr is
