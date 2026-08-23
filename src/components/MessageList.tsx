@@ -226,10 +226,23 @@ export function MessageList({
 }) {
   const hiddenCount = rows.length - MAX_RENDERED_ROWS
   // The thinking filter runs BEFORE virtualization so window indices line up.
+  //
+  // Empty settled assistant rows (PR #383's duplicate-dot bug): when the
+  // model calls a tool without producing text, the assistant/message event
+  // carries empty text — rendered as a lone `●` bullet dangling above the
+  // tool card. Filter them BEFORE virtualization (not by rendering null in
+  // TranscriptRow): a null row never mounts, never enters paintedOnce, and
+  // would stall the main-screen history-paint batch loop forever. A row
+  // that is STILL STREAMING keeps its place even with empty text — the
+  // live dot is the "model is answering" affordance and content may yet
+  // arrive.
   const visibleRows = (showAll || hiddenCount <= 0
     ? rows
     : rows.slice(hiddenCount)
-  ).filter(row => thinkingVisible || row.kind !== 'reasoning')
+  ).filter(row =>
+    !(row.kind === 'assistant' && row.streaming !== true && (row.text ?? '').trim() === '') &&
+    (thinkingVisible || row.kind !== 'reasoning'),
+  )
 
   // CC addMargin: every rendered block gets a 1-row top margin except the
   // first. Pre-pass over the FULL list so a windowed row keeps the exact
