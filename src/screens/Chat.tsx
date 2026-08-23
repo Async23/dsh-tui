@@ -2507,6 +2507,12 @@ export function Chat({
           effort={channel.reasoningEffort}
           cwd={channel.displayCwd}
           whale={channel.whale}
+          // Resuming a long session skips the ~3.4s opening animation: it
+          // keeps firing low-frequency React commits that compete with the
+          // transcript mount batches (and the first wheel events) for the
+          // frame budget right when the user wants to read history. Fresh
+          // sessions keep the full intro; restored ones settle instantly.
+          skipIntro={channel.rows.length > 30}
         />
         {/* The startup loaded-context panel: before the first message the
             transcript is empty, so the inventory of what this conversation
