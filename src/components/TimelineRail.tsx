@@ -257,8 +257,14 @@ export function TimelineRail({
                 flexShrink={0}
                 borderStyle="round"
                 borderColor="inactive"
-                backgroundColor="toolCardBackgroundDim"
                 paddingX={1}
+                // The card floats LEFT of the rail over selectable
+                // transcript text; fence its own rect so a drag that
+                // happens under a dwell-popped preview never copies the
+                // card's preview glyphs. On the box itself (not a NoSelect
+                // wrapper): absolute children don't contribute to a flow
+                // wrapper's layout, so a wrapper's region would be 0×0.
+                noSelect
               >
                 {lines.map((line, i) => (
                   <Text key={i} color="text" wrap="truncate-end">{line}</Text>
@@ -272,7 +278,12 @@ export function TimelineRail({
   }
 
   return (
-    <NoSelect fromLeftEdge>
+    // Plain NoSelect (box region only): the rail is a RIGHT-side gutter,
+    // so fromLeftEdge's [col 0 → box right edge] region would fence the
+    // ENTIRE transcript row — the copy-on-select regression where every
+    // drag copied ~nothing (the hover card below carries its own noSelect
+    // for the same reason: it floats over selectable transcript text).
+    <NoSelect>
       {/* Raw ink-box (not the themed Box): onWheel is a host-level prop
           (same as ScrollBox's viewport) — wheel over the rail scrolls the
           transcript, the rail has no scroll of its own. */}
