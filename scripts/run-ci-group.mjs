@@ -78,6 +78,18 @@ const GROUPS = {
 // 预算、行恒 1 不换行——断言零 wrapped 行、Pane 内无幽灵空行、翻页
 // 后标题/页脚/焦点仍在屏。
     ["verify-picker-edge", ['node', '--import', 'tsx/esm', 'scripts/verify-picker-edge.tsx']],
+// 滚动条 gutter 三态回归：rail 悬停/滚动/常驻三模式下 gutter 占位
+// 与内容宽度协商，切换不闪烁、不塌行。
+    ["verify-scrollbar-gutter", ['node', '--import', 'tsx/esm', 'scripts/verify-scrollbar-gutter.tsx']],
+// 一键回底回归：pill 常驻显示、End/Enter 回底、远距回底不触发空白
+// 死锁（大偏移一步到位后首帧即有内容）。
+    ["verify-back-to-bottom", ['node', '--import', 'tsx/esm', 'scripts/verify-back-to-bottom.tsx']],
+// 时间线 rail 回归：rail 覆盖全部轮次（含折叠轮），高亮锚定视口顶、
+// ▲/▼ 目标不越过 maxScroll。
+    ["verify-timeline-rail", ['node', '--import', 'tsx/esm', 'scripts/verify-timeline-rail.tsx']],
+// 恢复历史会话落点回归：/resume 后最新消息末行必须可见且可达
+// （scrollToBottom 补画完成后的锚定终态），不再落屏外。
+    ["repro-resume-position", ['node', '--import', 'tsx/esm', 'scripts/repro-resume-position.tsx']],
   ],
   'input-terminal': [
 // 按键解析回归（issue #110）：Option+Enter（ESC CR）精确/合并/分块
