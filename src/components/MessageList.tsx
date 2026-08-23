@@ -529,14 +529,23 @@ export function MessageList({
     // content geometry wrong for exactly that long (blank band after
     // Ctrl+O, unreachable scroll bottom after a tool result lands). One
     // remount per change; the measure tick + hold then tighten again.
-    // Guard: only rows that have actually MOUNTED here once qualify
+    // Guard 1: only rows that have actually MOUNTED here once qualify
     // (paintedOnce fills from localRefs post-commit) — a brand-new
     // streaming row has never been measured, and extending over it would
     // mount everything below the window every frame while the user reads
     // scrolled-up (virtualization defeated, per-frame full mount = the
     // long-session stall). New rows keep the original path: their height
     // lands once the window reaches them.
+    // Guard 2: rows actively STREAMING are skipped too. A streaming row's
+    // signature invalidates EVERY chunk (text length grows), so a painted
+    // streaming row below/above the window remounted per chunk — full
+    // markdown re-lex + wrap of the whole growing text, invisible to the
+    // user reading history (measured: 3s of streaming while scrolled up
+    // burned 2.7s of yoga, max 126ms single-chunk spikes). Its height is
+    // in flux anyway; the final settle invalidates once more and remounts
+    // exactly once.
     for (let i = 0; i < start; i++) {
+      if (visibleRows[i]!.streaming === true) continue
       const rowId = visibleRows[i]!.id
       if (!heightsRef.current.has(rowId) && paintedOnceRef.current.has(rowId)) {
         start = i
@@ -557,11 +566,16 @@ export function MessageList({
     lastStartRef.current = start
   }
   // Tail-side invalidated-height extension (see the start-side loop above
-  // for the rationale and the mounted-once guard): rows BELOW the window
-  // whose height was just invalidated remount to re-measure, so bottomPad
-  // keeps real geometry while the user reads scrolled-up content and the
-  // tail streams. Runs for non-sticky views; sticky mounts the tail anyway.
+  // for the rationale and both guards): rows BELOW the window whose height
+  // was just invalidated remount to re-measure, so bottomPad keeps real
+  // geometry while the user reads scrolled-up content and the tail streams.
+  // Runs for non-sticky views; sticky mounts the tail anyway. Streaming
+  // rows are skipped — THIS loop is the measured hot path of the
+  // read-while-streaming stall (the streaming tail row sits below the
+  // window and its height invalidated per chunk; A/B without the guard:
+  // yoga 总 2674ms / max 126ms over a 3s stream, with it: 13ms / 3.6ms).
   for (let i = end; i < visibleRows.length; i++) {
+    if (visibleRows[i]!.streaming === true) continue
     const rowId = visibleRows[i]!.id
     if (!heightsRef.current.has(rowId) && paintedOnceRef.current.has(rowId)) end = i + 1
   }
