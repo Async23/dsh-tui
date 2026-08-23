@@ -9,7 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { SessionModeSpec } from '../sessionModes.js'
-import { DEFAULT_STATUS_BAR, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { DEFAULT_STATUS_BAR, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 
 export const name = 'dsh-tui'
 // `tuiWorkspaces` must stay OUT of this code-level inject (issue #183): the
@@ -88,6 +88,10 @@ export interface Config {
   thinkingFold?: 'preview' | 'full'
   /** Tool-card background strength; defaults to no added background. */
   toolBackground?: ToolBackground
+  /** What the fullscreen transcript's right gutter shows (settings
+   *  `dsh-tui.scrollGutter`): `timeline` turn rail (default), `scrollbar`
+   *  proportional thumb, or `hidden`. */
+  scrollGutter?: ScrollGutterMode
   /** Status-footer field visibility and compact presentation preferences. */
   statusBar?: Partial<StatusBarConfig>
   /** Shift+Tab session-mode cycle (array order IS the cycle order; index 0
@@ -117,6 +121,7 @@ export const Config: Schema<Config> = Schema.object({
   diffLayout: Schema.union(['auto', 'split', 'unified']).default('auto'),
   thinkingFold: Schema.union(['preview', 'full']).default('preview'),
   toolBackground: Schema.union(['none', 'subtle', 'strong']).default('none'),
+  scrollGutter: Schema.union(['timeline', 'scrollbar', 'hidden']).default('timeline'),
   statusBar: Schema.object({
     compact: Schema.boolean().default(DEFAULT_STATUS_BAR.compact),
     model: Schema.boolean().default(DEFAULT_STATUS_BAR.model),

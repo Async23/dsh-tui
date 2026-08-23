@@ -113,15 +113,21 @@ function ScrollBox({
   // events, each re-running the offsets/window/timeline loops on a big
   // session. The scrollTop mutation and the ink render are already
   // frame-throttled; this aligns the React commits to the same frame
-  // budget. Leading edge fires when the last notify is ≥ a frame old (a
-  // lone click feels instant); bursts collapse into one trailing notify.
+  // budget. Both edges defer to a microtask: the remaining input events of
+  // the same stdin batch then land BEFORE any commit, and one commit
+  // covers the whole batch (the sync leading edge used to run a full
+  // commit inside the wheel dispatch itself — pure input latency).
   const notifyQueuedRef = useRef(false);
   const lastNotifyAtRef = useRef(-Infinity);
   const notifyCoalesced = () => {
     const since = performance.now() - lastNotifyAtRef.current;
     if (!notifyQueuedRef.current && since >= FRAME_INTERVAL_MS) {
+      notifyQueuedRef.current = true;
       lastNotifyAtRef.current = performance.now();
-      notify();
+      queueMicrotask(() => {
+        notifyQueuedRef.current = false;
+        notify();
+      });
       return;
     }
     if (notifyQueuedRef.current) return;
@@ -187,10 +193,37 @@ function ScrollBox({
     scrollToBottom() {
       const el = domRef.current;
       if (!el) return;
+      el.scrollAnchor = undefined;
+      const viewportH = el.scrollViewportHeight ?? 0;
+      const maxScroll = Math.max(0, (el.scrollHeight ?? 0) - viewportH);
+      const distance = maxScroll - (el.scrollTop ?? 0);
+      if (distance > viewportH && viewportH > 0) {
+        // FAR jump: drain instead of teleport. The viewport would land on
+        // rows that were never mounted — their spacer heights are
+        // DEFAULT_ROW_HEIGHT estimates, so the topPad swallows the view
+        // (blank transcript) AND it is a fixed point: unmounted rows never
+        // measure, nothing retried until the next wheel event. The drain
+        // walks the exact wheel path instead: proportional steps, the
+        // virtualization window follows per commit (it mounts the union of
+        // committed + pending), the visual clamp pins to the mounted edge
+        // while rows measure as they enter — no blank at any distance. The
+        // renderer's at-bottom re-pin restores sticky when it lands
+        // (stickyScroll=false + pending undefined + scrollTop >= maxScroll).
+        el.stickyScroll = false;
+        el.pendingScrollDelta = (el.pendingScrollDelta ?? 0) + distance;
+        scrollMutated(el);
+        return;
+      }
       el.pendingScrollDelta = undefined;
       el.stickyScroll = true;
-      markDirty(el);
-      notify();
+      // DOM-direct pre-write of the target (near jumps only): the notify
+      // below triggers MessageList's window recompute, and its React commit
+      // must read the NEW scrollTop — the old order (notify first, renderer
+      // moves scrollTop later) left the window one commit behind. The
+      // renderer's sticky branch re-pins scrollTop to the exact fresh
+      // maxScroll next frame, so a stale cached height costs one frame.
+      el.scrollTop = maxScroll;
+      scrollMutated(el);
       forceRender(n => n + 1);
     },
     getScrollTop() {

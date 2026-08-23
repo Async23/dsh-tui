@@ -27,7 +27,9 @@ import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
 import { LogoHeader, MessageList } from '../components/MessageList.js'
 import { TimelineRail } from '../components/TimelineRail.js'
+import { ScrollbarGutter } from '../components/ScrollbarGutter.js'
 import type { TimelineSnapshot } from '../ink/timeline-rail.js'
+import { normalizeScrollGutter } from '../tuiDisplayPrefs.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { PromptInput, type PromptController } from '../components/PromptInput.js'
 import { GoalTodoPanel } from '../components/GoalTodoPanel.js'
@@ -450,7 +452,10 @@ export function Chat({
         : -1
     }
   }, [isSticky, channel.rows])
-  const showPill = !isSticky && unseenCount > 0
+  // The pill shows whenever the view is off the bottom (one-click return
+  // home): with unseen rows it counts them, otherwise it is the plain
+  // "return to bottom" affordance (Enter/End/click all land it).
+  const showPill = !isSticky
 
   // Idle Ctrl+C: first press arms an exit, second press exits (CC's
   // double-press semantics, simplified). Under Windows ConPTY the key
@@ -1612,6 +1617,18 @@ export function Chat({
     }
     setForceMountRowId(rowId)
   }
+  /**
+   * Reveal-and-seek for a row folded behind the recent-rows window (the
+   * rail's tick for an old turn, the doc's revealAndSeekRow): expand the
+   * fold first, then the ordinary seek takes over — the completion effect
+   * below force-mounts the row and scrollToElement lands it once its ref
+   * (and Yoga top) exist. The fold toggle is idempotent, so calling this
+   * for an already-revealed row is harmless.
+   */
+  const revealAndSeekRow = (rowId: number): void => {
+    if (!showAllMessages) setShowAllMessages(true)
+    seekRow(rowId)
+  }
   React.useLayoutEffect(() => {
     if (forceMountRowId === null) return
     const el = rowRefsRef.current.get(forceMountRowId)
@@ -2295,8 +2312,18 @@ export function Chat({
       // the collapsed line keeps the done/total count and the live task
       // preview, so long todo lists stop crowding the prompt.
       setTodoCollapsed(previous => !previous)
-    } else if (plainReturn && showPill) {
+    } else if (plainReturn && !isSticky) {
+      // Enter while scrolled up returns to the bottom (CC's pill: the
+      // affordance now exists whenever the view is off the bottom, not
+      // only with unseen rows).
       handle?.scrollToBottom()
+    } else if (key.end && !isSticky) {
+      // End = jump to bottom, less/vim semantics. Global on the chat
+      // screen (search/history overlays consume their own End first —
+      // cursor-to-line-end there). At the bottom already: no-op, so the
+      // key stays harmless in muscle memory.
+      handle?.scrollToBottom()
+      event.stopImmediatePropagation()
     } else if (extensionShortcuts !== undefined && extensionShortcuts.dispatch(input, key)) {
       // Plugin shortcut (tuiShortcuts seam): matched only after every
       // built-in global binding above declined — locals always win, and the
@@ -2480,6 +2507,12 @@ export function Chat({
           effort={channel.reasoningEffort}
           cwd={channel.displayCwd}
           whale={channel.whale}
+          // Resuming a long session skips the ~3.4s opening animation: it
+          // keeps firing low-frequency React commits that compete with the
+          // transcript mount batches (and the first wheel events) for the
+          // frame budget right when the user wants to read history. Fresh
+          // sessions keep the full intro; restored ones settle instantly.
+          skipIntro={channel.rows.length > 30}
         />
         {/* The startup loaded-context panel: before the first message the
             transcript is empty, so the inventory of what this conversation
@@ -2510,6 +2543,7 @@ export function Chat({
           activityFrames={channel.activityFrames}
           showAll={showAllMessages}
           thinkingVisible={thinkingVisible}
+          historyPaintEnabled={!fullscreen}
           onToggleAll={() =>{  setShowAllMessages(previous => !previous) }}
           onLoadOlder={() => channel.loadOlder()}
           registerRowRef={registerRowRef}
@@ -2521,15 +2555,30 @@ export function Chat({
           onOpenSubagent={(agentId) => setSubagentDetailId(agentId)}
         />
         </ScrollBox>
-        <TimelineRail
-          handle={handle}
-          turns={timeline.turns}
-          activeId={timeline.activeId}
-          upId={timeline.upId}
-          downId={timeline.downId}
-          terminalWidth={terminalColumns}
-          hoverEnabled={!promptSelectionActive}
-        />
+        {(() => {
+          // Gutter mode (settings `dsh-tui.scrollGutter`): the timeline
+          // rail (default), the proportional scrollbar, or nothing. The
+          // slot keeps its 2 columns in both rendered modes (Qwen's
+          // permanent-gutter rule — an appearing/disappearing gutter
+          // changes the transcript width and rewraps everything).
+          const gutter = normalizeScrollGutter(channel.scrollGutter)
+          if (gutter === 'hidden') return null
+          if (gutter === 'scrollbar') {
+            return <ScrollbarGutter handle={handle} terminalWidth={terminalColumns} />
+          }
+          return (
+            <TimelineRail
+              handle={handle}
+              turns={timeline.turns}
+              activeId={timeline.activeId}
+              upId={timeline.upId}
+              downId={timeline.downId}
+              terminalWidth={terminalColumns}
+              hoverEnabled={!promptSelectionActive}
+              onRevealTurn={revealAndSeekRow}
+            />
+          )
+        })()}
       </Box>
       {/* Bottom chrome (pill, spinners, dialogs, prompt, statusline): never
           let flex shrink squeeze these fixed-height rows — the ScrollBox
@@ -2983,7 +3032,11 @@ function NewMessagesPill({
         onMouseLeave={() =>{  setHover(false) }}
       >
         <Text color="inverseText" bold>
-          {' '}↓ {t(count === 1 ? 'new-message' : 'new-messages', { n: count })}{' '}
+          {' '}
+          {count > 0
+            ? t(count === 1 ? 'new-message' : 'new-messages', { n: count })
+            : t('back-to-bottom')}
+          {' '}
         </Text>
       </Box>
     </Box>
