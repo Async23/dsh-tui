@@ -56,6 +56,28 @@ jobs:
       - run: pnpm verify:package
       - run: pnpm verify:bun-package
 
+  # 渲染 · 滚动 · resize · 子代理 · picker——与其余组并行；失败互不遮蔽。
+  render-scroll:
+    runs-on: ubuntu-latest
+    env:
+      DSH_TUI_LANG: zh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
+      # 复用的 lib/ 与 vendor 构建产物。
+      - run: pnpm install --frozen-lockfile
       # 带断言的回归：提问面板内联输入（issue #9）+ 工具卡排版
       # （⎿ 缩进、diff 红绿行、信封剥离），失败即非零退出。
       - run: node --import tsx/esm scripts/repro-askpanel.tsx
@@ -125,6 +147,28 @@ jobs:
       # 后标题/页脚/焦点仍在屏。
       - run: node --import tsx/esm scripts/verify-picker-edge.tsx
 
+  # 输入 · 终端协议 · 退出漏斗 · 系统集成——与其余组并行；失败互不遮蔽。
+  input-terminal:
+    runs-on: ubuntu-latest
+    env:
+      DSH_TUI_LANG: zh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
+      # 复用的 lib/ 与 vendor 构建产物。
+      - run: pnpm install --frozen-lockfile
       # 按键解析回归（issue #110）：Option+Enter（ESC CR）精确/合并/分块
       # 三种到达形态、CSI-u 与 modifyOtherKeys 的 Shift/Ctrl/Meta+Enter。
       - run: node --import tsx/esm scripts/verify-keys.tsx
@@ -173,6 +217,28 @@ jobs:
       # resume.txt 双写契约、旧 env 名检测（DSH_CC_RESUME_SESSION 双读不算废弃）。
       - run: node scripts/verify-legacy-rename.mjs
 
+  # 会话 · 工作区 · 插件扩展 · resume——与其余组并行；失败互不遮蔽。
+  session-workspace:
+    runs-on: ubuntu-latest
+    env:
+      DSH_TUI_LANG: zh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
+      # 复用的 lib/ 与 vendor 构建产物。
+      - run: pnpm install --frozen-lockfile
       # 审批服务配置回归（issue #49 尾巴）：裸组合 cordis.yml 必须挂载
       # approval 行；裸组合与 profile patch 的 policy 表达式逐场景同值
       #（ask / never / win32 never），两个入口语义不漂移。
@@ -261,6 +327,28 @@ jobs:
       # 中文必测：所有文案都本地化，按字符数而非列宽排版在英文下看不出来。
       - run: node scripts/verify-session-browser-layout.mjs
 
+  # channel · 界面应用回归——与其余组并行；失败互不遮蔽。
+  channel-ui:
+    runs-on: ubuntu-latest
+    env:
+      DSH_TUI_LANG: zh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
+      # 复用的 lib/ 与 vendor 构建产物。
+      - run: pnpm install --frozen-lockfile
       # channel 层回归：发送链（submit/steer/撤回/打断重投）、compact 折叠、
       # goal/todo 事件回放。曾因不在 CI 而随接口演进静默失效（0.3.6 的
       # installModelSelection、#34 的投递异步化都没被它们拦下），挂进来
