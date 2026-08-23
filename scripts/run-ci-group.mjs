@@ -129,6 +129,11 @@ const GROUPS = {
 // 换名迁移回归（issue #120）：~/.dsh-cc → ~/.dsh-tui 首启复制迁移、
 // resume.txt 双写契约、旧 env 名检测（DSH_CC_RESUME_SESSION 双读不算废弃）。
     ["verify-legacy-rename", ['node', 'scripts/verify-legacy-rename.mjs']],
+// 拖选复制端到端回归（用户报告：全屏下拖选"只能复制一个字符，只有
+// 输入框文字能复制"）：右侧 gutter 误用 NoSelect fromLeftEdge 把整行
+// 转录拉进不可选取区。真实 Chat 树 + SGR 拖选注入，静息/上滚阅读+
+// 流式并发/流式结束后三场景断言 OSC 52 携带完整选中文本。
+    ["repro-drag-select-streaming", ['node', '--import', 'tsx/esm', 'scripts/repro-drag-select-streaming.tsx']],
   ],
   'session-workspace': [
 // 审批服务配置回归（issue #49 尾巴）：裸组合 cordis.yml 必须挂载
@@ -184,6 +189,11 @@ const GROUPS = {
 // /resume 会话管理回归（issue #112）：picker 重命名追加帧（seq 连续、
 // 已有字节不动、last-title-wins）、删除目录、路径穿越 id 拒绝。
     ["verify-resume-manage", ['node', 'scripts/verify-resume-manage.mjs']],
+// resume 模型路由回填回归：session 记录的 request/header 路由必须能被
+// resolvePersistedRoute 读回并喂给 agents.resume——provider-only 的
+// cordis.yml pin（issue #67）否则会让 options.model 缺位，连累子代理
+// 继承（{{model}} persona 变量装配失败）。
+    ["verify-resume-route", ['node', 'scripts/verify-resume-route.mjs']],
 // /resume 任意深度重命名回归：会话索引取消了标题解析窗口，最旧的一条
 // 也必须解析出自己的标题、改名后立即显示新名。stub 只提供 list（不给
 // listSnapshots/locate），因此同时覆盖降级路径。
