@@ -7,7 +7,9 @@
 
 ## 如何贡献
 
-- **报告 bug 或请求功能**：提交 issue，附上清晰的复现步骤与你使用的终端环境。
+- **报告 bug**：用 bug 表单提交 issue，填写版本、终端环境与最短复现步骤。
+- **提功能建议**：发到 [Discussions Ideas](https://github.com/ccch1mneyyy/dsh-TUI/discussions/new?category=ideas)。
+  Issues 不接受功能请求。维护者认可后会开一个 issue 跟踪实现。
 - **提交 PR**：base 指向 `main`。保持改动聚焦——一个 PR 只做一个逻辑改动，
   标题用中文或中英对照，描述写清动机、改动点与验证方式。
 - **请求 review 前先跑验证矩阵**：CI 运行的就是下面这些命令。
