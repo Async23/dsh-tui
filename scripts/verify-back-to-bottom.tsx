@@ -170,5 +170,54 @@ await pressKey('end')
 }
 
 await inst.unmount()
+
+// ── 7. 远距跳底：20 轮重会话从中部 End 回底，不空白、末轮可见 ──
+// 修复前：viewport 落在从未挂载的行上（spacer 高度全是估算），topPad
+// 吞掉视口 = 永久空白，直到下一次 wheel 才救活。
+{
+  const heavy: any[] = []
+  for (let turn = 1; turn <= 20; turn++) {
+    heavy.push({ id: turn * 2 - 1, kind: 'user', text: `问题 ${turn}` })
+    heavy.push({ id: turn * 2, kind: 'assistant', text: Array.from({ length: 8 }, (_, i) => `回复 ${turn} 第 ${i + 1} 行`).join('\n') })
+  }
+  const heavyChannel: any = { ...channel, rows: heavy, lastUserText: '问题 20' }
+  const inst2 = await render(
+    <AlternateScreen>
+      <Chat channel={heavyChannel} questionStore={new QuestionStore()} fullscreen />
+    </AlternateScreen>,
+    { stdout: stdout as any, stdin: stdin as any, stderr: stderr as any, exitOnCtrlC: false, patchConsole: false },
+  )
+  await sleep(700)
+  // 上滚 30 格 → 中部（跳底距离 ≈ 150 行 ≫ 视口）
+  for (let i = 0; i < 30; i++) {
+    stdin.write('\x1b[<64;90;30M')
+    await sleep(60)
+  }
+  await sleep(300)
+  // End 回底 + 采样
+  stdin.write('\x1b[F')
+  let settledAt = -1
+  for (let s = 0; s < 12; s++) {
+    await sleep(50)
+    if (screenLines().some(l => l.includes('问题 20'))) { settledAt = (s + 1) * 50; break }
+  }
+  check('远距 End 回底：末轮可见（≤600ms）', settledAt > 0, `settledAt=${settledAt}ms`)
+  await sleep(300)
+  const lines = screenLines()
+  // 空白行统计：转译区（跳过置顶头）连续全空行数 ≤ 6（轮间分隔正常 2-3 行）
+  let promptRow = -1
+  for (let y = ROWS - 1; y >= 0; y--) { if (lines[y]!.trimStart().startsWith('❯')) { promptRow = y; break } }
+  const endRow = promptRow >= 0 ? promptRow - 2 : ROWS - 4
+  let maxRun = 0, run = 0
+  for (let y = 1; y < endRow; y++) {
+    if (lines[y]!.trim() === '') run++
+    else run = 0
+    maxRun = Math.max(maxRun, run)
+  }
+  check('远距回底后无空白带（连续空行 ≤6）', maxRun <= 6, `maxRun=${maxRun}`)
+  check('远距回底后 pill 消失', pillText() === null, `pill=${JSON.stringify(pillText())}`)
+  await inst2.unmount()
+}
+
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} 项失败`)
 process.exit(failed === 0 ? 0 : 1)

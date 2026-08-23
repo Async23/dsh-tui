@@ -286,6 +286,29 @@ await wheel(false, 20)
   }
 }
 
+// ── 6b. 快速划过 tick：dwell 门下全程无卡（残影修复的回归）──
+{
+  const snap = railSnapshot()
+  let anyCard = false
+  // 8ms 间隔连续扫过全部 tick 行（模拟快速划过）
+  for (const row of snap.ticks) {
+    stdin.write(`\x1b[<35;${COLS};${row + 1}M`)
+    await sleep(8)
+    if (screenLines().some(l => l.slice(55, 97).includes('╭') || l.slice(55, 97).includes('╮'))) anyCard = true
+  }
+  await sleep(60)
+  if (screenLines().some(l => l.slice(55, 97).includes('╭') || l.slice(55, 97).includes('╮'))) anyCard = true
+  check('快速划过 tick 全程无预览卡（dwell 门）', !anyCard)
+  // 停留后卡照常出现
+  const row = snap.ticks[2]
+  if (row !== undefined) {
+    stdin.write(`\x1b[<35;${COLS};${row + 1}M`)
+    await sleep(350)
+    check('停留 350ms 后预览卡出现', screenLines().some(l => l.slice(55, 97).includes('╭') || l.slice(55, 97).includes('╮')))
+    await hoverAt(30, 20)
+  }
+}
+
 // ── 7. resize 59 列：rail 隐藏；恢复 100 列：rail 回来 ──
 {
   ;(stdout as any).columns = 59
