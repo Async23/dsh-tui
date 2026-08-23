@@ -207,6 +207,10 @@ const GROUPS = {
 // 不得创建空 assistant 行，否则思考块折叠后转录里多出一个只有
 // ● 前缀、内容为空的行。
     ["verify-empty-assistant-row", ['node', 'scripts/verify-empty-assistant-row.mjs']],
+// 空文本 assistant 行渲染层兜底（#383）：channel 层守卫之外的存量空行
+// （历史日志回放、空白文本）在 visibleRows 管线过滤，工具卡上方不得
+// 出现孤立 ●；streaming 空行保留 live dot；落定后过滤即时生效。
+    ["verify-empty-assistant", ['node', '--import', 'tsx/esm', 'scripts/verify-empty-assistant.tsx']],
 // 技能斜杠命令补全回归（issue #86）：user-invocable 技能合并进 /
 // 菜单与 Tab 补全（skill 标记、与 locals/注册表撞名让位），
 // skills/change 实时增删，读取失败保留 last-good。
