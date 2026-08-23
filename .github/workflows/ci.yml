@@ -38,7 +38,11 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - run: pnpm install --frozen-lockfile
+      # install 只装依赖：prepare 钩子里的 compile 由下面的显式步骤替代，
+      # 全 workflow 只编译这一次，产物经 artifact 供下游测试组复用。
+      # （--ignore-scripts 对依赖无影响：pnpm-workspace.yaml 的 allowBuilds
+      # 本就禁了 esbuild/koffi 的构建脚本。）
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
       # lib/ is not checked in. Compile it once from a clean output directory;
       # the following gates reuse this exact runtime instead of rebuilding it.
@@ -56,8 +60,30 @@ jobs:
       - run: pnpm verify:package
       - run: pnpm verify:bun-package
 
+      # 编译产物交给下游测试组（needs: build 的 job 下载复用，不再各自
+      # prepare-compile）。@dsh-std 运行时依赖只有 workspace 内部链接，
+      # 根 node_modules 的符号链接即完成解析，无需携带 vendor 的构建
+      # 工具链；.tsx 脚本走的 src/ 由各组自己的 checkout 提供。
+      - name: Upload compiled output
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-build-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            lib/
+            vendor/dsh-std/packages/core/lib/
+            vendor/dsh-std/packages/manifest/lib/
+            vendor/dsh-std/packages/connection/lib/
+            vendor/dsh-std/packages/presentation/lib/
+            vendor/dsh-std/packages/command/lib/
+            vendor/dsh-std/packages/storage/lib/
+            vendor/dsh-std/packages/messages/lib/
+
   # 渲染 · 滚动 · resize · 子代理 · picker——与其余组并行；失败互不遮蔽。
+  # needs: build：编译只在 build job 发生一次，本组经 artifact 复用产物。
   render-scroll:
+    needs: build
     runs-on: ubuntu-latest
     env:
       DSH_TUI_LANG: zh
@@ -75,9 +101,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
-      # 复用的 lib/ 与 vendor 构建产物。
-      - run: pnpm install --frozen-lockfile
+      # 依赖装好即可；编译产物复用 build job 的 artifact，本组不再 compile。
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Restore compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-build-${{ github.run_id }}
       # 带断言的回归：提问面板内联输入（issue #9）+ 工具卡排版
       # （⎿ 缩进、diff 红绿行、信封剥离），失败即非零退出。
       - run: node --import tsx/esm scripts/repro-askpanel.tsx
@@ -145,7 +175,9 @@ jobs:
       - run: node --import tsx/esm scripts/verify-picker-edge.tsx
 
   # 输入 · 终端协议 · 退出漏斗 · 系统集成——与其余组并行；失败互不遮蔽。
+  # needs: build：编译只在 build job 发生一次，本组经 artifact 复用产物。
   input-terminal:
+    needs: build
     runs-on: ubuntu-latest
     env:
       DSH_TUI_LANG: zh
@@ -163,9 +195,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
-      # 复用的 lib/ 与 vendor 构建产物。
-      - run: pnpm install --frozen-lockfile
+      # 依赖装好即可；编译产物复用 build job 的 artifact，本组不再 compile。
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Restore compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-build-${{ github.run_id }}
       # 按键解析回归（issue #110）：Option+Enter（ESC CR）精确/合并/分块
       # 三种到达形态、CSI-u 与 modifyOtherKeys 的 Shift/Ctrl/Meta+Enter。
       - run: node --import tsx/esm scripts/verify-keys.tsx
@@ -215,7 +251,9 @@ jobs:
       - run: node scripts/verify-legacy-rename.mjs
 
   # 会话 · 工作区 · 插件扩展 · resume——与其余组并行；失败互不遮蔽。
+  # needs: build：编译只在 build job 发生一次，本组经 artifact 复用产物。
   session-workspace:
+    needs: build
     runs-on: ubuntu-latest
     env:
       DSH_TUI_LANG: zh
@@ -233,9 +271,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
-      # 复用的 lib/ 与 vendor 构建产物。
-      - run: pnpm install --frozen-lockfile
+      # 依赖装好即可；编译产物复用 build job 的 artifact，本组不再 compile。
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Restore compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-build-${{ github.run_id }}
       # 审批服务配置回归（issue #49 尾巴）：裸组合 cordis.yml 必须挂载
       # approval 行；裸组合与 profile patch 的 policy 表达式逐场景同值
       #（ask / never / win32 never），两个入口语义不漂移。
@@ -325,7 +367,9 @@ jobs:
       - run: node scripts/verify-session-browser-layout.mjs
 
   # channel · 界面应用回归——与其余组并行；失败互不遮蔽。
+  # needs: build：编译只在 build job 发生一次，本组经 artifact 复用产物。
   channel-ui:
+    needs: build
     runs-on: ubuntu-latest
     env:
       DSH_TUI_LANG: zh
@@ -343,9 +387,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
-      # 复用的 lib/ 与 vendor 构建产物。
-      - run: pnpm install --frozen-lockfile
+      # 依赖装好即可；编译产物复用 build job 的 artifact，本组不再 compile。
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Restore compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-build-${{ github.run_id }}
       # channel 层回归：发送链（submit/steer/撤回/打断重投）、compact 折叠、
       # goal/todo 事件回放。曾因不在 CI 而随接口演进静默失效（0.3.6 的
       # installModelSelection、#34 的投递异步化都没被它们拦下），挂进来
@@ -491,6 +539,7 @@ jobs:
   #     4s 轮询窗口被慢渲染打败，下一断言 400ms 后即通过）。
   # 探针改成真正 deterministic 后移回原组（届时从本 job 删除即可）。
   flaky-observation:
+    needs: build
     runs-on: ubuntu-latest
     env:
       DSH_TUI_LANG: zh
@@ -508,9 +557,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # prepare 会经 prepare-guard 触发一次完整 compile，产出本组测试
-      # 复用的 lib/ 与 vendor 构建产物。
-      - run: pnpm install --frozen-lockfile
+      # 依赖装好即可；编译产物复用 build job 的 artifact，本组不再 compile。
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Restore compiled output
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-build-${{ github.run_id }}
 
       # resize 时间稳定性（借鉴 Codex 的 resize 漂移维度）：落定后不得
       # 继续漂、20 次宽度循环无累计漂移、流中 resize 终态 == 冷渲染。
