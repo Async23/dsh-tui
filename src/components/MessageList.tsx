@@ -145,6 +145,7 @@ export function MessageList({
   onToggleAll,
   onLoadOlder,
   thinkingVisible = true,
+  historyPaintEnabled = true,
   registerRowRef,
   scrollHandle,
   forceMountRowId,
@@ -179,6 +180,15 @@ export function MessageList({
    *  earlier messages" affordance; shown only when rows were folded). */
   onLoadOlder?: () => void
   thinkingVisible?: boolean
+  /**
+   * Whether rows outside the virtualization window must still be painted
+   * once (main-screen mode: unpainted rows leave NO copy in the terminal
+   * scrollback, so preset history would vanish). The alt-screen has no
+   * scrollback — passing false skips the mount-everything-on-open
+   * expansion there (a 300-row fold window of markdown otherwise costs
+   * seconds of lex/highlight/layout before first paint).
+   */
+  historyPaintEnabled?: boolean
   /** Transcript search: register each row's DOM element for scroll-to-match. */
   registerRowRef?: (rowId: number, el: DOMElement | null) => void
   /** Scroll viewport the list virtualizes against. */
@@ -442,11 +452,19 @@ export function MessageList({
     // vanish from the user's scrollback. Extending mounts everything above
     // on the first frame (topPad 0, full paint), then the set fills and the
     // window tightens to the tail.
+    // MAIN-SCREEN ONLY (historyPaintEnabled): the alt-screen has no
+    // scrollback — a row outside the window has no "copy" to preserve, and
+    // mounting the whole fold window on open lexed/highlighted/laid out
+    // hundreds of markdown rows the user never sees (measured: 4.3s of
+    // saturated main thread before first paint on a 960-row session; the
+    // virtualization window re-mounts rows on demand as they scroll in).
     const paintedOnce = paintedOnceRef.current
-    for (let i = 0; i < start; i++) {
-      if (!paintedOnce.has(visibleRows[i]!.id)) {
-        start = i
-        break
+    if (historyPaintEnabled) {
+      for (let i = 0; i < start; i++) {
+        if (!paintedOnce.has(visibleRows[i]!.id)) {
+          start = i
+          break
+        }
       }
     }
     // Unknown-height extension (layout signature, see sigRef): a row whose
