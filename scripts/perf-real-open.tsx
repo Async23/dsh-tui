@@ -154,6 +154,35 @@ if (!INLINE) {
   console.log(`==== 二次滚动（重挂载行 = LRU 命中验证）====`)
   console.log(`frames=${frames.length}  p50=${pct(ms2, 50).toFixed(1)}ms  p95=${pct(ms2, 95).toFixed(1)}ms  max=${Math.max(...ms2).toFixed(1)}ms`)
   console.log(`  yoga 总=${sum(frames, f => f.yoga).toFixed(0)}ms max=${Math.max(...frames.map(f => f.yoga)).toFixed(1)}ms`)
+  // ── 阶段 D：上滚阅读 + 流式输出并发（经典卡顿组合）──
+  // 先上滚打破 sticky（视口停在中部历史），再让尾部行以 streaming=true
+  // （走 StreamingMarkdown 前缀稳定路径）持续 text += chunk + version++。
+  frames.length = 0; byteHist.length = 0
+  for (let i = 0; i < 40; i++) {
+    stdin.write('\x1b[<64;90;30M')
+    await sleep(8)
+  }
+  await sleep(300)
+  frames.length = 0; byteHist.length = 0
+  const streamRow = rows[rows.length - 1]!
+  streamRow.streaming = true
+  const origText = streamRow.text
+  const chunk = '流式增量段落：继续分析模块边界与常量折叠的正确性，覆盖深层嵌套与循环引用的边界情况。\n\n'
+  let streamed = 0
+  const streamStart = performance.now()
+  while (performance.now() - streamStart < 3000) {
+    streamRow.text = origText + chunk.repeat(++streamed)
+    channel.version++ // useSyncExternalStore 的快照就是 version
+    listeners.forEach(l => l())
+    await sleep(33)
+  }
+  streamRow.streaming = undefined
+  await sleep(400)
+  const msD = frames.map(f => f.ms)
+  console.log(`==== 上滚阅读 + 流式并发 ====`)
+  console.log(`frames=${frames.length}  p50=${pct(msD, 50).toFixed(1)}ms  p95=${pct(msD, 95).toFixed(1)}ms  max=${Math.max(...msD).toFixed(1)}ms`)
+  console.log(`  commit 总=${sum(frames, f => f.commit).toFixed(0)}ms max=${Math.max(...frames.map(f => f.commit)).toFixed(1)}ms`)
+  console.log(`  yoga 总=${sum(frames, f => f.yoga).toFixed(0)}ms max=${Math.max(...frames.map(f => f.yoga)).toFixed(1)}ms`)
   const heap = process.memoryUsage()
   console.log(`heap used=${(heap.heapUsed / 1048576).toFixed(0)}MB rss=${(heap.rss / 1048576).toFixed(0)}MB`)
 }
