@@ -46,6 +46,13 @@ const DEFAULT_ROW_HEIGHT = 2
 /** Cold-start estimate of the header block above the rows; corrected by the
  *  first layout measurement. */
 const DEFAULT_HEADER_LINES = 14
+/** Stable fallbacks for the stream-fold props: verify/repro harnesses and
+ *  embedders render MessageList with prop sets that predate them, and the
+ *  render must not throw (same rule as Chat's stubbed channel APIs). Module
+ *  scope keeps the identities stable so MemoRow's shallow compare and the
+ *  toggle callback's deps never churn. */
+const NO_STREAM_FOLDED: ReadonlySet<number> = new Set()
+const NOOP_TOGGLE_STREAM_FOLD = (_rowId: number): void => {}
 
 /**
  * Per-kind layout signature: the O(1) identity of every input that decides a
@@ -127,8 +134,8 @@ export function MessageList({
   expandedRows,
   selectedId,
   onToggleRow,
-  streamFoldedRows,
-  onToggleStreamFold,
+  streamFoldedRows = NO_STREAM_FOLDED,
+  onToggleStreamFold = NOOP_TOGGLE_STREAM_FOLD,
   model,
   diffLayout = 'auto',
   thinkingFold = 'preview',
@@ -154,8 +161,8 @@ export function MessageList({
   selectedId: number | null
   onToggleRow: (rowId: number) => void
   /** 流式 reasoning 行被用户折叠（点击展开/折叠对流式行同样有效）。 */
-  streamFoldedRows: ReadonlySet<number>
-  onToggleStreamFold: (rowId: number) => void
+  streamFoldedRows?: ReadonlySet<number>
+  onToggleStreamFold?: (rowId: number) => void
   model: string
   /** Edit/Write diff presentation preference (forwarded to tool cards). */
   diffLayout?: 'auto' | 'split' | 'unified'
@@ -349,6 +356,10 @@ export function MessageList({
     const tick = (): void =>{  setScrollTick(t => t + 1) }
     return scrollHandle.subscribe(tick)
   }, [scrollHandle])
+
+  // Cached rail/header preview per user row (see the timeline block for why
+  // the length guard exists alongside the id key).
+  const previewCacheRef = React.useRef(new Map<number, { len: number; preview: string }>())
 
   const heightOf = (row: ChatRow): number =>
     heightsRef.current.get(row.id) ?? DEFAULT_ROW_HEIGHT
@@ -550,6 +561,13 @@ export function MessageList({
   let upTurnIndex: number | null = null
   let downTurnIndex: number | null = null
   {
+    // Preview cache: user rows are immutable once landed, and this loop
+    // runs on EVERY scroll frame (MessageList re-renders per drain tick).
+    // clipPreview scans to the first non-empty line — O(text length) per
+    // row per frame for pasted-content prompts. Cache by row id with a
+    // text-length guard as belt-and-braces against any id reuse.
+    const previewCache = previewCacheRef.current
+    if (previewCache.size > 2000) previewCache.clear()
     const viewTop = scrollTop + pending
     const maxScroll = Math.max(0, (scrollHandle?.getScrollHeight() ?? 0) - viewport)
     let index = 0
@@ -557,7 +575,12 @@ export function MessageList({
       const row = visibleRows[i]!
       if (row.kind !== 'user') continue
       const textTop = base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0)
-      timelineTurns.push({ id: row.id, top: textTop, preview: clipPreview(row.text) })
+      let cached = previewCache.get(row.id)
+      if (cached === undefined || cached.len !== row.text.length) {
+        cached = { len: row.text.length, preview: clipPreview(row.text) }
+        previewCache.set(row.id, cached)
+      }
+      timelineTurns.push({ id: row.id, top: textTop, preview: cached.preview })
       if (textTop <= viewTop) activeTurnIndex = index
       if (textTop < viewTop) upTurnIndex = index
       if (downTurnIndex === null && textTop > viewTop && textTop <= maxScroll) {
