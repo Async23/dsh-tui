@@ -190,7 +190,7 @@ terminal support for the extended keyboard protocol (iTerm2 / kitty / WezTerm /
 ghostty / tmux); macOS's built-in Terminal.app consumes `⌘` shortcuts itself,
 so keep using `Ctrl`.
 
-**Mouse** (fullscreen is the factory default since 0.8.8; set `fullscreen: false` to restore the inline main screen; updating from an older version clears a previously saved inline choice once — you can still pick inline again afterwards)
+**Mouse** (fullscreen is the factory default since 0.9.0; set `fullscreen: false` to restore the inline main screen; updating from an older version clears a previously saved inline choice once — you can still pick inline again afterwards)
 
 | Action | Function |
 |---|---|
