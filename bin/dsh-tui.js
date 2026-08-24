@@ -31,7 +31,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const ownDir = dirname(here)
@@ -156,10 +156,19 @@ const MSG = {
     en: '(not installed)',
     zh: '（未安装）',
   },
+  updateUnavailable: {
+    en:
+      `[dsh-tui] \`update\` needs the profile's compiled copy, but it is missing or too old to carry the CLI entry.\n` +
+      `Update manually instead:\n  dsh plugin --profile ${PROFILE} add ${PACKAGE}@latest`,
+    zh:
+      `[dsh-tui] \`update\` 需要 profile 的编译产物，但它缺失或版本过旧、不含 CLI 入口。\n` +
+      `请改用手工升级：\n  dsh plugin --profile ${PROFILE} add ${PACKAGE}@latest`,
+  },
   helpText: {
     en:
       `Usage: dsh-tui [command] [options] [path|url]\n\n` +
       `Commands:\n` +
+      `  update                 Update the ${PROFILE} profile to the latest release\n` +
       `  version                Show launcher and profile versions\n` +
       `  help                   Show this help\n\n` +
       `Options:\n` +
@@ -170,6 +179,7 @@ const MSG = {
     zh:
       `用法：dsh-tui [命令] [选项] [路径|URL]\n\n` +
       `命令：\n` +
+      `  update                 将 ${PROFILE} profile 升级到最新版本\n` +
       `  version                显示启动器与 profile 版本\n` +
       `  help                   显示本帮助\n\n` +
       `选项：\n` +
@@ -281,6 +291,37 @@ const bootstrapProfile = () => {
   }
 }
 
+// ─── 子命令：update ──────────────────────────────────────────────────────────
+// 顶层处理、两种角色同一条路径——不放进委托链。委托会把 update 交给
+// profile 内的旧 bin：旧副本不认识这个词，只会当参数透传，恰好是「profile
+// 落后、最需要升级」的用户永远到不了新入口。这里统一动态 import **profile
+// 的**编译产物（不是本副本的——DSH_TUI_NO_DELEGATE 下两者不同包，读本副本
+// 会拿全局包版本误判 already-latest/half-updated）；瘦壳零 lib 静态依赖的
+// 迁移契约不变。profile 未初始化时先走既有自举（dsh/pnpm 预检在其中）；
+// 编译产物缺失或没有 cliUpdate 导出（半更新的旧版）给手工升级指引退出 1。
+// 判定先于工作区目标嗅探：cwd 里名为 update 的文件不再被当成路径。
+if (subcommand === 'update') {
+  if (!profileReady()) bootstrapProfile()
+  {
+    const probe = spawnSync(...cmd('dsh', ['--version']), { stdio: 'pipe', ...shellOpt })
+    if (probe.error || probe.status !== 0) {
+      console.error(msg('noDsh'))
+      process.exit(1)
+    }
+  }
+  let cliUpdate
+  try {
+    ;({ cliUpdate } = await import(pathToFileURL(join(profilePkgDir, 'lib', 'types', 'update.js')).href))
+  } catch {
+    cliUpdate = undefined
+  }
+  if (typeof cliUpdate !== 'function') {
+    console.error(msg('updateUnavailable'))
+    process.exit(1)
+  }
+  process.exit(await cliUpdate(PROFILE))
+}
+
 // ─── 全局副本：瘦壳角色 ───────────────────────────────────────────────────────
 // DSH_TUI_NO_DELEGATE=1 是测试/调试逃生口：强制走完整逻辑（verify-launcher
 // 的沙箱用它直接驱动全量路径；现场排查委托链时同样可用）。
@@ -310,6 +351,7 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
       process.exit(1)
     }
   }
+
   let installedVersion
   try {
     installedVersion = JSON.parse(readFileSync(installedPkgPath, 'utf8')).version

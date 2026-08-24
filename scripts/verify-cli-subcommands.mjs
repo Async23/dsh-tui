@@ -98,6 +98,88 @@ for (const alias of ['version', '--version', '-v']) {
   check('profile 已安装时打印 profile 版本', r.status === 0 && r.stdout.includes('1.2.3-stub'))
 }
 
+// --- update（顶层分发：不委托、import profile 的 lib）----------------------------
+{
+  // update 在顶层处理：即使是全局瘦壳，也直接 import **profile 的**编译
+  // 产物执行——委托给旧 profile bin 会让不认识 update 的旧副本把它当参数
+  // 透传（恰好是最需要升级的用户到不了新入口）。用仓库 bin（瘦壳角色）
+  // 驱动，profile 里只放 stub lib，断言：控制权交给 cliUpdate、退出码
+  // 透传、且没有发生委托（stub bin 不存在，委托会 delegateFailed）。
+  const updateHome = join(tmp, 'update-home')
+  const pkgDir = join(updateHome, 'profiles', 'dsh-tui', 'node_modules', '@deepseek-harness-tui', 'dsh-tui')
+  mkdirSync(join(pkgDir, 'lib', 'types'), { recursive: true })
+  writeFileSync(join(pkgDir, 'package.json'), '{"name":"@deepseek-harness-tui/dsh-tui","version":"9.9.9","type":"module"}')
+  writeFileSync(
+    join(pkgDir, 'lib', 'types', 'update.js'),
+    'export async function cliUpdate(profile) { console.log(`stub-cli-update profile=${profile}`); return 42 }\n',
+  )
+  const stubDir = join(tmp, 'stub-bin')
+  mkdirSync(stubDir, { recursive: true })
+  writeFileSync(join(stubDir, 'dsh'), '#!/bin/sh\nexit 0\n')
+  ;(await import('node:fs')).chmodSync(join(stubDir, 'dsh'), 0o755)
+  const r = run(['update'], { PATH: stubDir, DSH_HOME: updateHome })
+  check(
+    'update 顶层交给 profile lib 的 cliUpdate 并透传退出码（不经委托）',
+    r.status === 42 && r.stdout.includes('stub-cli-update profile=dsh-tui'),
+    `status=${r.status}`,
+  )
+  // 旧版编译产物：update.js 存在但没有 cliUpdate 导出（半更新残留）——
+  // 必须走同一条双语指引退出 1，而不是解构 undefined 的裸 TypeError。
+  writeFileSync(join(pkgDir, 'lib', 'types', 'update.js'), 'export const somethingElse = 1\n')
+  const r2 = run(['update'], { PATH: stubDir, DSH_HOME: updateHome })
+  check(
+    '旧版 lib 无 cliUpdate 导出时给手工升级指引并退出 1',
+    r2.status === 1 && r2.stderr.includes('dsh plugin --profile dsh-tui add'),
+    `status=${r2.status}`,
+  )
+  // lib 整体缺失（未构建源码/损坏安装）：同一条指引。
+  rmSync(join(pkgDir, 'lib'), { recursive: true, force: true })
+  const r3 = run(['update'], { PATH: stubDir, DSH_HOME: updateHome })
+  check(
+    'lib 缺失时 update 给手工升级指引并退出 1',
+    r3.status === 1 && r3.stderr.includes('dsh plugin --profile dsh-tui add'),
+    `status=${r3.status}`,
+  )
+  // 无 dsh：update 需要 dsh（README 如实声明），止于预检。
+  const r4 = run(['update'], { DSH_HOME: updateHome })
+  check('无 dsh 时 update 止于预检并给安装指引', r4.status === 1 && r4.stderr.includes('@deepseek-ai/dsh'), `status=${r4.status}`)
+  // DSH_TUI_NO_DELEGATE 不改变路径：分发在角色分支之前，import 的仍是
+  // profile 的 lib（不是本副本的——两者版本可能不同，读错包会误判）。
+  mkdirSync(join(pkgDir, 'lib', 'types'), { recursive: true })
+  writeFileSync(
+    join(pkgDir, 'lib', 'types', 'update.js'),
+    'export async function cliUpdate(profile) { console.log(`stub-cli-update profile=${profile}`); return 42 }\n',
+  )
+  const r5 = run(['update'], { PATH: stubDir, DSH_HOME: updateHome, DSH_TUI_NO_DELEGATE: '1' })
+  check('DSH_TUI_NO_DELEGATE 下 update 仍 import profile lib', r5.status === 42 && r5.stdout.includes('stub-cli-update'), `status=${r5.status}`)
+}
+{
+  // 空 profile → 先走既有自举、再 import 自举出的 profile lib。stub dsh 的
+  // plugin 分支模拟真实安装：创建判定文件与带 cliUpdate 的 lib。
+  const bootHome = join(tmp, 'boot-home')
+  mkdirSync(bootHome, { recursive: true })
+  const bootStub = join(tmp, 'boot-stub')
+  mkdirSync(bootStub, { recursive: true })
+  writeFileSync(
+    join(bootStub, 'dsh'),
+    '#!/bin/sh\n' +
+      // 沙箱 PATH 只含 stub 目录——coreutils（mkdir/printf 的外部实现）要
+      // 显式借系统路径，否则 stub 在自己的沙箱里连目录都建不出来。
+      'PATH=/usr/bin:/bin\n' +
+      'if [ "$1" = "plugin" ]; then\n' +
+      '  d="$DSH_HOME/profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui"\n' +
+      '  mkdir -p "$d/lib/types"\n' +
+      '  printf \'{"name":"@deepseek-harness-tui/dsh-tui","version":"9.9.9","type":"module"}\' > "$d/package.json"\n' +
+      '  printf \'export async function cliUpdate(profile) { console.log(`boot-cli-update profile=${profile}`); return 0 }\' > "$d/lib/types/update.js"\n' +
+      'fi\nexit 0\n',
+  )
+  writeFileSync(join(bootStub, 'pnpm'), '#!/bin/sh\nexit 0\n')
+  ;(await import('node:fs')).chmodSync(join(bootStub, 'dsh'), 0o755)
+  ;(await import('node:fs')).chmodSync(join(bootStub, 'pnpm'), 0o755)
+  const r = run(['update'], { PATH: bootStub, DSH_HOME: bootHome })
+  check('空 profile 时 update 先自举再 import profile lib', r.status === 0 && r.stdout.includes('boot-cli-update profile=dsh-tui'), `status=${r.status}`)
+}
+
 // --- 只认第一个参数 ------------------------------------------------------------
 {
   // 独立的全新 DSH_HOME：前面的用例已在 emptyHome 写入 profile 残骸，
@@ -109,6 +191,7 @@ for (const alias of ['version', '--version', '-v']) {
   for (const [label, args] of [
     ['后位 --help', ['/no/such/path', '--help']],
     ['后位 version', ['/no/such/path', 'version']],
+    ['后位 update', ['/no/such/path', 'update']],
     ['后位 help', ['--resume', 'help']],
   ]) {
     const r = run(args, { DSH_HOME: freshHome })
