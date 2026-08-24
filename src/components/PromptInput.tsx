@@ -8,20 +8,42 @@ import { EffortInputBorder } from './EffortInputBorder.js'
 import { EffortTierBadge } from './EffortTierBadge.js'
 import { isLightThemeActive } from '../theme.js'
 import { useDeclaredCursor } from '../ink/hooks/use-declared-cursor.js'
+import type { ClickEvent } from '../ink/events/click-event.js'
+import { noteAuxNumber } from '../ink/geometry-trace.js'
+import instances from '../ink/instances.js'
 import { stringWidth } from '../ink/stringWidth.js'
+import { truncateToWidth } from '../ink/truncateToWidth.js'
+import { getGraphemeSegmenter } from '../utils/intl.js'
 import { formatClipboardInsert, readClipboard } from '../utils/clipboard.js'
 import { editInExternalEditor } from '../utils/externalEditor.js'
 import type { Channel } from '../dsh-adapter/channel.js'
 import { isHiddenCommandName, parseCommandName } from '../commands.js'
 import { appendHistory } from '../history.js'
 import { mentionAtCaret } from '../utils/mentions.js'
+import { preserveSelection, type FileCandidate } from '../utils/fileSuggestions.js'
 import { isMod } from '../utils/modifiers.js'
+import { actionMatches } from '../utils/keymap.js'
 import { CommandSuggestions } from './CommandSuggestions.js'
 import { FileSuggestions } from './FileSuggestions.js'
 import { HelpMenu } from './HelpMenu.js'
 import { OverlayAbove } from './OverlayAbove.js'
+import { SuggestionCard, cardContentWidth } from './SuggestionCard.js'
 
 const HISTORY_LIMIT = 50
+
+/**
+ * Paste fold (CC-style collapse with a visible preview, no black box):
+ * a paste that leaves the input this big folds into a one-line chip
+ * showing the line/char count PLUS the first line of content. Hover peeks
+ * at the full text (window pinned to the head); clicking the chip — or
+ * the `▾` prefix on the first row while expanded — toggles the fold; Esc
+ * or any editing key unfolds first. Enter still submits the FULL text:
+ * folding never drops data.
+ */
+const FOLD_MIN_LINES = 6
+const FOLD_MIN_CHARS = 600
+const isBigInput = (text: string): boolean =>
+  text.split('\n').length >= FOLD_MIN_LINES || text.length >= FOLD_MIN_CHARS
 
 function clipboardImageMediaType(path: string): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | undefined {
   if (/\.png$/iu.test(path)) return 'image/png'
@@ -46,6 +68,86 @@ function wordBoundaryRight(text: string, cursor: number): number {
   while (index < length && !/\s/.test(text[index]!)) index++
   while (index < length && /\s/.test(text[index]!)) index++
   return index
+}
+
+// --- grapheme-cluster geometry ---------------------------------------------
+// The caret, editing keys, and wrapping MUST agree on one text unit. Mixing
+// UTF-16 code units (arrows/backspace), code points (wrap), and display
+// cells (stringWidth) lets the caret land inside a surrogate pair or a ZWJ
+// emoji — the inverted caret then shows half a glyph, Backspace deletes
+// half a character, and `line.slice()` splits clusters. All offsets below
+// are UTF-16 indices snapped to grapheme boundaries via the shared
+// Intl.Segmenter (utils/intl.ts).
+
+/** Ascending grapheme boundary offsets of `text` (starts at 0, ends at
+ *  `text.length`). Empty text yields `[0]`. */
+function graphemeBoundaries(text: string): number[] {
+  const bounds = [0]
+  for (const { index, segment } of getGraphemeSegmenter().segment(text)) {
+    const end = index + segment.length
+    if (end > bounds[bounds.length - 1]!) bounds.push(end)
+  }
+  return bounds
+}
+
+/** Largest grapheme boundary `<= offset` (clamped into the text). Snaps a
+ *  cursor that landed mid-cluster back onto a boundary. */
+function boundaryAtOrBefore(bounds: number[], offset: number): number {
+  let lo = 0
+  let hi = bounds.length - 1
+  let ans = bounds[0]!
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (bounds[mid]! <= offset) {
+      ans = bounds[mid]!
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return ans
+}
+
+/** Largest grapheme boundary strictly before `offset` (0 when none). */
+function previousGraphemeBoundary(bounds: number[], offset: number): number {
+  let lo = 0
+  let hi = bounds.length - 1
+  let ans = 0
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (bounds[mid]! < offset) {
+      ans = bounds[mid]!
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return ans
+}
+
+/** Smallest grapheme boundary strictly after `offset` (text.length when
+ *  none). Returns `offset` unchanged when it already is the last boundary. */
+function nextGraphemeBoundary(bounds: number[], offset: number): number {
+  let lo = 0
+  let hi = bounds.length - 1
+  let ans = bounds[hi] ?? 0
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (bounds[mid]! > offset) {
+      ans = bounds[mid]!
+      hi = mid - 1
+    } else {
+      lo = mid + 1
+    }
+  }
+  return ans
+}
+
+/** Snap an arbitrary UTF-16 offset onto a grapheme boundary of `text`,
+ *  clamping into range. The safety net under every cursor write. */
+function normalizeCursorOffset(text: string, offset: number): number {
+  const clamped = Math.max(0, Math.min(offset, text.length))
+  return boundaryAtOrBefore(graphemeBoundaries(text), clamped)
 }
 
 /**
@@ -100,9 +202,10 @@ export interface PromptInputProps {
 /**
  * Claude Code style prompt input: rounded border box (top+bottom borders
  * only), `❯ ` prompt char (dimmed while a turn is working), the text with a
- * block cursor at the cursor position, and below it the slash-command
- * suggestion overlay (name column + description, selected row in the
- * `suggestion` color — mirroring Claude Code's PromptInputFooterSuggestions).
+ * block cursor at the cursor position, and above it the slash-command /
+ * file-completion suggestion card (SuggestionCard: rounded panel with the
+ * selected row behind a `❯` pointer in the theme's `suggestion` color,
+ * mirroring Claude Code's PromptInputFooterSuggestions layout).
  *
  * Empty input: a solid block caret on a blank cell and nothing else — no
  * placeholder text, so the terminal-painted IME preedit (pinyin) at the
@@ -141,6 +244,29 @@ export function PromptInput({
   const [themeName] = useTheme()
   const [value, setValue] = React.useState('')
   const [cursor, setCursor] = React.useState(0)
+  /**
+   * CC-style fold block: the [start, end) span of `value` that renders as
+   * a one-line chip while the text around it stays fully editable. Created
+   * by a big paste; only an EXPLICIT expand (chip/card click, Esc) or
+   * delete removes it — typing NEVER unfolds the block.
+   */
+  const [foldBlock, setFoldBlock] = React.useState<{ start: number; end: number } | null>(null)
+  /** Pointer over the input box (drives the hover peek card). */
+  const [hovered, setHovered] = React.useState(false)
+  /** 120ms grace so the pointer crossing the input border row from the
+   *  chip up onto the peek card never flickers the card. */
+  const hoverLeaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hoverEnter = React.useCallback(() => {
+    if (hoverLeaveTimerRef.current) {
+      clearTimeout(hoverLeaveTimerRef.current)
+      hoverLeaveTimerRef.current = null
+    }
+    setHovered(true)
+  }, [])
+  const hoverLeave = React.useCallback(() => {
+    if (hoverLeaveTimerRef.current) clearTimeout(hoverLeaveTimerRef.current)
+    hoverLeaveTimerRef.current = setTimeout(() => setHovered(false), 120)
+  }, [])
   const valueRef = React.useRef(value)
   const cursorRef = React.useRef(cursor)
   valueRef.current = value
@@ -172,33 +298,42 @@ export function PromptInput({
   React.useEffect(() => {
     if (fillText && fillText !== lastFill.current) {
       lastFill.current = fillText
-      valueRef.current = fillText
-      cursorRef.current = fillText.length
-      setValue(fillText)
-      setCursor(fillText.length)
+      updateFoldBlock(null)
+      setInput(fillText)
       onFillConsumed?.()
     }
   }, [fillText, onFillConsumed])
   // Double-tap Esc to clear (CC semantics).
   const escPendingRef = React.useRef(false)
   const escTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** True while a Ctrl+V clipboard read is in flight (ignore repeat keys). */
+  /** True while a clipboard paste read is in flight (ignore repeat keys). */
   const clipboardBusyRef = React.useRef(false)
-  /** True while the external editor owns the terminal (Ctrl+G round-trip). */
+  /** True while the external editor owns the terminal (editor-key round-trip). */
   const editorBusyRef = React.useRef(false)
   /** Enter dedupe window: cmd pipelines can deliver one Enter as `\r`+`\n`. */
   const lastEnterAtRef = React.useRef(0)
   React.useEffect(() => {
     return () => {
       if (escTimerRef.current) clearTimeout(escTimerRef.current)
+      if (hoverLeaveTimerRef.current) clearTimeout(hoverLeaveTimerRef.current)
     }
   }, [])
   const { columns, rows: terminalRows } = useTerminalSize()
   const helpScrollRef = React.useRef<ScrollBoxHandle | null>(null)
-  // OverlayAbove reserves six terminal rows for the composer/status chrome;
-  // the help block also keeps one row below it. Its own final row is a
-  // persistent navigation hint, leaving the remainder to ScrollBox.
-  const helpViewportHeight = Math.max(3, Math.max(terminalRows - 6, 4) - 1)
+  // Help viewport budget: the overlay anchors at the composer's top edge
+  // (OverlayAbove bottom:'100%') and grows UP, so its budget is the space
+  // ABOVE that anchor — smallest on an empty session, where the whale
+  // splash (~15 rows) sits between the screen top and the composer
+  // (terminalRows minus chrome only applies once the transcript fills the
+  // viewport). Take the conservative intersection: 15 rows of viewport (16
+  // with the hint + margin) fits the empty-session anchor on the default
+  // layout at any terminal size, and the renderer's bottom-anchored
+  // clipping for absolute overlays (no negative-y clamp) then never has
+  // to eat the overlay's FIRST rows — the shortcut-column headers. The
+  // command registry scrolls inside the viewport, so a taller terminal
+  // loses nothing functional. (PR #446; restored after the picker
+  // snapshot's cherry-pick resurrected the old formula.)
+  const helpViewportHeight = Math.max(3, Math.min(terminalRows - 7, 15))
 
   const suggestions = value.startsWith('/') ? channel.commandCompletions(value) : []
   const overlayOpen =
@@ -211,27 +346,30 @@ export function PromptInput({
   // CARET, so `@` works mid-message (`看看 @src/a.ts 这个`), not only when it
   // is the input's first character. The cwd listing loads when the trigger
   // appears.
-  const [fileList, setFileList] = React.useState<readonly string[]>([])
+  const [fileMatches, setFileMatches] = React.useState<readonly FileCandidate[]>([])
   const [fileSelected, setFileSelected] = React.useState(0)
   const mention = mentionAtCaret(value, cursor)
   const atTrigger = mention !== undefined
+  const fileRequestId = React.useRef(0)
+  const selectedFile = fileMatches[fileSelected]
   React.useEffect(() => {
-    if (atTrigger) {
-      void channel.listFiles().then(setFileList)
+    const requestId = ++fileRequestId.current
+    if (!mention) {
+      setFileMatches([])
+      setFileSelected(0)
+      return
     }
-  }, [atTrigger, channel])
-  const atRest = (mention?.query ?? '').toLowerCase()
-  // Match the relative path prefix OR the basename (CC's IDE suggestions do
-  // both): `@src/ink` and `@ink` both find `src/ink/Box.js`.
-  const fileMatches = atTrigger
-    ? fileList.filter(file => {
-        const lower = file.toLowerCase()
-        if (lower.startsWith(atRest)) return true
-        if (atRest.includes('/')) return false
-        const base = lower.split('/').pop() ?? ''
-        return base.startsWith(atRest)
-      })
-    : []
+    const previous = selectedFile
+    // Deps key on `mention.query` (and trigger on/off) only: cursor movement
+    // within the same token must NOT refetch, and `selectedFile`/`fileSelected`
+    // are read as their render-time values only to seed selection preservation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void channel.listFileCandidates(mention.query, { topK: 50 }).then(next => {
+      if (requestId !== fileRequestId.current) return
+      setFileMatches(next)
+      setFileSelected(preserveSelection(previous, next, fileSelected))
+    })
+  }, [channel, mention?.query, atTrigger])
   // Esc dismisses the overlay for the token being edited (it reopens once the
   // text changes); it must NOT clear a mid-message input.
   const fileEscRef = React.useRef(-1)
@@ -244,11 +382,58 @@ export function PromptInput({
     !selectionActive &&
     fileEscRef.current !== mention?.start
 
+  /** Fold-block state + a synchronous mirror (setInput reads the ref).
+   *  Creating a block also drags a caret that sits inside it out to the
+   *  block's end (the block is atomic; typing continues after it). */
+  const foldBlockRef = React.useRef<{ start: number; end: number } | null>(null)
+  const updateFoldBlock = (block: { start: number; end: number } | null) => {
+    foldBlockRef.current = block
+    setFoldBlock(block)
+    if (block) {
+      const c = cursorRef.current
+      if (c > block.start && c < block.end) {
+        cursorRef.current = block.end
+        setCursor(block.end)
+      }
+    }
+  }
+
   const setInput = (next: string, cursorOffset = next.length) => {
+    const prev = valueRef.current
+    const prevCursor = cursorRef.current
+    const block = foldBlockRef.current
+    // Normalize onto a grapheme boundary (also clamps into range): every
+    // caller passes a caret they believe is on a character edge — paste
+    // merges, history fills, and IME composition can still hand back an
+    // offset inside a surrogate pair or combining cluster.
+    let offset = normalizeCursorOffset(next, cursorOffset)
+    if (block) {
+      // Fold block is atomic: the caret never lands INSIDE [start, end).
+      if (offset > block.start && offset < block.end) {
+        offset = offset - block.start < block.end - offset ? block.start : block.end
+      }
+      // Every real edit happens AT the caret, so a block that starts at or
+      // after the caret shifts with the value delta; one fully past the
+      // caret is untouched. Whole-value replacements (fill/history/editor)
+      // clear the block explicitly at their call sites.
+      const delta = next.length - prev.length
+      let start = block.start
+      let end = block.end
+      if (prevCursor <= block.start) {
+        start += delta
+        end += delta
+      }
+      start = Math.max(0, Math.min(start, next.length))
+      end = Math.max(start, Math.min(end, next.length))
+      if (start >= end) updateFoldBlock(null)
+      else if (start !== block.start || end !== block.end) updateFoldBlock({ start, end })
+    }
+    // The synchronous mirrors are what batch-dispatched events (one stdin
+    // read → several keys, no render in between) read on their next turn.
     valueRef.current = next
-    cursorRef.current = Math.max(0, Math.min(cursorOffset, next.length))
+    cursorRef.current = offset
     setValue(next)
-    setCursor(cursorRef.current)
+    setCursor(offset)
   }
 
   /**
@@ -257,10 +442,11 @@ export function PromptInput({
    * directory inserts `@dir/` without a trailing space so completion
    * continues into it; a file completes the token with a space.
    */
-  const acceptFile = (file: string) => {
+  const acceptFile = (candidate: FileCandidate) => {
     if (!mention) return
+    const file = candidate.path
     const body = /\s/.test(file) ? `@"${file}"` : `@${file}`
-    const insert = file.endsWith('/') ? body : `${body} `
+    const insert = candidate.kind === 'directory' ? body : `${body} `
     const next = value.slice(0, mention.start) + insert + value.slice(mention.end)
     setInput(next, mention.start + insert.length)
     setFileSelected(0)
@@ -333,6 +519,7 @@ export function PromptInput({
       return
     }
     setInput(item.text)
+    updateFoldBlock(null)
     setSelectedCommand(0)
     setFileSelected(0)
     channel.notify(t('input-retracted'), { timeoutMs: 2000 })
@@ -391,13 +578,17 @@ export function PromptInput({
   }
 
   /** Clipboard reads are asynchronous; insert against the latest render so
-   * typing while PowerShell owns the clipboard never gets overwritten. */
-  const insertClipboardAtCaret = (text: string) => {
+   * typing while PowerShell owns the clipboard never gets overwritten.
+   * Returns the resulting value and the insertion offset so callers can
+   * apply the paste fold. */
+  const insertClipboardAtCaret = (text: string): { next: string; at: number } => {
     const current = valueRef.current
     const position = cursorRef.current
-    setInput(current.slice(0, position) + text + current.slice(position), position + text.length)
+    const next = current.slice(0, position) + text + current.slice(position)
+    setInput(next, position + text.length)
     setSelectedCommand(0)
     setFileSelected(0)
+    return { next, at: position }
   }
 
   /** Line index of the cursor; -1 when the cursor is at the very end. */
@@ -425,6 +616,46 @@ export function PromptInput({
     const value = valueRef.current
     const cursor = cursorRef.current
 
+    // Fold block (CC-style): Esc expands it — it must NEVER clear text
+    // that LOOKS like one line; Backspace at the block's tail / Delete at
+    // its head deletes the WHOLE block in one key; ←/→ jump over the
+    // atomic block. Typing NEVER expands it — the caret lives outside the
+    // block and edits land in the visible text around it.
+    const block = foldBlockRef.current
+    // Line-level moves/edits (↑/↓/Home/End/Ctrl+A/E/U/K/W) treat the
+    // block as an atomic row: boundaries that would land inside it are
+    // clamped to its edges.
+    const clampRowStart = (pos: number) =>
+      block && cursor >= block.end ? Math.max(pos, block.end) : pos
+    const clampRowEnd = (pos: number) =>
+      block && cursor <= block.start ? Math.min(pos, block.start) : pos
+    if (block) {
+      if (key.escape) {
+        updateFoldBlock(null)
+        return
+      }
+      if ((key.backspace && cursor === block.end) || (key.delete && cursor === block.start)) {
+        const next = value.slice(0, block.start) + value.slice(block.end)
+        updateFoldBlock(null)
+        setInput(next, block.start)
+        setSelectedCommand(0)
+        setFileSelected(0)
+        return
+      }
+      if (key.leftArrow && cursor === block.end) {
+        setInput(value, block.start)
+        return
+      }
+      if (key.rightArrow && cursor === block.start) {
+        setInput(value, block.end)
+        return
+      }
+    }
+
+    // Grapheme boundaries of the current text: every caret move / delete
+    // below snaps onto one of these offsets (never mid-cluster).
+    const bounds = graphemeBoundaries(value)
+
     /** Insert text at the caret (typing, paste) and dismiss overlays. */
     const insertAtCaret = (text: string) => {
       if (helpOpen) onToggleHelp()
@@ -438,14 +669,20 @@ export function PromptInput({
     // verbatim at the caret. Paste content may contain newlines — that is
     // NOT Enter — so this branch runs before the whole-line submit rule.
     if (event?.isPasted && input.length > 0) {
-      insertAtCaret(input.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
+      const text = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      insertAtCaret(text)
+      // A big paste becomes a CC-style fold block right away (hover peeks
+      // at it); an existing block is replaced by the new paste's span.
+      if (isBigInput(text)) updateFoldBlock({ start: cursor, end: cursor + text.length })
       return
     }
 
-    // Ctrl+V / Cmd+V: raw mode hands the key to the app, so the clipboard is
-    // read here — text, file paths when the file manager copied files, or an
-    // exported temp-file path when the clipboard holds a raw image.
-    if (isMod(key) && input === 'v') {
+    // Clipboard paste (default Ctrl+V / Cmd+V, plus the Alt+V alias for
+    // terminals that intercept Ctrl+V — combos are user-remappable via
+    // /settings): raw mode hands the key to the app, so the clipboard is
+    // read here — text, file paths when the file manager copied files, or
+    // an exported temp-file path when the clipboard holds a raw image.
+    if (actionMatches('paste', input, key)) {
       if (clipboardBusyRef.current) return
       // Match insertAtCaret's overlay/selection dismissal up front: the
       // async continuation below only sets value/cursor, so a paste landing
@@ -486,7 +723,10 @@ export function PromptInput({
           // Insert against the LIVE input state: the read above resolved
           // asynchronously and the user may have typed while waiting.
           const text = formatClipboardInsert(content)
-          insertClipboardAtCaret(text)
+          const { at } = insertClipboardAtCaret(text)
+          // Same fold as bracketed paste: big clipboard text becomes a
+          // fold block covering exactly the pasted span.
+          if (isBigInput(text)) updateFoldBlock({ start: at, end: at + text.length })
         })
         .catch(() => {
           channel.notify(t('input-clipboard-read-failed'), { color: 'warning' })
@@ -499,8 +739,9 @@ export function PromptInput({
       return
     }
 
-    // Help is modal for modified keys and every Enter variant. Ctrl+V above
-    // is the intentional exception: paste closes Help and inserts visibly.
+    // Help is modal for modified keys and every Enter variant. The paste
+    // branch above is the intentional exception: paste closes Help and
+    // inserts visibly.
     // Swallow here before editor/submit/interrupt branches can mutate hidden
     // composer or working-turn state; plain typing still dismisses Help below.
     if (helpOpen && !key.escape && (key.ctrl || key.meta || key.super || key.return || input.includes('\n') || input.includes('\r'))) {
@@ -508,19 +749,21 @@ export function PromptInput({
       return
     }
 
-    // Ctrl+G: edit the current draft in $VISUAL/$EDITOR (issue #123,
-    // readline's edit-and-execute-command). The draft is written to a temp
-    // file, the terminal is handed to the editor (Ink's alt-screen handoff),
-    // and the saved text replaces the input when it differs. The util maps
-    // every failure to an outcome, but the catch/finally here is the hard
-    // guarantee: a rejected promise must never kill the process, and the
-    // busy flag must always clear or Ctrl+G stays locked forever.
-    if (key.ctrl && input === 'g') {
+    // Ctrl+G (remappable via /settings): edit the current draft in
+    // $VISUAL/$EDITOR (issue #123, readline's edit-and-execute-command). The
+    // draft is written to a temp file, the terminal is handed to the editor
+    // (Ink's alt-screen handoff), and the saved text replaces the input when
+    // it differs. The util maps every failure to an outcome, but the
+    // catch/finally here is the hard guarantee: a rejected promise must
+    // never kill the process, and the busy flag must always clear or the
+    // editor key stays locked forever.
+    if (actionMatches('editor', input, key)) {
       editorBusyRef.current = true
       void (async () => {
         try {
           const outcome = await editInExternalEditor(value)
           if (outcome.kind === 'edited') {
+            updateFoldBlock(null)
             setInput(outcome.text)
             setSelectedCommand(0)
             setFileSelected(0)
@@ -662,7 +905,10 @@ export function PromptInput({
     }
     if (key.tab && overlayOpen) {
       const command = suggestions[selectedCommand]
-      if (command) setInput(command.replacement)
+      if (command) {
+        updateFoldBlock(null)
+        setInput(command.replacement)
+      }
       return
     }
     // Tab while the model is working = queue for AFTER the turn (followup),
@@ -718,6 +964,26 @@ export function PromptInput({
         )
         return
       }
+      // With a fold block the caret in the tail walks the TAIL's lines
+      // (the block is one atomic row); the first tail line steps over the
+      // block to its head.
+      if (block && cursor >= block.end) {
+        const tailCursor = cursor - block.end
+        const line = cursorLine(tail, tailCursor)
+        if (line > 0) {
+          const upToLineStart = tail.lastIndexOf('\n', tailCursor - 1)
+          const prevLineStart =
+            upToLineStart === -1 ? 0 : tail.lastIndexOf('\n', upToLineStart - 1) + 1
+          const prevLine = tail.slice(prevLineStart, upToLineStart)
+          setInput(
+            value,
+            block.end + prevLineStart + Math.min(cursorColumn(tail, tailCursor), prevLine.length),
+          )
+          return
+        }
+        setInput(value, block.start)
+        return
+      }
       const line = cursorLine(value, cursor)
       if (line > 0) {
         // Move to the previous line, clamping to its length.
@@ -742,6 +1008,7 @@ export function PromptInput({
         historyIndex.current = Math.max(0, historyIndex.current - 1)
       }
       const entry = history.current[historyIndex.current] ?? ''
+      updateFoldBlock(null)
       setInput(entry)
       return
     }
@@ -750,6 +1017,47 @@ export function PromptInput({
         setFileSelected(index =>
           index >= fileMatches.length - 1 ? 0 : index + 1,
         )
+        return
+      }
+      // Mirror of the tail-side ↑ walk: with a fold block the caret walks
+      // the TAIL's lines; past its last line it falls through to the
+      // overlay/history handling below.
+      if (block && cursor >= block.end) {
+        const tailCursor = cursor - block.end
+        const line = cursorLine(tail, tailCursor)
+        const lines = tail.split('\n')
+        if (line < lines.length - 1) {
+          const nextLineStart = tail.indexOf('\n', tailCursor) + 1
+          const nextLineEnd = tail.indexOf('\n', nextLineStart)
+          const nextLine = tail.slice(
+            nextLineStart,
+            nextLineEnd === -1 ? tail.length : nextLineEnd,
+          )
+          setInput(
+            value,
+            block.end + nextLineStart + Math.min(cursorColumn(tail, tailCursor), nextLine.length),
+          )
+          return
+        }
+      } else if (block && cursor <= block.start) {
+        // Head side: walk the HEAD's lines; its last line steps over the
+        // block to the tail (never into history for a multi-row input).
+        const line = cursorLine(head, cursor)
+        const lines = head.split('\n')
+        if (line < lines.length - 1) {
+          const nextLineStart = head.indexOf('\n', cursor) + 1
+          const nextLineEnd = head.indexOf('\n', nextLineStart)
+          const nextLine = head.slice(
+            nextLineStart,
+            nextLineEnd === -1 ? head.length : nextLineEnd,
+          )
+          setInput(
+            value,
+            nextLineStart + Math.min(cursorColumn(head, cursor), nextLine.length),
+          )
+          return
+        }
+        setInput(value, block.end)
         return
       }
       const line = cursorLine(value, cursor)
@@ -773,6 +1081,7 @@ export function PromptInput({
       if (historyIndex.current < 0) return
       if (historyIndex.current >= history.current.length - 1) {
         historyIndex.current = -1
+        updateFoldBlock(null)
         setInput(historyDraft.current)
       } else {
         historyIndex.current += 1
@@ -792,67 +1101,73 @@ export function PromptInput({
       return
     }
     if (key.leftArrow) {
-      setInput(value, Math.max(0, cursor - 1))
+      // Grapheme-step: skip the whole cluster (surrogate pair, ZWJ emoji,
+      // combining mark) so the caret never sits inside one.
+      setInput(value, previousGraphemeBoundary(bounds, cursor))
       return
     }
     if (key.rightArrow) {
-      setInput(value, Math.min(value.length, cursor + 1))
+      setInput(value, nextGraphemeBoundary(bounds, cursor))
       return
     }
     if (key.backspace) {
       if (cursor === 0) return
-      setInput(value.slice(0, cursor - 1) + value.slice(cursor), cursor - 1)
+      const start = previousGraphemeBoundary(bounds, cursor)
+      setInput(value.slice(0, start) + value.slice(cursor), start)
       return
     }
     if (key.delete) {
-      if (cursor >= value.length) return
-      setInput(value.slice(0, cursor) + value.slice(cursor + 1), cursor)
+      const end = nextGraphemeBoundary(bounds, cursor)
+      if (end === cursor) return
+      setInput(value.slice(0, cursor) + value.slice(end), cursor)
       return
     }
     if (key.home) {
-      // Start of the current line.
-      const lineStart = value.lastIndexOf('\n', cursor - 1) + 1
+      // Start of the current line (the block is one atomic row).
+      const lineStart = clampRowStart(value.lastIndexOf('\n', cursor - 1) + 1)
       setInput(value, lineStart)
       return
     }
     if (key.end) {
       // End of the current line.
       const nextLine = value.indexOf('\n', cursor)
-      setInput(value, nextLine === -1 ? value.length : nextLine)
+      setInput(value, nextLine === -1 ? value.length : clampRowEnd(nextLine))
       return
     }
     if (isMod(key) && input === 'a') {
-      const lineStart = value.lastIndexOf('\n', cursor - 1) + 1
+      const lineStart = clampRowStart(value.lastIndexOf('\n', cursor - 1) + 1)
       setInput(value, lineStart)
       return
     }
     if (isMod(key) && input === 'e') {
       const nextLine = value.indexOf('\n', cursor)
-      setInput(value, nextLine === -1 ? value.length : nextLine)
+      setInput(value, nextLine === -1 ? value.length : clampRowEnd(nextLine))
       return
     }
     if (isMod(key) && input === 'u') {
-      // Delete to start of line.
-      const lineStart = value.lastIndexOf('\n', cursor - 1) + 1
+      // Delete to start of line (never into the block).
+      const lineStart = clampRowStart(value.lastIndexOf('\n', cursor - 1) + 1)
       setInput(value.slice(0, lineStart) + value.slice(cursor), lineStart)
       return
     }
     if (isMod(key) && input === 'k') {
-      // Delete to end of line.
+      // Delete to end of line (never into the block).
       const nextLine = value.indexOf('\n', cursor)
-      const end = nextLine === -1 ? value.length : nextLine
+      const end = nextLine === -1 ? value.length : clampRowEnd(nextLine)
       setInput(value.slice(0, cursor) + value.slice(end), cursor)
       return
     }
     if (isMod(key) && input === 'w') {
       // Delete the word before the cursor (CC/readline behavior): skip
-      // trailing whitespace, then the whitespace-delimited word.
+      // trailing whitespace, then the whitespace-delimited word. The
+      // deletion start never crosses into the block.
       const before = value.slice(0, cursor)
       let end = before.length
       while (end > 0 && /\s/.test(before[end - 1]!)) end--
       let start = end
       while (start > 0 && !/\s/.test(before[start - 1]!)) start--
-      setInput(value.slice(0, start) + value.slice(cursor), start)
+      const clipped = clampRowStart(start)
+      setInput(value.slice(0, clipped) + value.slice(cursor), clipped)
       return
     }
     if (key.escape) {
@@ -885,8 +1200,17 @@ export function PromptInput({
         return
       }
       // A single Esc clears the current input (if any); the double-tap
-      // path below handles rewind/clear on an already-empty input.
+      // path below handles rewind/clear on an already-empty input. A BIG
+      // input folds into a block instead (Esc = the fold toggle; the
+      // expand → fold → expand cycle is lossless, and clearing a big draft
+      // stays reachable via the block-delete Backspace or Ctrl+C).
       if (value.length > 0) {
+        if (isBigInput(value)) {
+          updateFoldBlock({ start: 0, end: value.length })
+          setSelectedCommand(0)
+          setFileSelected(0)
+          return
+        }
         setInput('', 0)
         setSelectedCommand(0)
         setFileSelected(0)
@@ -931,9 +1255,39 @@ export function PromptInput({
   // === Render: hard-wrap every logical line at the input width, then show
   // the window of visual lines with the caret row always visible (CC's
   // maxVisibleLines behavior with automatic wrapping).
-  const inputWidth = Math.max(10, columns - 3)
-  const visualLines = wrapToWidth(value, inputWidth)
-  const caretVisualLine = wrapToWidth(value.slice(0, cursor), inputWidth).length - 1
+  // Narrow terminals: the usable width follows the real terminal down to a
+  // single column — a fixed floor of 10 would wrap far too early and park
+  // the declared cursor past the value box's actual width.
+  const inputWidth = Math.max(1, columns - 3)
+  const block = foldBlock
+  // Fold-block model: the value renders as [head rows][chip row][tail rows]
+  // — the block is ONE atomic visual row regardless of its text size; text
+  // before/after it stays fully editable and never unfolds it.
+  const foldText = block ? value.slice(block.start, block.end) : value
+  const head = block ? value.slice(0, block.start) : ''
+  const tail = block ? value.slice(block.end) : ''
+  const headRows = block ? wrapToWidth(head, inputWidth) : []
+  const tailRows = block ? wrapToWidth(tail, inputWidth) : []
+  const chipRow = block ? headRows.length : -1
+  const visualLines = block
+    ? [...headRows, '', ...tailRows]
+    : wrapToWidth(value, inputWidth)
+  const caretVisualLine = block
+    ? cursor <= block.start
+      ? wrapToWidth(value.slice(0, cursor), inputWidth).length - 1
+      : headRows.length + 1 + wrapToWidth(value.slice(block.end, cursor), inputWidth).length - 1
+    : wrapToWidth(value.slice(0, cursor), inputWidth).length - 1
+
+  // Fold stats describe the BLOCK (or the whole input when expanded and
+  // the ▾ prefix offers a manual whole-input fold). The chip shows the
+  // block's own line/char count + first-line preview — the preview text
+  // around it is unaffected.
+  const big = isBigInput(foldText)
+  const stats = big
+    ? t('input-fold-stats', { lines: foldText.split('\n').length, chars: foldText.length })
+    : ''
+  const peekOpen = block !== null && hovered && !selectionActive
+
   const windowStart = Math.max(
     0,
     Math.min(
@@ -953,40 +1307,126 @@ export function PromptInput({
   //   cursor mid-character and Windows Terminal would paint the IME
   //   preedit (pinyin) over the surrounding text).
   const caretCharCol = () => {
-    const before = value.slice(0, cursor)
+    const before =
+      block && cursor >= block.end ? value.slice(block.end, cursor) : value.slice(0, cursor)
     const rows = wrapToWidth(before, inputWidth)
     const last = rows[rows.length - 1] ?? ''
     return last.length
   }
   const caretVisualCol = () => {
-    const before = value.slice(0, cursor)
+    const before =
+      block && cursor >= block.end ? value.slice(block.end, cursor) : value.slice(0, cursor)
     const rows = wrapToWidth(before, inputWidth)
     const last = rows[rows.length - 1] ?? ''
     return stringWidth(last)
   }
 
+  // Folded chip content: block stats + first-line preview + hover hint,
+  // all pre-truncated to the input width (the row is one line, always).
+  const foldBadge = `▸ ${stats}`
+  const foldHint = t('input-fold-hover')
+  const foldPreviewWidth =
+    inputWidth - stringWidth(foldBadge) - stringWidth(` · ${foldHint}`) - 6
+  const foldPreview =
+    foldPreviewWidth >= 8
+      ? truncateToWidth(foldText.split('\n')[0] ?? '', foldPreviewWidth)
+      : ''
+
+  // Expanded-state fold affordance: a `▾` prefix at the start of the FIRST
+  // row (only while the window is at the top and no block exists); its
+  // cells fold the whole input into a block again on click.
+  const prefixLabel = `▾ ${stats} · `
+  const prefixCols = !block && big && windowStart === 0 ? stringWidth(prefixLabel) : 0
+
   const rendered = visibleLines.map((line, index) => {
     const absoluteLine = windowStart + index
+    if (block && absoluteLine === chipRow) {
+      // The fold block's atomic chip row: click expands it; hover pops the
+      // peek card. The row is one line no matter how big the block is.
+      return (
+        <Box
+          key={`fold-${absoluteLine}`}
+          flexDirection="row"
+          onClick={(event) => {
+            event.stopImmediatePropagation()
+            updateFoldBlock(null)
+          }}
+          onMouseEnter={hoverEnter}
+          onMouseLeave={hoverLeave}
+        >
+          <Text dimColor>{foldBadge}</Text>
+          {foldPreview !== '' && <Text dimColor> · </Text>}
+          {foldPreview !== '' && <Text wrap="truncate-end">{foldPreview}</Text>}
+          <Text dimColor>{` · ${foldHint}`}</Text>
+        </Box>
+      )
+    }
+    const withPrefix = absoluteLine === 0 && prefixCols > 0
+    const text = withPrefix ? truncateToWidth(line, inputWidth - prefixCols) : line
+    const prefix = withPrefix ? <Text dimColor>{prefixLabel}</Text> : null
     if (absoluteLine !== caretVisualLine) {
       return (
         <Text key={absoluteLine} wrap="truncate-end">
-          {line}
+          {prefix}
+          {text}
         </Text>
       )
     }
-    // Caret row: invert the char at the caret column (solid block).
-    const col = caretCharCol()
-    const before = line.slice(0, col)
-    const at = line[col] ?? ' '
-    const after = line.slice(col + 1)
+    // Caret row: invert the grapheme cluster at the caret column (solid
+    // block). `col` is a cluster boundary by construction (the cursor is
+    // normalized onto boundaries and wrapping only breaks between
+    // graphemes), so [col, next boundary) covers the WHOLE cluster — a
+    // surrogate pair or ZWJ emoji inverts as one glyph, never two broken
+    // halves. Clamped into the prefix-shortened row text so the block
+    // caret never renders under the fold prefix.
+    const col = Math.min(caretCharCol(), text.length)
+    const clusterEnd = nextGraphemeBoundary(graphemeBoundaries(text), col)
+    const before = text.slice(0, col)
+    const at = clusterEnd > col ? text.slice(col, clusterEnd) : ' '
+    const after = text.slice(clusterEnd)
     return (
       <Text key={absoluteLine} wrap="truncate-end">
+        {prefix}
         {before}
         <Text inverse>{at}</Text>
         {after}
       </Text>
     )
   })
+
+  // Peek card content: the BLOCK's text wrapped to the card's inner width,
+  // capped at PEEK_MAX_ROWS visual rows (a preview — click to expand and
+  // edit the real input). The footer reports the clipped remainder.
+  const PEEK_MAX_ROWS = 10
+  const peekVisualLines: string[] = []
+  for (const line of foldText.split('\n')) {
+    for (const row of wrapToWidth(line, cardContentWidth(columns))) {
+      if (peekVisualLines.length >= PEEK_MAX_ROWS) break
+      peekVisualLines.push(row)
+    }
+    if (peekVisualLines.length >= PEEK_MAX_ROWS) break
+  }
+  const peekClipped = peekVisualLines.length >= PEEK_MAX_ROWS
+
+  // Composer height shrink: clearing multi-line text (Enter/Esc/Ctrl+C/
+  // Backspace) collapses the input area within one commit, shifting the
+  // status line up and the whole chrome with it. The renderer's
+  // full-damage pass (didLayoutShift) repaints the shifted siblings, but
+  // inline mode's virtual↔scrollback correspondence needs the stronger
+  // in-place viewport repaint — same treatment as Ctrl+O and the
+  // loaded-context toggle (see Chat.tsx). One-shot, only on SHRINK:
+  // growth scrolls the terminal naturally and needs no recovery.
+  const contentRows = value.length === 0 ? 1 : visibleLines.length
+  noteAuxNumber('promptContentRows', contentRows)
+  const prevContentRowsRef = React.useRef(contentRows)
+  React.useLayoutEffect(() => {
+    if (contentRows < prevContentRowsRef.current) {
+      const ink = instances.get(process.stdout) ?? instances.values().next().value
+      ink?.invalidatePrevFrame()
+      ink?.reanchorViewport()
+    }
+    prevContentRowsRef.current = contentRows
+  }, [contentRows])
 
   const lastNotification =
     channel.notifications[channel.notifications.length - 1]
@@ -1000,15 +1440,66 @@ export function PromptInput({
   // relative to the value box the ref attaches to.
   const valueBoxRef = useDeclaredCursor({
     line: caretVisualLine - windowStart,
-    column: caretVisualCol(),
+    // Clamp the declared column to the wrap width: a grapheme wider than
+    // the last remaining column (emoji at width 1) can push the visual
+    // column past inputWidth, and the park must stay inside the value box.
+    column: Math.min(
+      caretVisualCol() + (caretVisualLine === 0 && prefixCols > 0 ? prefixCols : 0),
+      inputWidth,
+    ),
     active: !selectionActive,
   })
+
+  /**
+   * Click-to-position the caret: map a click inside the value box (local
+   * row/column relative to the box) to a UTF-16 cursor offset via the same
+   * grapheme walk the renderer wraps with — exact under CJK widths, wrapped
+   * rows and multi-codepoint clusters. Clicks land on the boundary nearest
+   * the clicked cell (mid-grapheme snaps to its start). With a fold block,
+   * clicks map into the head/tail text (the chip row has its own expand
+   * onClick); without one, the fold prefix's cells fold the whole input.
+   */
+  const handleValueClick = React.useCallback(
+    (e: ClickEvent) => {
+      const clickedVisual = windowStart + e.localRow
+      const clamped = Math.max(0, Math.min(clickedVisual, visualLines.length - 1))
+      if (block) {
+        if (clamped === chipRow) return
+        if (clamped < chipRow) {
+          setCursor(clickToCursorOffset(head, inputWidth, clamped, e.localCol))
+        } else {
+          setCursor(
+            block.end + clickToCursorOffset(tail, inputWidth, clamped - chipRow - 1, e.localCol),
+          )
+        }
+        return
+      }
+      if (clamped === 0 && prefixCols > 0 && e.localCol < prefixCols) {
+        updateFoldBlock({ start: 0, end: value.length })
+        return
+      }
+      const col =
+        clamped === 0 && prefixCols > 0 ? Math.max(0, e.localCol - prefixCols) : e.localCol
+      setCursor(
+        clickToCursorOffset(
+          value,
+          clamped === 0 && prefixCols > 0 ? inputWidth - prefixCols : inputWidth,
+          clamped,
+          col,
+        ),
+      )
+    },
+    [windowStart, visualLines.length, value, inputWidth, prefixCols, block, chipRow, head, tail],
+  )
 
   // 浮层整体挂载条件：与内部面板可见条件精确同值。关闭时必须把整个
   // absolute 浮层移除——渲染器的 absolute-removed 检测只看被移除节点自身
   // 的 style.position，常驻浮层 + 移除普通子节点不会触发 blit 解毒，被
   // 覆盖的转录行会留空（见 Chat.tsx dialogOverlayOpen 注释）。
-  const floatersOpen = helpOpen || channel.pending.length > 0 || fileOverlayOpen || overlayOpen
+  const floatersOpen =
+    helpOpen || channel.pending.length > 0 || fileOverlayOpen || overlayOpen || peekOpen
+  // 补全卡片边框与输入框 idle 边框同色（plan 模式下整套面板一起变 sage 绿）。
+  const promptAccent = channel.mode.plan === true ? 'planMode' : 'promptBorder'
 
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -1016,7 +1507,7 @@ export function PromptInput({
           帧高不随面板开关涨落——否则帧顶行会被滚进 scrollback 并在关闭
           重绘时二次写入（/model 切换多一份启动画的根因，见 OverlayAbove）。 */}
       {floatersOpen && (
-      <OverlayAbove maxHeight={Math.max(terminalRows - 6, 4)}>
+      <OverlayAbove maxHeight={Math.max(terminalRows - 6, 1)}>
         {helpOpen && (
           <Box marginBottom={1}>
             <HelpMenu
@@ -1024,6 +1515,12 @@ export function PromptInput({
               viewportHeight={helpViewportHeight}
               viewportWidth={columns}
               scrollRef={helpScrollRef}
+              onCommandPick={(name) => {
+                // 点击命令行 = 填入 /name 并关闭帮助（Tab 补全的鼠标等价）
+                updateFoldBlock(null)
+                setInput(`/${name} `)
+                onToggleHelp()
+              }}
             />
           </Box>
         )}
@@ -1057,20 +1554,65 @@ export function PromptInput({
           </Box>
         )}
         {fileOverlayOpen && (
-          <Box paddingLeft={2} paddingBottom={1}>
-            <FileSuggestions
-              files={fileMatches}
-              selectedIndex={fileSelected}
-              columns={columns}
-            />
-          </Box>
+          <FileSuggestions
+            files={fileMatches}
+            selectedIndex={fileSelected}
+            columns={columns}
+            query={mention?.query ?? ''}
+            accent={promptAccent}
+            // 点击行 = 接受该项（与 Enter 同路径）
+            onPick={(index) => {
+              const file = fileMatches[index]
+              if (file) acceptFile(file)
+            }}
+            // 滚轮 = 移动选中行（与 ↑/↓ 同路径，窗口跟随）
+            onWheelStep={(step) => {
+              setFileSelected(i => Math.max(0, Math.min(fileMatches.length - 1, i + step)))
+            }}
+          />
         )}
         {overlayOpen && (
-          <Box paddingLeft={2} paddingBottom={1}>
-            <CommandSuggestions
-              commands={suggestions}
-              selectedIndex={selectedCommand}
+          <CommandSuggestions
+            commands={suggestions}
+            selectedIndex={selectedCommand}
+            columns={columns}
+            query={value}
+            accent={promptAccent}
+            // 点击行 = 运行该命令（与 Enter 同路径）
+            onPick={(index) => {
+              const command = suggestions[index]
+              if (command) tryRunCommand(command.commandLine)
+            }}
+            // 滚轮 = 移动选中行（与 ↑/↓ 同路径，窗口跟随）
+            onWheelStep={(step) => {
+              setSelectedCommand(i => Math.max(0, Math.min(suggestions.length - 1, i + step)))
+            }}
+          />
+        )}
+        {peekOpen && (
+          // 悬停预览卡片：只读展示折叠内容的头部（输入框自身保持一行，
+          // 布局零跳动）。点击任一行 = 固定展开进入真实输入框编辑；悬停
+          // 期间鼠标直接打字同样先展开（见折叠态按键分支）。卡片自身的
+          // enter/leave 维持 hovered，防止 chip→卡片过渡闪烁。
+          <Box onMouseEnter={hoverEnter} onMouseLeave={hoverLeave}>
+            <SuggestionCard
+              title={stats}
               columns={columns}
+              accent={promptAccent}
+              footer={
+                peekClipped
+                  ? t('input-fold-peek-footer', { lines: foldText.split('\n').length })
+                  : undefined
+              }
+              rows={peekVisualLines.map((row, index) => (
+                <Text key={index} wrap="truncate-end">
+                  {row}
+                </Text>
+              ))}
+              onRowPick={() => {
+                updateFoldBlock(null)
+                setHovered(false)
+              }}
             />
           </Box>
         )}
@@ -1111,7 +1653,7 @@ export function PromptInput({
         levels={channel.effortLevels}
         columns={columns}
         onLight={isLightThemeActive(themeName)}
-        idleColor={channel.mode.plan === true ? 'planMode' : 'promptBorder'}
+        idleColor={promptAccent}
       >
         <Box flexDirection="row" alignItems="flex-start" width="100%">
           <EffortChargeGlyph
@@ -1119,7 +1661,12 @@ export function PromptInput({
             levels={channel.effortLevels}
             working={channel.working}
           />
-          <Box ref={valueBoxRef} flexGrow={1} flexShrink={1}>
+          <Box
+            ref={valueBoxRef}
+            flexGrow={1}
+            flexShrink={1}
+            onClick={handleValueClick}
+          >
             {value.length === 0 ? (
               // Solid block caret on a BLANK cell: the terminal paints the
               // IME preedit (pinyin) at the physical cursor, which is parked
@@ -1150,10 +1697,15 @@ export function PromptInput({
 /**
  * Hard-wrap text into visual rows of at most `width` columns (CJK-aware via
  * stringWidth). Used by the input renderer so long lines wrap instead of
- * truncating, with exact caret-row mapping.
+ * truncating, with exact caret-row mapping. Wrapping only ever breaks
+ * BETWEEN grapheme clusters: iterating code points would split ZWJ emoji
+ * and combining sequences across rows, leaving a broken half at each edge
+ * and desyncing the caret's row arithmetic (which walks cluster
+ * boundaries).
  */
 function wrapToWidth(text: string, width: number): string[] {
   const rows: string[] = []
+  const segmenter = getGraphemeSegmenter()
   for (const line of text.split('\n')) {
     if (line === '') {
       rows.push('')
@@ -1161,18 +1713,64 @@ function wrapToWidth(text: string, width: number): string[] {
     }
     let current = ''
     let currentWidth = 0
-    for (const ch of line) {
-      const w = stringWidth(ch)
+    for (const { segment } of segmenter.segment(line)) {
+      const w = stringWidth(segment)
       if (currentWidth + w > width && current !== '') {
         rows.push(current)
-        current = ch
+        current = segment
         currentWidth = w
       } else {
-        current += ch
+        current += segment
         currentWidth += w
       }
     }
     rows.push(current)
   }
   return rows
+}
+
+/**
+ * Inverse of {@link wrapToWidth}: map a click position (visual row index +
+ * visual column) back to a UTF-16 offset in the original text. Walks the
+ * same grapheme boundaries with the same break rule, so every visual row's
+ * start offset is known exactly. Within the clicked row, the caret snaps to
+ * the boundary nearest the click: a grapheme whose midpoint lies past the
+ * click column takes the caret before it, otherwise after.
+ */
+function clickToCursorOffset(
+  text: string,
+  width: number,
+  visualLine: number,
+  visualCol: number,
+): number {
+  const segmenter = getGraphemeSegmenter()
+  let row = 0
+  let offset = 0
+  for (const line of text.split('\n')) {
+    if (line === '') {
+      if (row === visualLine) return offset
+      row++
+      offset++ // the '\n'
+      continue
+    }
+    let currentWidth = 0
+    for (const { segment } of segmenter.segment(line)) {
+      const w = stringWidth(segment)
+      if (currentWidth + w > width && currentWidth > 0) {
+        if (row === visualLine) return offset // end of the clicked wrapped row
+        row++
+        currentWidth = 0
+      }
+      if (row === visualLine) {
+        if (currentWidth + w / 2 > visualCol) return offset
+        if (currentWidth + w > visualCol) return offset + segment.length
+      }
+      currentWidth += w
+      offset += segment.length
+    }
+    if (row === visualLine) return offset
+    row++
+    offset++ // the '\n'
+  }
+  return offset
 }

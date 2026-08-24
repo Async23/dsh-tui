@@ -115,6 +115,8 @@ const dict = {
   'model-switch-fork-failed': { zh: '无法切换模型 · {{err}}', en: 'Cannot switch models · {{err}}' },
   'model-switch-failed': { zh: '模型切换失败 · {{err}}', en: 'Model switch failed · {{err}}' },
   'model-switch-attach-failed': { zh: '模型已切换，但工作区挂载失败 · {{err}}', en: 'Model switched, but workspace attachment failed · {{err}}' },
+  'model-usage': { zh: '用法：/model <provider/model>（如 deepseek/deepseek-v4-flash）', en: 'Usage: /model <provider/model> (e.g. deepseek/deepseek-v4-flash)' },
+  'model-unknown': { zh: '未知模型「{{spec}}」· /model 查看全部', en: 'Unknown model "{{spec}}" · /model to view all' },
   'compact-unavailable': { zh: '压缩不可用——当前 leaf 没有压缩服务', en: 'Compaction unavailable · no compaction service in this leaf' },
   'compact-while-working': { zh: '回合运行中，无法压缩会话', en: 'Cannot compact while a turn is running' },
   'compact-working': { zh: '正在压缩会话…', en: 'Compacting conversation…' },
@@ -193,6 +195,10 @@ const dict = {
   'workspace-flow-input-empty': { zh: '目录路径不能为空', en: 'Directory path cannot be empty' },
   'workspace-flow-loading': { zh: '正在连接并读取目录… · Esc 关闭', en: 'Connecting and loading directories… · Esc to close' },
   'workspace-command-usage': { zh: '用法：/workspace resume | rename <名称> | open <路径或 URI>{{commands}}', en: 'Usage: /workspace resume | rename <name> | open <path-or-URI>{{commands}}' },
+  'workspace-menu-title': { zh: 'Workspace 操作', en: 'Workspace actions' },
+  'workspace-menu-resume-desc': { zh: '切换到另一个工作区', en: 'Switch to another workspace' },
+  'workspace-menu-rename-desc': { zh: '重命名当前工作区（需输入名称）', en: 'Rename the current workspace (needs a name)' },
+  'workspace-menu-open-desc': { zh: '打开路径或工作区 URI（需输入路径）', en: 'Open a path or workspace URI (needs a path)' },
   'workspace-open-usage': { zh: '用法：/workspace open <路径或 URI>', en: 'Usage: /workspace open <path-or-URI>' },
   'workspace-rename-usage': { zh: '用法：/workspace rename <名称>', en: 'Usage: /workspace rename <name>' },
   'workspace-command-unknown': { zh: '未知的 workspace 子命令：{{command}}', en: 'Unknown workspace subcommand: {{command}}' },
@@ -226,11 +232,23 @@ const dict = {
   'login-base-url': { zh: 'Base URL: {{url}}', en: 'Base URL: {{url}}' },
   'login-official-endpoint': { zh: '官方端点', en: 'official endpoint' },
   'login-logout-hint': { zh: '使用 /provider 管理 DSH 凭据；若来源为 env，请删除对应环境变量并重启 dsh-tui', en: 'Manage DSH credentials with /provider; for env sources, remove the corresponding environment variable and restart dsh-tui' },
-  'permissions-policy-hint': { zh: 'DSH 权限策略由 fs-policy / bash-sandbox 配置决定（当前 leaf：workspace 内读写、写入需已读文件）。', en: 'DSH permission policy is set by fs-policy / bash-sandbox config (current leaf: read/write in workspace, writes need a prior read).' },
-  'permissions-approval-hint': { zh: '审批通道已挂载：命令申请权限提升（sandbox_permissions）时弹出审批条，Yes 放行一次、No / Esc 拒绝。', en: 'The approval channel is mounted: sandbox escalations (sandbox_permissions) raise an approval bar — Yes allows once, No / Esc rejects.' },
-  'permissions-preset-hint': { zh: '/permission 可查看与切换权限预设（read-only / workspace-write / danger-full-access）。', en: '/permission shows and switches permission presets (read-only / workspace-write / danger-full-access).' },
-  'permissions-root-hint': { zh: '当前文件系统策略以工作目录为根：{{cwd}}', en: 'Current filesystem policy is rooted at the working directory: {{cwd}}' },
-  'permissions-path-hint': { zh: '模型工具相对路径均解析自该目录；跨目录访问由 fs-policy 拦截。', en: 'Relative paths of model tools resolve from this directory; cross-directory access is blocked by fs-policy.' },
+  'permission-policy-hint': { zh: 'DSH 权限策略由 fs-policy / bash-sandbox 配置决定（当前 leaf：workspace 内读写、写入需已读文件）。', en: 'DSH permission policy is set by fs-policy / bash-sandbox config (current leaf: read/write in workspace, writes need a prior read).' },
+  'permission-approval-hint': { zh: '审批通道已挂载：命令申请权限提升（sandbox_permissions）时弹出审批条，Yes 放行一次、No / Esc 拒绝。', en: 'The approval channel is mounted: sandbox escalations (sandbox_permissions) raise an approval bar — Yes allows once, No / Esc rejects.' },
+  'permission-root-hint': { zh: '当前文件系统策略以工作目录为根：{{cwd}}', en: 'Current filesystem policy is rooted at the working directory: {{cwd}}' },
+  'permission-path-hint': { zh: '模型工具相对路径均解析自该目录；跨目录访问由 fs-policy 拦截。', en: 'Relative paths of model tools resolve from this directory; cross-directory access is blocked by fs-policy.' },
+  'permission-current': { zh: '当前预设  {{name}}', en: 'Current preset  {{name}}' },
+  'permission-picker-title': { zh: '权限预设', en: 'Permission preset' },
+  'permission-preset-readonly': { zh: '只读', en: 'Read-only' },
+  'permission-preset-readonly-desc': { zh: '会话只读：不写文件、不执行命令', en: 'Read-only session: no file writes, no commands' },
+  'permission-preset-workspace-write': { zh: '工作区读写', en: 'Workspace read/write' },
+  'permission-preset-workspace-write-desc': { zh: '工作区内读写；写入需先读该文件', en: 'Read/write inside the workspace; writes need a prior read' },
+  'permission-preset-full-access': { zh: '完全访问', en: 'Full access' },
+  'permission-preset-full-access-desc': { zh: '不受限读写，无需审批', en: 'Unrestricted access, no approvals' },
+  'plan-picker-title': { zh: '计划模式', en: 'Plan mode' },
+  'plan-mode-on': { zh: '开启', en: 'On' },
+  'plan-mode-on-desc': { zh: '进入计划模式：只读，先规划后动手', en: 'Enter plan mode: read-only, plan before acting' },
+  'plan-mode-off': { zh: '关闭', en: 'Off' },
+  'plan-mode-off-desc': { zh: '退出计划模式，恢复正常执行', en: 'Exit plan mode, back to normal execution' },
   'hooks-not-mounted': { zh: 'DSH hooks（dsh-hooks-claude / dsh-hooks-codex）未在本 leaf 挂载。', en: 'DSH hooks (dsh-hooks-claude / dsh-hooks-codex) are not mounted in this leaf.' },
   'hooks-mount-hint': { zh: '需要时可在 cordis.yml 挂载对应 hooks 插件。', en: 'Mount the matching hooks plugin in cordis.yml when needed.' },
   'update-unavailable': { zh: '当前运行方式不支持自动更新（需经 dsh --profile 启动），请在终端执行 dsh plugin --profile <name> update @deepseek-harness-tui/dsh-tui', en: 'Automatic update is unavailable in this launch mode (needs dsh --profile). Run dsh plugin --profile <name> update @deepseek-harness-tui/dsh-tui in a terminal.' },
@@ -241,10 +259,26 @@ const dict = {
   'update-check-failed': { zh: '无法确认新版本（网络或 registry 不可达），已尝试直接更新……', en: 'Could not confirm a newer version (network or registry unreachable); attempting the update anyway…' },
   'update-refused-deadlock': { zh: '已取消更新：镜像 registry 目前只能装到 v{{latest}}，而该版本在旧全局启动器的 patch 下会启动死锁（#183/#307）；官方最新为 v{{authoritative}}，待镜像同步后再 /update。', en: 'Update cancelled: the mirror registry can only serve v{{latest}}, which deadlocks boot under older global-launcher patches (#183/#307); official latest is v{{authoritative}} — retry /update after the mirror syncs.' },
   'update-mirror-lag': { zh: '镜像 registry 滞后：本次安装 v{{latest}}；官方最新 v{{authoritative}}，镜像同步后可再 /update。', en: 'Mirror registry lag: installing v{{latest}} now; official latest is v{{authoritative}} — run /update again once the mirror syncs.' },
+  // ── /reload (pi-style soft reload) ────────────────────────────────────
+  'reload-header': { zh: '已重读偏好文件：', en: 'Preferences reloaded:' },
+  'reload-applied': { zh: '{{kind}}  {{from}} → {{to}}（已应用）', en: '{{kind}}  {{from}} → {{to}} (applied)' },
+  'reload-unchanged': { zh: '{{kind}}  无变化', en: '{{kind}}  unchanged' },
+  'reload-skipped-env': { zh: '{{kind}}  跳过：环境变量优先', en: '{{kind}}  skipped: env override wins' },
+  'reload-skipped-config': { zh: '{{kind}}  跳过：显式配置优先', en: '{{kind}}  skipped: explicit config wins' },
+  'reload-skipped-invalid': { zh: '{{kind}}  跳过：文件缺失或无效', en: '{{kind}}  skipped: missing or invalid file' },
+  'reload-footer': { zh: '提示：settings.yaml / cordis.patch.yml 由 watcher 自动热重载；cordis.yml 根配置改动需 /restart', en: 'Note: settings.yaml / cordis.patch.yml hot-reload via watchers; cordis.yml root config changes need /restart' },
+  'reload-kind-theme': { zh: '主题', en: 'theme' },
+  'reload-kind-lang': { zh: '语言', en: 'language' },
+  'reload-kind-preset': { zh: '预设', en: 'preset' },
+  'reload-kind-model': { zh: '模型', en: 'model' },
+  'reload-kind-activity': { zh: '活动指示', en: 'activity' },
+  // ── /restart (process restart with session resume) ────────────────────
+  'restart-starting': { zh: '正在重启 dsh-tui，完成后自动恢复当前会话……', en: 'Restarting dsh-tui. The session resumes when it comes back…' },
+  'restart-unavailable': { zh: '当前运行方式不支持进程内重启（未挂载重启通道）。', en: 'Restart is unavailable in this launch mode (no restart channel mounted).' },
   'streaming-folded': { zh: '…（前 {{count}} 字符流式期间已折叠，落定后完整显示）', en: '…(first {{count}} chars folded while streaming; full text renders once the turn settles)' },
   'vim-not-implemented': { zh: 'vim 模式暂未实现', en: 'vim mode not implemented yet' },
   'terminal-setup-hint': { zh: '推荐 Windows Terminal（≥110 列、等宽字体、TrueColor）。', en: 'Recommended: Windows Terminal (≥110 columns, monospace, TrueColor).' },
-  'terminal-paste-hint': { zh: '{{mod}}V 粘贴文本、文件路径或图片；Ctrl+Shift+V 终端原生粘贴；右键粘贴同样可用。', en: '{{mod}}V pastes text, file paths, or images; Ctrl+Shift+V is native terminal paste; right-click paste also works.' },
+  'terminal-paste-hint': { zh: '{{mod}}V 或 Alt+V 粘贴文本、文件路径或图片；Ctrl+Shift+V 终端原生粘贴；右键粘贴同样可用；快捷键可在 /settings 修改。', en: '{{mod}}V or Alt+V pastes text, file paths, or images; Ctrl+Shift+V is native terminal paste; right-click paste also works; remappable via /settings.' },
   'connect-none': { zh: 'DSH 暂无远程连接机制（CC 的 /connect 对应能力未适配）。', en: 'DSH has no remote connection mechanism (CC\'s /connect equivalent is not adapted).' },
   'theme-switch-failed': { zh: '主题「{{name}}」切换失败（无法写入 ~/.dsh-tui/theme.json）', en: 'Theme "{{name}}" switch failed (cannot write ~/.dsh-tui/theme.json)' },
   'interrupt-delivered': { zh: '已打断当前回合，{{n}} 条消息立即处理', en: 'Interrupted current turn, {{n}} messages processed immediately' },
@@ -273,12 +307,12 @@ const dict = {
   // 0.8.3 launcher alignment bridge: /update only replaces the profile
   // copy; the global `dsh-tui` launcher must be aligned separately.
   'update-launcher-align-unknown': {
-    zh: 'Profile 已更新到 v{{version}}。如果你平时使用全局 dsh-tui 命令启动，请同步更新全局启动器：\n  npm install -g @deepseek-harness-tui/dsh-tui@{{version}}',
-    en: 'The profile is now v{{version}}. If you normally launch with the global dsh-tui command, align the global launcher too:\n  npm install -g @deepseek-harness-tui/dsh-tui@{{version}}',
+    zh: 'Profile 已更新到 v{{version}}。如果你平时使用全局 dsh-tui 命令启动，请同步更新全局启动器：\n  npm install -g --legacy-peer-deps @deepseek-harness-tui/dsh-tui@{{version}}\n（--legacy-peer-deps 可绕过 npm 12 的 peer 解析崩溃，全局启动器是瘦壳，跳过全局 peer 解析是安全的）',
+    en: 'The profile is now v{{version}}. If you normally launch with the global dsh-tui command, align the global launcher too:\n  npm install -g --legacy-peer-deps @deepseek-harness-tui/dsh-tui@{{version}}\n(--legacy-peer-deps works around an npm 12 peer-resolution crash; the global launcher is a thin shim, so skipping global peer resolution is safe.)',
   },
   'update-launcher-outdated': {
-    zh: 'Profile 已更新到 v{{profile}}，但全局启动器仍是 v{{launcher}}。请同步更新：\n  npm install -g @deepseek-harness-tui/dsh-tui@{{profile}}',
-    en: 'The profile is now v{{profile}}, but the global launcher is still v{{launcher}}. Align it with:\n  npm install -g @deepseek-harness-tui/dsh-tui@{{profile}}',
+    zh: 'Profile 已更新到 v{{profile}}，但全局启动器仍是 v{{launcher}}。请同步更新：\n  npm install -g --legacy-peer-deps @deepseek-harness-tui/dsh-tui@{{profile}}\n（--legacy-peer-deps 可绕过 npm 12 的 peer 解析崩溃，见 #459）',
+    en: 'The profile is now v{{profile}}, but the global launcher is still v{{launcher}}. Align it with:\n  npm install -g --legacy-peer-deps @deepseek-harness-tui/dsh-tui@{{profile}}\n(--legacy-peer-deps works around an npm 12 peer-resolution crash, see #459.)',
   },
 
   // ── components/ActivityLine.tsx ──────────────────────────────────────
@@ -312,6 +346,24 @@ const dict = {
   'logo-tagline': { zh: '探索未至之境！', en: 'Explore the uncharted!' },
   'logo-tip-prefix': { zh: '提示：', en: 'Tip: ' },
   'logo-tip-more': { zh: '更多技巧', en: 'more tips' },
+  // Upstream-drift notice (merged one-liner under the tip; copy explains
+  // the problem AND the fix — the command pins the validated line).
+  'logo-drift-newer': {
+    zh: 'dsh 引擎为 {{installed}}，比本界面验证过的 {{validated}} 新，可能出现兼容问题；求稳可执行 npm i -g @deepseek-ai/dsh@{{primary}} 降级，或等待 dsh-tui 适配新版。',
+    en: 'The dsh engine ({{installed}}) is newer than the {{validated}} this UI is validated against, so issues are possible; downgrade via npm i -g @deepseek-ai/dsh@{{primary}} for stability, or wait for a dsh-tui update.',
+  },
+  'logo-drift-older': {
+    zh: 'dsh 引擎为 {{installed}}，低于本界面验证过的 {{validated}}，部分功能可能不可用；建议执行 npm i -g @deepseek-ai/dsh@{{primary}} 升级。',
+    en: 'The dsh engine ({{installed}}) is older than the {{validated}} this UI is validated against; some features may be missing. Upgrade via npm i -g @deepseek-ai/dsh@{{primary}}.',
+  },
+  'logo-drift-mixed': {
+    zh: '检测到 dsh 引擎多版本混装（{{installed}}），容易出现奇怪问题；建议执行 npm i -g @deepseek-ai/dsh@{{primary}} 统一版本。',
+    en: 'Mixed dsh engine versions detected ({{installed}}), which can cause odd behavior; unify them via npm i -g @deepseek-ai/dsh@{{primary}}.',
+  },
+  'logo-drift-broken': {
+    zh: 'dsh 引擎版本异常（{{installed}}），本界面验证过 {{validated}}；建议执行 npm i -g @deepseek-ai/dsh@{{primary}} 重装。',
+    en: 'Unexpected dsh engine versions ({{installed}}); this UI is validated against {{validated}}. Reinstall via npm i -g @deepseek-ai/dsh@{{primary}}.',
+  },
 
   // ── components/PromptInput.tsx ──────────────────────────────────────
   'input-sent-after-turn': { zh: '已发送，当前回合结束后处理', en: 'Sent, processed after the current turn' },
@@ -332,6 +384,9 @@ const dict = {
   'input-pending-steer-label': { zh: '插话 · 下一步送达', en: 'Steer · delivered next' },
   'input-pending-queue-label': { zh: '排队 · 回合结束后送达', en: 'Queued · delivered after the turn' },
   'input-pending-actions-hint': { zh: '撤回 · Esc 打断并立即发送', en: 'Retract · Esc interrupts and sends immediately' },
+  'input-fold-stats': { zh: '{{lines}} 行 · {{chars}} 字', en: '{{lines}} lines · {{chars}} chars' },
+  'input-fold-hover': { zh: '悬停查看', en: 'hover to peek' },
+  'input-fold-peek-footer': { zh: '… 共 {{lines}} 行 · 点击展开编辑', en: '… {{lines}} lines total · click to edit' },
 
   // ── components/whaleFrames.ts (frame labels) ────────────────────────
   'frame-blink': { zh: '眨眼', en: 'blink' },
@@ -346,6 +401,27 @@ const dict = {
   'frame-tail-1': { zh: '摆尾巴1', en: 'tail1' },
   'frame-tail-2': { zh: '摆尾巴2', en: 'tail2' },
   'frame-tail-3': { zh: '摆尾巴3', en: 'tail3' },
+
+  // ── components/SuggestionCard.tsx（/ 命令菜单 · @ 文件菜单）─────────
+  'sugg-commands-title': { zh: '命令', en: 'commands' },
+  'sugg-files-title': { zh: '文件', en: 'files' },
+  'sugg-count': { zh: '共 {{n}} 项', en: '{{n}} items' },
+  'sugg-more-above': { zh: '↑{{n}}', en: '↑{{n}}' },
+  'sugg-more-below': { zh: '↓{{n}}', en: '↓{{n}}' },
+  // 二级补全子项描述（/lang /theme /effort /preset /activity 的 children）
+  'sugg-status-desc': { zh: '显示当前选择', en: 'Show the current choice' },
+  'sugg-lang-zh-desc': { zh: '切换界面语言到中文', en: 'Switch the UI language to Chinese' },
+  'sugg-lang-en-desc': { zh: '切换界面语言到英文', en: 'Switch the UI language to English' },
+  'sugg-theme-auto-desc': { zh: '跟随终端背景自动切换', en: 'Follow the terminal background' },
+  'sugg-theme-builtin-desc': { zh: '内置主题', en: 'Built-in theme' },
+  'sugg-theme-user-desc': { zh: '用户主题（{{base}} 基底）', en: 'User theme ({{base}} base)' },
+  'sugg-effort-level-desc': { zh: '思考强度档位', en: 'Reasoning effort level' },
+  'sugg-activity-frames-desc': { zh: '列出或切换动画帧预设', en: 'List or switch frame presets' },
+  'sugg-activity-frame-desc': { zh: '动画帧预设', en: 'Animation frame preset' },
+
+  // ── dsh-adapter/plugin.ts（/settings 全屏设置）───────────────────────
+  'settings-fullscreen-restart': { zh: '全屏设置已保存，重启 dsh-tui 后生效', en: 'Fullscreen preference saved — restart dsh-tui to apply' },
+  'settings-fullscreen-migrated': { zh: '全屏已是出厂默认（已清除更新前的 inline 选择）；偏好 inline 可在 /settings 改回', en: 'Fullscreen is now the factory default (pre-update inline choice cleared); prefer inline? Switch back in /settings' },
 
   // ── components/HelpMenu.tsx ─────────────────────────────────────────
   'help-for-commands': { zh: '/ 查看命令', en: '/ for commands' },
@@ -363,6 +439,8 @@ const dict = {
   'help-complete-command': { zh: 'tab 补全命令', en: 'tab to complete command' },
   'help-cycle-mode': { zh: 'shift+tab 切换模式', en: 'shift+tab to cycle mode' },
   'help-open-editor': { zh: 'ctrl+g 打开编辑器', en: 'ctrl+g to open editor' },
+  'help-fold-todos': { zh: '{{mod}}q 折叠待办', en: '{{mod}}q to fold todos' },
+  'goal-todo-fold-hint': { zh: '{{mod}}q 折叠', en: '{{mod}}q to fold' },
   'help-commands-title': { zh: '命令：', en: 'commands:' },
   'help-scroll-hint': {
     zh: '↑/↓ 滚动 · PgUp/PgDn 翻页 · Home/End 首尾 · Esc 关闭',
@@ -458,10 +536,20 @@ const dict = {
   'statusline-hint-select': { zh: 'esc 返回输入', en: 'esc to return to input' },
   'statusline-hint-working': { zh: 'esc 中断', en: 'esc to interrupt' },
   'statusline-hint-shortcuts': { zh: '? 查看快捷键', en: '? for shortcuts' },
+  // ── 底栏字段 hover 明细（补充行读出；技术标签 ctx/free/read 等保持不译）──
+  'status-detail-of-window': { zh: '的窗口', en: 'of window' },
+  'status-detail-session-id': { zh: '会话日志目录与此 id 同名', en: 'the session log directory is named after this id' },
   'hint-ext-dialog-input': { zh: '**Enter** 确认 · Esc 取消', en: '**Enter** to confirm · Esc to cancel' },
   'hint-adjust-done': { zh: '**←/→** 调整 · Enter/Esc 完成', en: '**←/→** to adjust · Enter/Esc to done' },
   'hint-history-search': { zh: '↑/↓ 选择 · **Enter** 确认 · Esc 取消', en: '↑/↓ to navigate · **Enter** to select · Esc to cancel' },
   'hint-expand-ctrl-o': { zh: '（ctrl+o 展开）', en: '(ctrl+o to expand)' },
+
+  // ── components/FileActionsPanel.tsx（点击文件路径弹出的操作菜单）──
+  'file-actions-title': { zh: '文件操作', en: 'File actions' },
+  'file-actions-open': { zh: '打开文件', en: 'Open file' },
+  'file-actions-open-dir': { zh: '打开文件夹', en: 'Open folder' },
+  'file-actions-reveal': { zh: '打开所在文件夹', en: 'Reveal in folder' },
+  'file-actions-copy': { zh: '复制绝对路径', en: 'Copy absolute path' },
 
   // ── components/ModelPicker.tsx / ThemePicker.tsx / ActivityPicker.tsx / EffortSlider.tsx ──
   'picker-title-model': { zh: '模型', en: 'Model' },
@@ -470,6 +558,8 @@ const dict = {
   'skills-loading-subtitle': { zh: '正在查询技能注册表…', en: 'Querying the skill registry…' },
   'skills-empty': { zh: '当前会话没有可用技能', en: 'No skills available in this session' },
   'skills-load-failed': { zh: '技能列表加载失败', en: 'Failed to load the skill list' },
+  'skills-unknown': { zh: '未知技能「{{name}}」', en: 'Unknown skill "{{name}}"' },
+  'skills-not-invocable': { zh: '技能「{{name}}」不可直接调用', en: 'Skill "{{name}}" is not directly invocable' },
   'plugin-scene-crashed': { zh: '插件场景「{{id}}」渲染崩溃：{{err}}（已自动关闭）', en: 'Plugin scene "{{id}}" crashed while rendering: {{err}} (closed)' },
   'skills-source-bundled': { zh: '内置', en: 'built-in' },
   'skills-source-user': { zh: '用户', en: 'user' },
@@ -565,8 +655,9 @@ const dict = {
   'rename-current': { zh: '当前名称  {{title}}', en: 'Current title  {{title}}' },
   'rename-done': { zh: '已重命名为「{{title}}」', en: 'Renamed to "{{title}}"' },
   'compact-summary-folded': { zh: '摘要已折叠', en: 'Summary folded' },
-  'new-message': { zh: '{{n}} 条新消息', en: '1 new message' },
-  'new-messages': { zh: '{{n}} 条新消息', en: '{{n}} new messages' },
+  'new-message': { zh: '↓ {{n}} 条新消息', en: '↓ 1 new message' },
+  'new-messages': { zh: '↓ {{n}} 条新消息', en: '↓ {{n}} new messages' },
+  'back-to-bottom': { zh: '↓ 回到底部（Enter/End）', en: '↓ back to bottom (Enter/End)' },
 
   // ── components/ThemePicker.tsx ──────────────────────────────────────
   'theme-builtin-base': { zh: '内置 · {{name}} 基底', en: 'Built-in · {{name}} base' },
@@ -711,6 +802,7 @@ const dict = {
   'cmd-desc-status': { zh: '查看会话状态' },
   'cmd-desc-cost': { zh: '查看会话 token 用量' },
   'cmd-desc-config': { zh: '查看 dsh-tui 配置来源' },
+  'cmd-desc-reload': { zh: '重读偏好文件并立即生效' },
   'cmd-desc-settings': { zh: '查看和编辑插件设置' },
   'cmd-desc-doctor': { zh: '运行环境检查' },
   'cmd-desc-init': { zh: '在工作目录创建 AGENTS.md' },
@@ -727,7 +819,6 @@ const dict = {
   'cmd-desc-provider': { zh: '添加模型提供方（内置目录或自定义 API 端点）' },
   'cmd-desc-login': { zh: '查看 API 凭证状态' },
   'cmd-desc-logout': { zh: '清除 API 凭证' },
-  'cmd-desc-permissions': { zh: '查看权限策略状态' },
   'cmd-desc-add-dir': { zh: '查看文件系统策略范围' },
   'cmd-desc-hooks': { zh: '查看 hooks 状态' },
   'cmd-desc-mcp': { zh: '查看 MCP 状态' },
@@ -752,6 +843,7 @@ const dict = {
   'cmd-desc-workspace-open': { zh: '打开路径或工作区 URI', en: 'Open a path or workspace URI' },
   // Help / exit
   'cmd-desc-help': { zh: '查看快捷键与命令' },
+  'cmd-desc-restart': { zh: '重启 dsh-tui 并恢复当前会话' },
   'cmd-desc-exit': { zh: '退出 dsh-tui' },
   // Registry-injected (external) commands — zh only; en falls back to the
   // registry's own description, and unlisted externals always fall back.
@@ -766,6 +858,9 @@ const dict = {
   'lang-switched': { zh: '语言已切换：{{lang}}（已保存）', en: 'Language switched: {{lang}} (saved)' },
   'lang-unknown': { zh: '未知语言「{{lang}}」· /lang 查看全部（en / zh）', en: 'Unknown language "{{lang}}" · /lang to view all (en / zh)' },
   'lang-switch-failed': { zh: '语言「{{lang}}」切换失败（无法写入 ~/.dsh-tui/lang.json）', en: 'Language "{{lang}}" switch failed (cannot write ~/.dsh-tui/lang.json)' },
+  'lang-picker-title': { zh: '界面语言', en: 'UI language' },
+  'lang-zh-desc': { zh: '简体中文（默认）', en: 'Simplified Chinese (default)' },
+  'lang-en-desc': { zh: 'English（英文）', en: 'English' },
 
   // ── screens/StatusLine.tsx ───────────────────────────────────────────
   'status-cache-label': { zh: '缓存 ', en: 'cache ' },
@@ -884,10 +979,14 @@ export function t(key: I18nKey, params: I18nParams = {}): string {
  * lives in `LOCAL_COMMANDS` / the DSH registry, the dict carries zh only).
  * @param key - Dictionary key, computed at runtime so it is not type-checked.
  * @param fallback - Text used when no translation exists.
+ * @param params - Placeholder values substituted into whichever text wins.
  */
-export function tOr(key: string, fallback: string): string {
+export function tOr(key: string, fallback: string, params: I18nParams = {}): string {
   const entry = (dict as Record<string, { zh?: string; en?: string }>)[key]
-  return entry?.[activeLang] ?? fallback
+  const template = entry?.[activeLang] ?? fallback
+  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) =>
+    name in params ? String(params[name]) : match,
+  )
 }
 
 // ── persistence (~/.dsh-tui/lang.json) ─────────────────────────────────
