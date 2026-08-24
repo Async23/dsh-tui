@@ -543,6 +543,13 @@ const dict = {
   'hint-history-search': { zh: '↑/↓ 选择 · **Enter** 确认 · Esc 取消', en: '↑/↓ to navigate · **Enter** to select · Esc to cancel' },
   'hint-expand-ctrl-o': { zh: '（ctrl+o 展开）', en: '(ctrl+o to expand)' },
 
+  // ── components/FileActionsPanel.tsx（点击文件路径弹出的操作菜单）──
+  'file-actions-title': { zh: '文件操作', en: 'File actions' },
+  'file-actions-open': { zh: '打开文件', en: 'Open file' },
+  'file-actions-open-dir': { zh: '打开文件夹', en: 'Open folder' },
+  'file-actions-reveal': { zh: '打开所在文件夹', en: 'Reveal in folder' },
+  'file-actions-copy': { zh: '复制绝对路径', en: 'Copy absolute path' },
+
   // ── components/ModelPicker.tsx / ThemePicker.tsx / ActivityPicker.tsx / EffortSlider.tsx ──
   'picker-title-model': { zh: '模型', en: 'Model' },
   'picker-title-skills': { zh: '技能', en: 'Skills' },
