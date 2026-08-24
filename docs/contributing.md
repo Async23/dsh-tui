@@ -313,5 +313,11 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 - 发布由 tag 驱动：`.github/workflows/publish.yml` 要求 `v*` tag 与
   `package.json` 版本完全一致，随后构建、跑聚焦回归并发布 npm。版本变更与
   tag 是发布操作，不是日常清理。
+- Release note 带贡献者署名：建 GitHub Release 用
+  `gh release create vX.Y.Z --notes-file notes.md --generate-notes`——手写摘要
+  在前，GitHub 在后面自动追加 What's Changed（PR 标题 + 作者 + 链接）、
+  New Contributors 与 Full Changelog；`.github/release.yml` 从自动清单里排除
+  bot。手写摘要中来自外部贡献者的条目在末尾标 `（#PR号 by @用户名）`，维护者
+  自己的条目不标；裸写 `#123` 与 `@user`，GitHub 渲染成链接。
 - 移交代码改动前检查 `git diff --check`、源码 diff、生成 diff 与 `git status`，
   并如实报告跑了哪些验证、哪些平台/凭证相关的检查没跑。
