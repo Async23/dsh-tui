@@ -112,6 +112,10 @@ const GROUPS = {
 // /update 纯函数回归：版本探测（双布局+外来 manifest 拒绝）、
 // registry 解析（env/npmrc/默认）、semver 比较、pnpm --latest。
     ["verify-update", ['node', 'scripts/verify-update.mjs']],
+// /reload 与 /restart 纯函数回归：planReload 五类偏好的应用/跳过/
+// 无变化分支、env 与 cordis.yml 显式配置的优先级守卫、模型路由原子
+// 规则（provider-only pin 不挡偏好）、两命令的注册与解析。
+    ["verify-reload", ['node', '--import', 'tsx/esm', 'scripts/verify-reload.ts']],
 // 直达启动器回归（issue #108）：参数透传、残骸 profile 重装、
 // 版本不一致提示、双语消息、shellQuote 转义规则。
     ["verify-launcher", ['node', 'scripts/verify-launcher.mjs']],

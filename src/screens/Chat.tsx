@@ -1,5 +1,12 @@
 import React from 'react'
-import { t, getLang, setLang, isLang, writeLangPref, subscribeLang, LANGS, type I18nKey, type Lang } from '../i18n.js'
+import { t, getLang, setLang, isLang, writeLangPref, readLangPref, subscribeLang, LANGS, type I18nKey, type Lang } from '../i18n.js'
+import { readThemePref } from '../themePrefs.js'
+import { readPresetPref } from '../presetPrefs.js'
+import { readModelPref } from '../modelPrefs.js'
+import { readActivityFrames } from '../activityPrefs.js'
+import { envThemeOverride } from '../components/design-system/ThemeProvider.js'
+import { hasPath } from '../dsh-adapter/settingsEditor.js'
+import { planReload, type ReloadKind } from '../reload.js'
 import { AlternateScreen, Box, Text, useInput, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
 import * as tuiKit from '../ui.js'
 import { POINTER } from '../cc/figures.js'
@@ -181,6 +188,7 @@ export function Chat({
   extensionShortcuts,
   onExit,
   onUpdate,
+  onRestart,
   fullscreen = false,
   trajectorySeen: trajectorySeenProp,
 }: {
@@ -205,6 +213,8 @@ export function Chat({
   onExit: () => void
   /** Update the installed package and restart the current TUI process. */
   onUpdate?: () => void
+  /** Restart the current TUI process and resume this session (no update). */
+  onRestart?: () => void
   /**
    * True when the host already wrapped this tree in `<AlternateScreen>`
    * (`fullscreen: true`). Both full-screen surfaces need this — the trajectory
@@ -689,6 +699,17 @@ export function Chat({
       ok ? t('lang-switched', { lang }) : t('lang-switch-failed', { lang }),
       { color: ok ? 'success' : 'error' },
     )
+  }
+
+  /** Localized label of one /reload surface, for the change report. */
+  const reloadKindLabel = (kind: ReloadKind): string => {
+    switch (kind) {
+      case 'theme': return t('reload-kind-theme')
+      case 'lang': return t('reload-kind-lang')
+      case 'preset': return t('reload-kind-preset')
+      case 'model': return t('reload-kind-model')
+      case 'activity': return t('reload-kind-activity')
+    }
   }
 
   const runCommand = (name: string, rawInput = ''): boolean => {
@@ -1370,6 +1391,98 @@ export function Chat({
         } else {
           channel.notify(t('update-starting'))
           onUpdate()
+        }
+        return true
+      case 'reload': {
+        // pi-style soft reload: re-read the persisted preference files
+        // (~/.dsh-tui/{theme,lang,agent-preset,model,working-activity}.json)
+        // and re-apply live, honoring the boot-time precedence (env >
+        // cordis.yml > settings user layer > pref). The dsh-tui settings
+        // namespace is NOT re-read here — its watch applies edits live and
+        // the platform watcher hot-reloads settings.yaml itself. What no
+        // reload can re-read (cordis.yml root config, frozen fullscreen,
+        // newly built code) is listed in the footer and served by /restart.
+        setHelpOpen(false)
+        const tuiNamespace = channel.settingsHost()
+          ?.listNamespaces()
+          .find(entry => entry.ns === 'dsh-tui')
+        const plan = planReload({
+          envTheme: envThemeOverride(),
+          envLang: isLang(process.env.DSH_TUI_LANG) ? process.env.DSH_TUI_LANG : undefined,
+          themePref: readThemePref(),
+          currentTheme: themeName,
+          langPref: readLangPref(),
+          currentLang: getLang(),
+          langOverriddenBySettings: tuiNamespace !== undefined && hasPath(tuiNamespace.user, ['lang']),
+          configuredLang: channel.configuredLang,
+          configuredPreset: channel.configuredPreset,
+          presetPref: readPresetPref(),
+          currentPreset: channel.agentPreset,
+          configuredModel: {
+            provider: channel.configuredProvider,
+            model: channel.configuredModel,
+          },
+          modelPref: readModelPref(),
+          currentModel: { provider: channel.provider, model: channel.model },
+          configuredActivity: channel.configuredActivityFrames,
+          activityPref: readActivityFrames(),
+          currentActivity: channel.activityFrames,
+        })
+        for (const item of plan.apply) {
+          switch (item.kind) {
+            case 'theme':
+              setTheme(item.to)
+              break
+            case 'lang':
+              applyLang(item.to as Lang)
+              break
+            case 'preset':
+              void channel.switchPreset(item.to)
+              break
+            case 'model':
+              if (item.route !== undefined) {
+                void channel.switchModel(item.route.provider, item.route.model)
+              }
+              break
+            case 'activity':
+              channel.setActivityFrames(item.to)
+              break
+          }
+        }
+        const lines = [t('reload-header')]
+        for (const item of plan.apply) {
+          lines.push(t('reload-applied', {
+            kind: reloadKindLabel(item.kind),
+            from: item.from,
+            to: item.to,
+          }))
+        }
+        for (const kind of plan.unchanged) {
+          lines.push(t('reload-unchanged', { kind: reloadKindLabel(kind) }))
+        }
+        for (const skip of plan.skipped) {
+          const key = skip.reason === 'env-wins'
+            ? 'reload-skipped-env'
+            : skip.reason === 'config-wins' ? 'reload-skipped-config' : 'reload-skipped-invalid'
+          lines.push(t(key, { kind: reloadKindLabel(skip.kind) }))
+        }
+        lines.push(t('reload-footer'))
+        channel.pushLocal('/reload', lines)
+        return true
+      }
+      case 'restart':
+        // pi-style reload tail: /reload cannot re-read boot-time-only state
+        // (cordis.yml root config, frozen fullscreen layout, newly built
+        // code), so /restart respawns the process with the original argv and
+        // resumes this session — the /update handoff minus the pnpm step.
+        setHelpOpen(false)
+        if (onRestart === undefined) {
+          channel.notify(t('restart-unavailable'), { color: 'warning' })
+        } else if (channel.working) {
+          channel.notify(t('update-working'), { color: 'warning' })
+        } else {
+          channel.notify(t('restart-starting'))
+          onRestart()
         }
         return true
       case 'vim':
