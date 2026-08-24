@@ -27,6 +27,8 @@ const GROUPS = {
 // 带断言的回归：提问面板内联输入（issue #9）+ 工具卡排版
 // （⎿ 缩进、diff 红绿行、信封剥离），失败即非零退出。
     ["repro-askpanel", ['node', '--import', 'tsx/esm', 'scripts/repro-askpanel.tsx']],
+// 问卷回退回归：答案按题覆盖、草稿恢复、Esc 分层语义与最终摘要。
+    ["verify-question-backtrack", ['node', '--import', 'tsx/esm', 'scripts/verify-question-backtrack.tsx']],
 // 提问面板全应用布局回归：短/长高录、activity tick 差分、resize 风暴。
     ["verify-askpanel-layout", ['node', '--import', 'tsx/esm', 'scripts/verify-askpanel-layout.tsx']],
     ["repro-toolcards", ['node', '--import', 'tsx/esm', 'scripts/repro-toolcards.tsx']],
