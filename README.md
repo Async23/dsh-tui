@@ -95,6 +95,16 @@ sh install.sh
 
 `dsh-tui --resume` 恢复上次会话；Windows 也可用仓库里的 `dsh-tui.cmd`（等价）。
 
+CLI 子命令（`dsh-tui help` 查看完整用法）：
+
+| 命令 | 作用 |
+|---|---|
+| `dsh-tui update` | 升级 profile 到最新版本并对齐启动器（与 TUI 内 `/update` 同一套安装逻辑，不重启进 TUI） |
+| `dsh-tui version` | 显示启动器与 profile 两侧版本（`--version`/`-v` 等价） |
+| `dsh-tui help` | 显示用法（`--help`/`-h` 等价） |
+
+`help`/`version` 在未安装 dsh、profile 未初始化时同样可用；`update` 需要 dsh（缺失时给出安装指引）；其余参数保持原样透传给 `dsh --profile dsh-tui`。仓库根的 `dsh-tui.cmd` 是直连 `dsh --profile` 的启动 wrapper，不含子命令——子命令属于 npm 安装的 `dsh-tui` 命令。
+
 ### Herdr
 
 在 [Herdr](https://herdr.dev) pane 中直接运行 `dsh-tui` 即可，无需额外配置。

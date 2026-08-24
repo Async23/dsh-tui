@@ -101,6 +101,20 @@ commands), then `dsh-tui` and `dsh --profile dsh-tui` are equivalent.
 `dsh-tui --resume` restores the most recently selected session; on Windows
 the repository's `dsh-tui.cmd` works the same way.
 
+CLI subcommands (`dsh-tui help` prints the full usage):
+
+| Command | Purpose |
+|---|---|
+| `dsh-tui update` | Update the profile to the latest release and align the launcher (same install logic as the in-TUI `/update`, without restarting into the TUI) |
+| `dsh-tui version` | Show the launcher and profile versions (`--version`/`-v` are equivalent) |
+| `dsh-tui help` | Show usage (`--help`/`-h` are equivalent) |
+
+`help`/`version` work even when dsh is missing or the profile is not initialized; `update` needs dsh (a missing dsh gets an install hint);
+every other argument is still forwarded verbatim to `dsh --profile dsh-tui`.
+The repository-root `dsh-tui.cmd` is a launch wrapper that goes straight to
+`dsh --profile` and carries no subcommands — subcommands belong to the
+npm-installed `dsh-tui` command.
+
 ### Herdr
 
 Run `dsh-tui` directly in a [Herdr](https://herdr.dev) pane; no extra setup is

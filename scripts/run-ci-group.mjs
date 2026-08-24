@@ -64,6 +64,10 @@ const GROUPS = {
     ["verify-message-measure-depth", ['node', '--import', 'tsx/esm', 'scripts/verify-message-measure-depth.tsx'], { NODE_ENV: 'production' }],
     ["verify-scroll", ['node', 'scripts/verify-scroll.mjs']],
     ["verify-shrink", ['node', 'scripts/verify-shrink.mjs']],
+// 高于视口的收缩必须记 anchoredPad：终端 scrollback 不随内容收缩，
+// 高度差公式会少算 1 行 → 上移在视口顶被钳制 → 整帧相对写入链低一行
+// （verify-trace-scene settle-gap flake 的确定性蒸馏，红绿验证过）。
+    ["verify-shrink-anchored-pad", ['node', '--import', 'tsx/esm', 'scripts/verify-shrink-anchored-pad.tsx']],
 // unseen-count 上报契约回归：同值重复上报会在密集流式 commit 下把
 // setState 派发进 commit 内，嵌套更新计数连涨越过 React #185 上限
 // （#146 之后残留的活链）。只在计数变化时才允许上报。
@@ -126,6 +130,9 @@ const GROUPS = {
 // 直达启动器回归（issue #108）：参数透传、残骸 profile 重装、
 // 版本不一致提示、双语消息、shellQuote 转义规则。
     ["verify-launcher", ['node', 'scripts/verify-launcher.mjs']],
+// CLI 子命令回归（issue #509）：help/version 零环境应答（不触发自举
+// 与委托）、双语输出、profile 版本读取、只认第一个参数。
+    ["verify-cli-subcommands", ['node', 'scripts/verify-cli-subcommands.mjs']],
 // 剪贴板回归：text/uri-list 严格 URL 解析（远程 authority 拒绝、
 // query/fragment 剥离、畸形转义保留）、image/text MIME 挑选、插入格式化；
 // stub PATH 假 wl-paste/xclip 集成——CJK 跨 chunk、gnome verb 行、
