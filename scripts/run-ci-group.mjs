@@ -334,6 +334,10 @@ const GROUPS = {
 // 插件场景渲染崩溃边界：Thrower 场景必须被 PluginSceneBoundary 接住——
 // onError 精确一次、崩溃场景停止绘制、进程存活；健康场景不受影响。
     ["verify-plugin-scene-boundary", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-scene-boundary.tsx']],
+// 终端点击目标回归（点击链接开浏览器 / 文件路径弹菜单）：路径判定、
+// dsh-file: URL 编解码、相对路径按 cwd 解析、file:// 转换、Windows
+// start 组装——fileTarget.ts / openExternal.ts 的纯函数部分。
+    ["verify-clickable-targets", ['node', '--import', 'tsx/esm', 'scripts/verify-clickable-targets.ts']],
   ],
   'flaky-observation': [
 // resize 时间稳定性（借鉴 Codex 的 resize 漂移维度）：落定后不得
