@@ -100,6 +100,7 @@ CLI 子命令（`dsh-tui help` 查看完整用法）：
 | 命令 | 作用 |
 |---|---|
 | `dsh-tui update` | 升级 profile 到最新版本并对齐启动器（与 TUI 内 `/update` 同一套安装逻辑，不重启进 TUI） |
+| `dsh-tui doctor` | 启动前环境诊断：dsh/pnpm、profile 安装与版本对齐、密钥是否已设置（只报状态不报值）、配置文件存在性；与 TUI 内 `/doctor` 的会话内诊断互补 |
 | `dsh-tui version` | 显示启动器与 profile 两侧版本（`--version`/`-v` 等价） |
 | `dsh-tui help` | 显示用法（`--help`/`-h` 等价） |
 

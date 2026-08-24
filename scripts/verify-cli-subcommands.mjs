@@ -180,6 +180,48 @@ for (const alias of ['version', '--version', '-v']) {
   check('空 profile 时 update 先自举再 import profile lib', r.status === 0 && r.stdout.includes('boot-cli-update profile=dsh-tui'), `status=${r.status}`)
 }
 
+// --- doctor -------------------------------------------------------------------
+{
+  // 无 dsh：诊断照常打印全表，但以退出码 1 收束（dsh 缺失是唯一硬失败）。
+  const r = run(['doctor'])
+  check('doctor 无 dsh 时退出 1 且标注缺失', r.status === 1 && r.stdout.includes('✗ dsh'), `status=${r.status}`)
+}
+{
+  // stub dsh/pnpm：退出 0；profile 已装（前面的用例写入了 1.2.3-stub）；
+  // 密钥红线——设置了值时只报告状态，stdout 绝不含密钥本身。
+  const stubDir = join(tmp, 'doctor-stub')
+  mkdirSync(stubDir, { recursive: true })
+  writeFileSync(join(stubDir, 'dsh'), '#!/bin/sh\necho 9.9.9-dsh-stub\nexit 0\n')
+  writeFileSync(join(stubDir, 'pnpm'), '#!/bin/sh\necho 9.9.9-pnpm-stub\nexit 0\n')
+  ;(await import('node:fs')).chmodSync(join(stubDir, 'dsh'), 0o755)
+  ;(await import('node:fs')).chmodSync(join(stubDir, 'pnpm'), 0o755)
+  const SECRET = 'sk-hunt-secret-marker'
+  const r = run(['doctor'], { PATH: stubDir, DEEPSEEK_API_KEY: SECRET })
+  check('doctor 有 dsh/pnpm 时退出 0 并打印版本', r.status === 0 && r.stdout.includes('9.9.9-dsh-stub') && r.stdout.includes('9.9.9-pnpm-stub'), `status=${r.status}`)
+  check('doctor 报告 profile 版本', r.stdout.includes('1.2.3-stub'))
+  check('doctor 报告密钥已设置', r.stdout.includes('已设置'))
+  check('doctor 绝不输出密钥值（红线）', !r.stdout.includes(SECRET) && !r.stderr.includes(SECRET))
+  const r2 = run(['doctor'], { PATH: stubDir })
+  check('doctor 报告密钥未设置', r2.status === 0 && r2.stdout.includes('未设置'))
+  // 版本错位提示：profile(1.2.3-stub) vs 启动器(ownVersion)——不对齐时给指引。
+  check('doctor 报告启动器与 profile 版本错位', r2.stdout.includes('launcher ↔ profile') && r2.stdout.includes('✗'))
+  // 空字符串密钥：发不了请求，且 TUI 内 /doctor 按 truthiness 报未配置——
+  // 两个 doctor 结论必须一致。
+  const r3 = run(['doctor'], { PATH: stubDir, DEEPSEEK_API_KEY: '' })
+  check('doctor 空字符串密钥按未设置报告', r3.stdout.includes('未设置'))
+  // 探针输出白名单：PATH 上的 wrapper 把环境变量 echo 进 --version 时，
+  // 非版本形状的首行不得转印（密钥红线的探针侧）。
+  const leakDir = join(tmp, 'doctor-leak-stub')
+  mkdirSync(leakDir, { recursive: true })
+  writeFileSync(join(leakDir, 'dsh'), '#!/bin/sh\necho "$DEEPSEEK_API_KEY"\nexit 0\n')
+  ;(await import('node:fs')).chmodSync(join(leakDir, 'dsh'), 0o755)
+  const r4 = run(['doctor'], { PATH: leakDir, DEEPSEEK_API_KEY: SECRET })
+  check(
+    'doctor 探针输出非版本形状时不转印（wrapper 泄密场景）',
+    !r4.stdout.includes(SECRET) && !r4.stderr.includes(SECRET) && r4.stdout.includes('(version unreadable)'),
+  )
+}
+
 // --- 只认第一个参数 ------------------------------------------------------------
 {
   // 独立的全新 DSH_HOME：前面的用例已在 emptyHome 写入 profile 残骸，
