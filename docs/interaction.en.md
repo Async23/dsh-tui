@@ -13,7 +13,7 @@
 | `Shift+Tab` | Cycle the configured session modes (default: default → plan → full-access) |
 | `Alt/Option+Up` | Pull the latest undelivered message back into the editor |
 | `Up/Down` | Select menu items; in ordinary input, browse history or move through multiline text |
-| `Ctrl+V` | Insert clipboard text or files; images are sent as durable attachments |
+| `Ctrl+V` / `Alt+V` | Insert clipboard text or files; images are sent as durable attachments. Use `Alt+V` when the terminal intercepts `Ctrl+V` |
 | `Ctrl+G` | Edit the current input in an external editor (`$VISUAL` → `$EDITOR`); saving and quitting fills it back, `:cq`/non-zero exit keeps the draft; with neither variable set the TUI asks you to configure one (no `vi` fallback) |
 | `Esc` | Ladder: close help → close the command menu → close the file menu (only the current `@` token) → interrupt the turn and redeliver pending messages → clear non-empty input → double-tap on empty input = rewind; in fullscreen, an active mouse selection is cleared first (not copied) |
 | `Ctrl+C` | Interrupt while working; clear non-empty idle input; press twice on empty input to exit |
@@ -26,6 +26,8 @@
 | `?` | Open shortcut and command help when the input is empty |
 | In Help: `↑/↓`, `PgUp/PgDn`, `Home/End` | Scroll by line, page, or jump to either end; `Esc` closes |
 | `Shift+Up` | Enter message selection; arrows move, `Enter` expands one row, `Esc` exits |
+
+The action shortcuts (paste, history search, external editor, `Ctrl+O/T/P/R/L`, subagent dashboard, show-all, todo fold) are remappable in `/settings` → `dsh-tui` → `Shortcuts`: enter combos such as `alt+v`, comma-separate several, leave blank to restore defaults — saves apply live. Combos clashing with the fixed editing keys or another action are rejected. Deployments can also pin them via `shortcuts.<action>` in cordis.yml.
 
 `/` has two meanings. In normal input it opens slash-command completion. In
 the `Ctrl+O` transcript view it opens full-session search; use `n` and `N` to
@@ -281,7 +283,9 @@ keyboard:
 | `Space` | Toggle a multi-select option |
 | `Tab` | Switch to a custom text answer |
 | `Enter` | Submit the current question |
-| `Esc` | Cancel the whole batch of questions; the model receives `ASK_CANCELLED` (a harness-side abort still reports `ASK_ABORTED`) |
+| `Esc` (from question 2 onward) | Return to the previous question and keep the current draft |
+| `Esc` (from question 1) | Cancel the whole batch; the model receives `ASK_CANCELLED` |
+| `Ctrl+C` | Cancel the whole batch from any question; the model receives `ASK_CANCELLED` (a harness-side abort still reports `ASK_ABORTED`) |
 
 The last row is a free-form input line: typing directly on an option row
 submits that option's label **plus** your custom text together (no need to

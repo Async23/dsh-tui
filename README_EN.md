@@ -101,6 +101,20 @@ commands), then `dsh-tui` and `dsh --profile dsh-tui` are equivalent.
 `dsh-tui --resume` restores the most recently selected session; on Windows
 the repository's `dsh-tui.cmd` works the same way.
 
+CLI subcommands (`dsh-tui help` prints the full usage):
+
+| Command | Purpose |
+|---|---|
+| `dsh-tui update` | Update the profile to the latest release and align the launcher (same install logic as the in-TUI `/update`, without restarting into the TUI) |
+| `dsh-tui version` | Show the launcher and profile versions (`--version`/`-v` are equivalent) |
+| `dsh-tui help` | Show usage (`--help`/`-h` are equivalent) |
+
+`help`/`version` work even when dsh is missing or the profile is not initialized; `update` needs dsh (a missing dsh gets an install hint);
+every other argument is still forwarded verbatim to `dsh --profile dsh-tui`.
+The repository-root `dsh-tui.cmd` is a launch wrapper that goes straight to
+`dsh --profile` and carries no subcommands — subcommands belong to the
+npm-installed `dsh-tui` command.
+
 ### Herdr
 
 Run `dsh-tui` directly in a [Herdr](https://herdr.dev) pane; no extra setup is
@@ -154,7 +168,7 @@ For migration from the former `dsh-cc-tui` package and `cc-tui` profile, see
 | `Ctrl+O` | Expand/collapse details (full thinking text, tool arguments and output) |
 | `Ctrl+R` | History search |
 | `/` | In-session full-text search (`n`/`N` to jump) |
-| `Ctrl+V` | Paste text or files from the file manager; images show as `[Image #N]` and are sent as durable attachments |
+| `Ctrl+V` / `Alt+V` | Paste text or files from the file manager; images show as `[Image #N]` and are sent as durable attachments. Use `Alt+V` when the terminal intercepts `Ctrl+V` |
 | `Ctrl+G` | Edit the current input with `$VISUAL`/`$EDITOR` (e.g. nvim); content is filled back in on save and exit |
 | `?` | Keybinding menu (responds only when the input is empty) |
 | `Shift+↑` | Message selection mode (`Enter` expands a single message) |
@@ -166,6 +180,8 @@ For migration from the former `dsh-cc-tui` package and `cc-tui` profile, see
 
 **Three delivery modes while the model is working**: `Enter` = steer (inject a next-step boundary, no interruption) · `Tab` = follow-up (queued after the current turn) · `Ctrl+Enter` = interrupt (break in and send immediately).
 
+**Custom keybindings**: the action shortcuts above (paste, history search, external editor, transcript expand, trajectory, subagent dashboard, loaded-context panel, show-all, redraw, todo fold) are remappable in `/settings` → `dsh-tui` → `Shortcuts`: enter combos like `alt+v` or `ctrl+shift+v`, comma-separate several, leave blank to restore the default; saves apply live with no restart. Combos that clash with the fixed editing keys (`Ctrl+A/E/U/K/W`, `Ctrl+←/→`) or with another action are rejected. Deployments can also pin them statically via `shortcuts.<action>` in cordis.yml (the settings user layer wins).
+
 **macOS modifier keys**: the `Ctrl+<key>` bindings above also work with `⌘<key>`
 on macOS (e.g. `⌘V` paste, `⌘O` expand details, `⌘Enter` send immediately);
 only `Ctrl+C` / `Ctrl+D` (interrupt/exit) stay on Ctrl, to avoid clashing
@@ -174,7 +190,7 @@ terminal support for the extended keyboard protocol (iTerm2 / kitty / WezTerm /
 ghostty / tmux); macOS's built-in Terminal.app consumes `⌘` shortcuts itself,
 so keep using `Ctrl`.
 
-**Mouse** (fullscreen is the factory default since 0.8.8; set `fullscreen: false` to restore the inline main screen)
+**Mouse** (fullscreen is the factory default since 0.9.0; set `fullscreen: false` to restore the inline main screen; updating from an older version clears a previously saved inline choice once — you can still pick inline again afterwards)
 
 | Action | Function |
 |---|---|
@@ -197,7 +213,8 @@ so keep using `Ctrl`.
 | `Space` | Toggle multi-select options |
 | `Tab` | Switch to a custom answer (type directly without picking an option) |
 | `Enter` | Submit the current selection |
-| `Esc` / `Ctrl+C` | Cancel the whole question batch (the model receives ASK_CANCELLED and can continue the conversation) |
+| `Esc` (from question 2 onward) | Return to the previous question and keep the current draft |
+| `Esc` (from question 1) / `Ctrl+C` | Cancel the whole question batch (the model receives ASK_CANCELLED and can continue the conversation) |
 
 **Local commands** (a full replica of the CC command set, all routed through the official DSH pipeline)
 

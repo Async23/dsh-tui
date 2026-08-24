@@ -16,7 +16,7 @@ process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_THEME = 'dark'
 process.env.DSH_TUI_LANG = 'zh'
 
-const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render, AlternateScreen }, { Chat }, { QuestionStore }, { LOCAL_COMMANDS, completeCommands }] = await Promise.all([
+const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render, AlternateScreen }, { Chat }, { QuestionStore }, { LOCAL_COMMANDS, completeCommands }, { settle }] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
@@ -24,6 +24,7 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render, Alternat
   import('../src/screens/Chat.js'),
   import('../src/dsh-adapter/questions.js'),
   import('../src/commands.js'),
+  import('./lib/term-test.mjs'),
 ])
 
 const COLS = 100, ROWS = 40
@@ -61,7 +62,13 @@ const rows: any[] = [
   { id: 0, kind: 'user', text: '帮我跑一下测试' },
   // 空文本 settled assistant（PR #383 的 bug 形状：模型直接调工具）
   { id: 1, kind: 'assistant', text: '', streaming: false },
+  // 叙述-only settled assistant（narrate 契约：⏵ 行 + 直接调工具）。
+  // 原文非空但渲染层 stripNarration 剥成空——旧过滤器测原文漏放行，
+  // 渲染成工具卡上方的孤立 ●（用户实测报告的形状）。
+  { id: 6, kind: 'assistant', text: '⏵ 正在跑测试', streaming: false },
   { id: 2, kind: 'tool', text: '', tool: { callId: 't1', name: 'Bash', argsText: '{"command": "npm test"}', argsFull: '{}', status: 'ok', startedAt: 0, durationMs: 42, resultText: 'all 12 tests passed' } },
+  // ⏵ 行 + 正文：叙述被剥但正文必须完整保留（不能误过滤）
+  { id: 7, kind: 'assistant', text: '⏵ 正在分析结果\n\n工具结果看起来全部通过 REALBODY2-END', streaming: false },
   { id: 3, kind: 'assistant', text: '测试全部通过，共 12 项。REALBODY-END', streaming: false },
   // 空文本但 streaming：必须保留（live dot）
   { id: 4, kind: 'assistant', text: '', streaming: true },
@@ -89,7 +96,10 @@ const inst = await render(
   <AlternateScreen><Chat channel={channel} questionStore={new QuestionStore()} fullscreen /></AlternateScreen>,
   { stdout: stdout as any, stdin: stdin as any, stderr: stderr as any, exitOnCtrlC: false, patchConsole: false },
 )
-await sleep(700)
+await settle(() => {
+  const screen = screenLines().join('\n')
+  return screen.includes('Bash') && screen.includes('REALBODY-END') && screen.includes('REALBODY2-END')
+})
 
 {
   const lines = screenLines()
@@ -104,12 +114,16 @@ await sleep(700)
     '')
   check('工具卡正常渲染', screen.includes('Bash'), '')
   check('真实正文正常渲染', screen.includes('REALBODY-END'), '')
+  check('叙述-only settled 行被过滤（⏵ 行不渲染、上方无孤立 ●）', !screen.includes('⏵') && !dotAboveTool, '')
+  check('⏵ 行 + 正文混合行保留正文', screen.includes('REALBODY2-END'), '')
 }
 
-// 落定翻转：streaming true → false 原地写（rows 身份/长度不变）
-rows[4]!.streaming = false
+// 落定翻转：streaming true → false 原地写（rows 身份/长度不变）。
+// 按 id 定位流式行——数组顺序在该脚本演化过，索引翻转曾错翻到别的行。
+const streamRow = rows.find(r => r.id === 4)!
+streamRow.streaming = false
 channel.emit()
-await sleep(500)
+await settle(() => loneDotLines(screenLines()).length === 0)
 {
   const lines = screenLines()
   check('落定翻转后空 assistant 行被过滤（缓存流位指纹生效）', loneDotLines(lines).length === 0,
@@ -119,6 +133,8 @@ await sleep(500)
 // 用户空文本行不受影响（kind 限定）：一个空 user 行仍渲染其气泡形状
 rows.push({ id: 5, kind: 'user', text: '' })
 channel.emit()
+// 稳定性探针（界面必须仍存活）：❯ 在 emit 前就在屏上，轮询会立即返回，
+// 测不到「没有崩掉」——保留固定窗口让潜在崩溃有时间显形。
 await sleep(400)
 check('空 user 行不受 assistant 过滤影响（无崩溃、界面存活）', screenLines().some(l => l.includes('❯')))
 
