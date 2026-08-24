@@ -106,7 +106,7 @@ dsh-tui
 | `Ctrl+W` | 删除前一个单词 |
 | `Backspace` / `Delete` | 删前一 / 后一字符 |
 | `↑` / `↓` | 多行时行间移动；单行时浏览输入历史（50 条） |
-| `Ctrl+V`（⌘V） | 粘贴：文本 / 文件路径（图片自动 `@` 引用）/ 剪贴板位图（`[Image #N]` 附件） |
+| `Ctrl+V`（⌘V）/ `Alt+V` | 粘贴：文本 / 文件路径（图片自动 `@` 引用）/ 剪贴板位图（`[Image #N]` 附件）；终端拦截 `Ctrl+V` 时用 `Alt+V` |
 | `Ctrl+G` | 用 `$VISUAL`/`$EDITOR` 外部编辑器编辑输入（`:cq` 保留原稿；未设置变量时提示配置） |
 | 右键 / `Ctrl+Shift+V` | 终端原生粘贴（含换行原样插入） |
 | `Esc`（输入框） | 层级：关帮助 → 关命令菜单 → 关文件菜单（仅当前 `@` token）→ 中断重投 → 有输入清空 → 双击=时间回溯 |
@@ -511,9 +511,9 @@ provider / model / cwd / effort / fullscreen / preset / workspace / sessionId / 
 21. 有文本选区时滚轮是**平移选区**不是滚动列表——想滚屏先 `Esc` 取消选区。
 
 **避坑**
-21. `/compact`、`/model` 在回合运行中会被拒绝——先 `Ctrl+C` 或等回合结束。
-22. 审批条 `Esc` = 拒绝（fail closed）；问卷第 2 题起 `Esc` = 返回上一题，第 1 题 `Esc` 或任意题 `Ctrl+C` = 取消整批（模型会收到取消信号）。
-23. `/update` 只更新 profile runtime 不动全局安装；提示版本错位时按提示执行
+22. `/compact`、`/model` 在回合运行中会被拒绝——先 `Ctrl+C` 或等回合结束。
+23. 审批条 `Esc` = 拒绝（fail closed）；问卷第 2 题起 `Esc` = 返回上一题，第 1 题 `Esc` 或任意题 `Ctrl+C` = 取消整批（模型会收到取消信号）。
+24. `/update` 只更新 profile runtime 不动全局安装；提示版本错位时按提示执行
     `npm install -g @deepseek-harness-tui/dsh-tui@<版本>` 对齐启动器。
 25. macOS 的 ⌘ 键需要 iTerm2/kitty/WezTerm/ghostty/tmux；Terminal.app 用 Ctrl 即可。
 26. 鼠标拖选即复制（fullscreen 模式）；`DSH_TUI_DISABLE_MOUSE=1` 可临时关闭鼠标。
