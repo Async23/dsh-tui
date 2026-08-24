@@ -28,13 +28,14 @@ const dataDir = mkdtempSync(join(tmpdir(), 'repro-paste-fold-data-'))
 process.env.HOME = dataDir
 process.env.USERPROFILE = dataDir
 
-const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render, AlternateScreen }, { Chat }, { QuestionStore }] = await Promise.all([
+const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render, AlternateScreen }, { Chat }, { QuestionStore }, termTest] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
   import('../src/ui.js'),
   import('../src/screens/Chat.js'),
   import('../src/dsh-adapter/questions.js'),
+  import('./lib/term-test.mjs'),
 ])
 
 const COLS = 100
@@ -57,39 +58,14 @@ class FakeStdin extends PassThrough {
   ref() { return this }
   unref() { return this }
 }
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-function screenHas(s: string): boolean {
-  const buf = term.buffer.active
-  for (let y = 0; y < ROWS; y++) {
-    if ((buf.getLine(y)?.translateToString(true) ?? '').includes(s)) return true
-  }
-  return false
-}
-/** 0-indexed position of the first occurrence of `s` on the screen. */
-function findText(s: string): { col: number; row: number } | null {
-  const buf = term.buffer.active
-  for (let row = 0; row < ROWS; row++) {
-    const line = buf.getLine(row)?.translateToString(true) ?? ''
-    const col = line.indexOf(s)
-    if (col >= 0) return { col, row }
-  }
-  return null
-}
-/**
- * Poll until the expected screen state appears (30ms × up to 4s), then let
- * the caller assert it. Fixed sleeps flake on slow CI runners: the input →
- * React → throttled render → async xterm parse pipeline can exceed any
- * constant, and the old 300ms reads asserted a stale screen while the state
- * was already correct (the follow-up submit assertions passed). A real
- * regression still fails: the condition never turns true and the check
- * fires after the timeout.
- */
-async function settle(pred: () => boolean): Promise<void> {
-  for (let i = 0; i < 133; i++) {
-    if (pred()) return
-    await sleep(30)
-  }
-}
+// 等待/读屏走公共辅助（issue #532）：settle 轮询到预期状态再断言——
+// 固定 sleep 在慢 runner 上会断言到旧屏幕（旧 300ms 版本挂过 CI，而
+// 后续 submit 断言通过，证明状态早已正确）；真回归仍会红（条件永不
+// 满足则超时后断言照常失败）。alt-screen 下 baseY 恒 0，视口读取与
+// 旧的 getLine(0..ROWS) 直扫等价。
+const { sleep, settle } = termTest
+const screenHas = (s: string): boolean => termTest.screenHas(term, s)
+const findText = (s: string): { col: number; row: number } | null => termTest.findText(term, s)
 
 const listeners = new Set<() => void>()
 let submitted = ''
