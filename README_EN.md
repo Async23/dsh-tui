@@ -106,6 +106,7 @@ CLI subcommands (`dsh-tui help` prints the full usage):
 | Command | Purpose |
 |---|---|
 | `dsh-tui update` | Update the profile to the latest release and align the launcher (same install logic as the in-TUI `/update`, without restarting into the TUI) |
+| `dsh-tui doctor` | Pre-flight environment checks: dsh/pnpm, profile install and version alignment, whether the API key is set (state only, never the value), config file presence; complements the in-TUI `/doctor` session diagnostics |
 | `dsh-tui version` | Show the launcher and profile versions (`--version`/`-v` are equivalent) |
 | `dsh-tui help` | Show usage (`--help`/`-h` are equivalent) |
 
