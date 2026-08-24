@@ -400,6 +400,14 @@ the required credentials.
   tag whose version exactly matches `package.json`, then builds, runs focused
   regressions, and publishes to npm. Treat version changes and tags as release
   operations, not routine cleanup.
+- Release notes credit contributors. Create GitHub Releases with
+  `gh release create vX.Y.Z --notes-file notes.md --generate-notes`: the
+  hand-written summary comes first, and GitHub appends What's Changed (PR
+  title + author + link), New Contributors, and the Full Changelog;
+  `.github/release.yml` excludes bots from the generated list. In the
+  hand-written summary, entries from external contributors end with
+  `(#PR by @user)`; the maintainer's own entries are unmarked. Write bare
+  `#123` and `@user` — GitHub renders them as links.
 - Before handing off a code change, inspect `git diff --check`, the source diff,
   the generated diff, and `git status`. Report exactly which verification ran
   and any platform or credential-dependent checks that could not run.
