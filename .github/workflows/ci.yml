@@ -354,6 +354,7 @@ jobs:
     steps:
       - name: Require every group to have succeeded
         env:
+          CHANGES: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
           BUILD: ${{ needs.build.result }}
           RENDER_SCROLL: ${{ needs.render-scroll.result }}
@@ -362,10 +363,18 @@ jobs:
           CHANNEL_UI: ${{ needs.channel-ui.result }}
         run: |
           # 纯文档改动：期望每组都是 skipped。这里不能笼统地放行 skipped——
-          # build 失败时下游同样是 skipped，那种情况必须判失败。
-          if [ "${CODE}" = "true" ]; then expected=success; else expected=skipped; fi
+          # build 失败时下游同样是 skipped，那种情况必须判失败。因此只对明确的
+          # code=false 放行 skipped；changes 自身失败时 CODE 为空串，一律按代码
+          # 严查（fail-closed），否则一个零测试的代码 PR 会在 gate 误绿下合并。
+          if [ "${CODE}" = "false" ]; then expected=skipped; else expected=success; fi
           echo "code=${CODE}，要求每组结束状态为 ${expected}"
           status=0
+          # changes 是全链路的分类源头：它自己失败时所有下游都是 skipped，
+          # 必须在这里显式判失败，不能指望上面的期望值兜住。
+          if [ "${CHANGES}" != "success" ]; then
+            echo "::error title=CI gate::changes 结束状态为 ${CHANGES}（要求 success，无法分类改动）"
+            status=1
+          fi
           for pair in "build:${BUILD}" \
                       "render-scroll:${RENDER_SCROLL}" \
                       "input-terminal:${INPUT_TERMINAL}" \
