@@ -145,8 +145,8 @@ export const TIPS: readonly Tip[] = [
   {
     id: 'keys-paste',
     group: 'keys',
-    zh: 'Ctrl+V 粘贴文本、文件路径或图片附件',
-    en: 'Ctrl+V pastes text, file paths, or image attachments',
+    zh: 'Ctrl+V 或 Alt+V 粘贴文本、文件路径或图片附件；/settings 可改快捷键',
+    en: 'Ctrl+V or Alt+V pastes text, file paths, or image attachments; remappable in /settings',
   },
   {
     id: 'keys-slash-search',
@@ -525,6 +525,12 @@ export const TIPS: readonly Tip[] = [
     group: 'display',
     zh: '全屏模式鼠标拖选即复制；Esc 取消选区',
     en: 'Drag-select copies instantly in fullscreen; Esc cancels',
+  },
+  {
+    id: 'disp-hover-footer',
+    group: 'display',
+    zh: '悬停底栏字段：ctx 原地变等宽压力条，明细走常驻底行，布局不动',
+    en: 'Hover footer fields: ctx morphs in place into a same-width bar, details on a stable line',
   },
   {
     id: 'disp-wheel-sel',

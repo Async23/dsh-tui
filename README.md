@@ -50,6 +50,10 @@
   - **终端原生交互**：流式 Markdown、结构化工具卡、命令与文件补全、`@` 文件引用
     （消息任意位置补全，文本附加内容，PNG/JPEG/WebP/GIF 作为持久图片块发送）、历史搜索、消息选择、
     inline/alternate-screen 两种渲染模式，以及 `/lang` 中英界面语言切换。
+  - **时间线导航**：Grok 式轮次 rail 覆盖**全部轮次（含折叠轮）**——折叠窗口只露
+    最近几轮时 rail 仍全景可达，点击刻度揭示对应轮并滚动到位；未钉底时
+    `Enter`/`End` 一键回底（远距一步到位不闪空白），新消息 pill 常驻可点击；
+    右侧 gutter 支持 timeline / scrollbar / hidden 三态设置。
   - **可观察的 Agent 状态**：实时工作状态、上下文分段进度、TPS、缓存命中率、
     推理等级、输入/输出 token 与 Git/会话信息。
   - **完整会话工作流**：`/resume`、`/new`、`/compact`、`/export`、`/btw` 侧问、
@@ -57,7 +61,10 @@
   - **DSH 官方能力接入**：Agent preset、Skills、MCP、Goals、Todos、子代理、
     `ask_user_question` 问卷都通过现有服务或注册表连接。
   - **为长会话设计**：事件驱动投影、差分终端输出、消息虚拟化、回放合并与有界缓存，
-    避免渲染成本和内存随会话无限增长。
+    避免渲染成本和内存随会话无限增长；热路径**指纹缓存做到每帧零分配**
+    （3200 行会话每 16ms tick 省下 ~200KB GC 压力），wrapText 与 markdown
+    token 走全局 LRU 跨挂载复用，主屏打开分帧补画、渲染折叠窗口 300→120 行，
+    长会话恢复直达内容（跳过开场动画、落点锚定最新消息末行）。
 
 ## 界面预览
 
@@ -87,6 +94,15 @@ sh install.sh
 ```
 
 `dsh-tui --resume` 恢复上次会话；Windows 也可用仓库里的 `dsh-tui.cmd`（等价）。
+
+CLI 子命令（`dsh-tui help` 查看完整用法）：
+
+| 命令 | 作用 |
+|---|---|
+| `dsh-tui version` | 显示启动器与 profile 两侧版本（`--version`/`-v` 等价） |
+| `dsh-tui help` | 显示用法（`--help`/`-h` 等价） |
+
+子命令在未安装 dsh、profile 未初始化时同样可用；其余参数保持原样透传给 `dsh --profile dsh-tui`。仓库根的 `dsh-tui.cmd` 是直连 `dsh --profile` 的启动 wrapper，不含子命令——子命令属于 npm 安装的 `dsh-tui` 命令。
 
 ### Herdr
 
@@ -134,7 +150,7 @@ npm install -g @deepseek-harness-tui/dsh-tui
 | `Ctrl+O` | 展开/收起详情（思考全文、工具参数与输出） |
 | `Ctrl+R` | 历史消息搜索 |
 | `/` | 会话内全文搜索（`n`/`N` 跳转） |
-| `Ctrl+V` | 粘贴文本或文件管理器中的文件；图片显示为 `[Image #N]` 并作为持久附件发送 |
+| `Ctrl+V` / `Alt+V` | 粘贴文本或文件管理器中的文件；图片显示为 `[Image #N]` 并作为持久附件发送。终端拦截 `Ctrl+V` 时用 `Alt+V` |
 | `Ctrl+G` | 用 `$VISUAL`/`$EDITOR`（如 nvim）打开当前输入编辑，保存退出后回填 |
 | `?` | 快捷键菜单（仅输入框为空时响应） |
 | `Shift+↑` | 消息选择模式（Enter 展开单条） |
@@ -146,19 +162,22 @@ npm install -g @deepseek-harness-tui/dsh-tui
 
 **模型工作中的三态投递**：`Enter`=steer（注入下一步边界，不中断）· `Tab`=follow-up（排入当前回合之后）· `Ctrl+Enter`=interrupt（打断并立即发送）。
 
+**自定义快捷键**：上表带 `Ctrl+<键>` 的动作型快捷键（粘贴、历史搜索、外部编辑器、转录展开、轨迹、子代理面板、上下文面板、显示全部、重绘、待办折叠）都可在 `/settings` → `dsh-tui` → `Shortcuts` 分组中改键：填写 `alt+v`、`ctrl+shift+v` 这类组合，多个组合用逗号分隔，留空恢复默认；保存即生效，无需重启。与固定编辑键（`Ctrl+A/E/U/K/W`、`Ctrl+←/→`）或其它动作冲突的组合会被拒绝。cordis.yml 也可通过 `shortcuts.<action>` 静态指定（settings 用户层优先）。
+
 **macOS 修饰键**：上表中 Windows/Linux 的 `Ctrl+<键>` 在 macOS 上同时可用 `⌘<键>`
 （如 `⌘V` 粘贴、`⌘O` 展开详情、`⌘Enter` 立即发送）；仅 `Ctrl+C` / `Ctrl+D`
 （中断/退出）保持 Ctrl 不变，避免与 macOS 系统级 `⌘C` 复制等肌肉记忆冲突。
 `⌘` 需终端支持扩展键盘协议（iTerm2 / kitty / WezTerm / ghostty / tmux）；
 macOS 自带 Terminal.app 会自行消费 `⌘` 快捷键，请继续使用 `Ctrl`。
 
-**鼠标（`fullscreen: true` 全屏模式；默认关，profile 补丁层覆盖开启）**
+**鼠标（全屏模式默认开启；`fullscreen: false` 可退回 inline 主屏模式；从旧版更新会一次性清除更新前保存的 inline 选择，之后仍可再改回）**
 
 | 操作 | 功能 |
 |---|---|
 | 拖拽选择 | 应用内文本选区，**松开即复制**（OSC 52 + `wl-copy`/`xclip`/`xsel` 原生兜底；tmux 内走 `load-buffer -w`），复制后自动取消选区并弹出「已复制 N 个字符」提示 |
 | 双击 / 三击 | 选词 / 选行，同样即选即复制 |
-| 滚轮 | 仅在 fullscreen 且鼠标跟踪启用时：Help 打开时滚动帮助，否则滚动消息列表（±3 行/格）；默认 inline 模式不会把滚轮事件交给 TUI |
+| 滚轮 | 仅在 fullscreen 且鼠标跟踪启用时：Help 打开时滚动帮助，否则滚动消息列表（±3 行/格）；inline 模式不会把滚轮事件交给 TUI |
+| 单击时间线 rail 刻度 | 跳到对应轮次——rail 覆盖全部轮次（含折叠轮），点折叠刻度会先揭示该轮再滚动到位 |
 | `Esc` | 拖拽进行中取消选区（不复制） |
 | 单击消息行 | 展开/收起该行 |
 | 单击「加载更早消息」/「ctrl+e 显示前 N 条」 | 加载更早消息 / 展开全部 |
@@ -264,6 +283,12 @@ compaction 和持久化继续由 DSH 服务拥有。更详细的模块边界与�
 - **事件驱动渲染**：`session/event` 事件流 → 增量差分渲染，滚动状态独立维护。
 - **布局级虚拟化**：长会话的每帧成本从 O(全会话) 降到 O(可视窗口)——屏幕外的
   消息行渲染为"量高占位符"，其子树完全不参与布局。
+- **零分配热路径**：visibleRows 管线（切片/过滤/边距）按 rows 身份、长度与
+  Uint8Array 流位指纹缓存——滚动 tick 上零数组/Map 分配，turn 落定的原地
+  写入也即时触发重建（空行过滤不滞后）；wrapText 与 markdown token 走全局
+  LRU，跨挂载复用测量结果。
+- **分帧补画与落点锚定**：主屏打开先挂尾部窗口再分帧补画历史；`/resume` 后
+  以最新消息末行可见且可达为终态断言，长会话恢复跳过开场动画直达内容。
 - **上下文进度条**：参考 pi-nano-context 算法（最大余数法分段着色 + 多级缩略读数）。
 - **TPS 仪表**：参考 pi-tps-meter——流式 1/8 格 gauge、历史 min-max sparkline、
   速度语义色（≥50 绿 / ≥20 黄 / <20 红）。

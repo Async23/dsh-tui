@@ -45,6 +45,13 @@ the interface, and removing it leaves no core modifications behind.
   sent as durable image blocks), history
   search, message selection, inline or alternate-screen rendering, and `/lang`
   zh/en UI language switching.
+- **Timeline navigation**: a Grok-style turn rail covering **every turn
+  (folded ones included)** — even when the fold window only exposes the last
+  few turns, the full history stays one click away (clicking a folded tick
+  reveals that turn and scrolls to it). When not pinned to the bottom,
+  `Enter`/`End` jump back in one step (no blank flash from long distances)
+  and a clickable new-messages pill stays in view; the right gutter offers
+  timeline / scrollbar / hidden modes.
 - **Visible agent state**: live activity, segmented context usage, TPS, cache
   hit rate, reasoning effort, input/output tokens, and Git/session metadata.
 - **Complete session workflow**: `/resume`, `/new`, `/workspace`, `/compact`, `/export`, the
@@ -55,7 +62,12 @@ the interface, and removing it leaves no core modifications behind.
   and registries.
 - **Designed for long sessions**: event-driven projection, differential output,
   message virtualization, replay coalescing, and bounded caches prevent render
-  cost and memory from growing without limit.
+  cost and memory from growing without limit; fingerprint-memoized hot paths
+  render with **zero per-frame allocations** (~200KB of GC churn saved every
+  16ms tick in a 3200-row session), wrapText and markdown tokens reuse global
+  LRU caches across mounts, the main screen paints in frames (fold window
+  300→120 rows), and long-session resume lands straight on content (splash
+  skipped, anchored to the newest message's last row).
 
 ## Preview
 
@@ -88,6 +100,19 @@ commands), then `dsh-tui` and `dsh --profile dsh-tui` are equivalent.
 
 `dsh-tui --resume` restores the most recently selected session; on Windows
 the repository's `dsh-tui.cmd` works the same way.
+
+CLI subcommands (`dsh-tui help` prints the full usage):
+
+| Command | Purpose |
+|---|---|
+| `dsh-tui version` | Show the launcher and profile versions (`--version`/`-v` are equivalent) |
+| `dsh-tui help` | Show usage (`--help`/`-h` are equivalent) |
+
+Subcommands work even when dsh is missing or the profile is not initialized;
+every other argument is still forwarded verbatim to `dsh --profile dsh-tui`.
+The repository-root `dsh-tui.cmd` is a launch wrapper that goes straight to
+`dsh --profile` and carries no subcommands — subcommands belong to the
+npm-installed `dsh-tui` command.
 
 ### Herdr
 
@@ -142,7 +167,7 @@ For migration from the former `dsh-cc-tui` package and `cc-tui` profile, see
 | `Ctrl+O` | Expand/collapse details (full thinking text, tool arguments and output) |
 | `Ctrl+R` | History search |
 | `/` | In-session full-text search (`n`/`N` to jump) |
-| `Ctrl+V` | Paste text or files from the file manager; images show as `[Image #N]` and are sent as durable attachments |
+| `Ctrl+V` / `Alt+V` | Paste text or files from the file manager; images show as `[Image #N]` and are sent as durable attachments. Use `Alt+V` when the terminal intercepts `Ctrl+V` |
 | `Ctrl+G` | Edit the current input with `$VISUAL`/`$EDITOR` (e.g. nvim); content is filled back in on save and exit |
 | `?` | Keybinding menu (responds only when the input is empty) |
 | `Shift+↑` | Message selection mode (`Enter` expands a single message) |
@@ -154,6 +179,8 @@ For migration from the former `dsh-cc-tui` package and `cc-tui` profile, see
 
 **Three delivery modes while the model is working**: `Enter` = steer (inject a next-step boundary, no interruption) · `Tab` = follow-up (queued after the current turn) · `Ctrl+Enter` = interrupt (break in and send immediately).
 
+**Custom keybindings**: the action shortcuts above (paste, history search, external editor, transcript expand, trajectory, subagent dashboard, loaded-context panel, show-all, redraw, todo fold) are remappable in `/settings` → `dsh-tui` → `Shortcuts`: enter combos like `alt+v` or `ctrl+shift+v`, comma-separate several, leave blank to restore the default; saves apply live with no restart. Combos that clash with the fixed editing keys (`Ctrl+A/E/U/K/W`, `Ctrl+←/→`) or with another action are rejected. Deployments can also pin them statically via `shortcuts.<action>` in cordis.yml (the settings user layer wins).
+
 **macOS modifier keys**: the `Ctrl+<key>` bindings above also work with `⌘<key>`
 on macOS (e.g. `⌘V` paste, `⌘O` expand details, `⌘Enter` send immediately);
 only `Ctrl+C` / `Ctrl+D` (interrupt/exit) stay on Ctrl, to avoid clashing
@@ -162,13 +189,14 @@ terminal support for the extended keyboard protocol (iTerm2 / kitty / WezTerm /
 ghostty / tmux); macOS's built-in Terminal.app consumes `⌘` shortcuts itself,
 so keep using `Ctrl`.
 
-**Mouse** (`fullscreen: true` fullscreen mode; off by default, enabled by the profile patch layer)
+**Mouse** (fullscreen is the factory default since 0.8.8; set `fullscreen: false` to restore the inline main screen; updating from an older version clears a previously saved inline choice once — you can still pick inline again afterwards)
 
 | Action | Function |
 |---|---|
 | Drag to select | In-app text selection, **copied on release** (OSC 52 with native `wl-copy`/`xclip`/`xsel` fallback; `load-buffer -w` inside tmux); the selection is cleared after copying and a "Copied N characters" notice pops up |
 | Double / triple click | Select word / line, copied on selection just the same |
 | Scroll wheel | Only with fullscreen mouse tracking: scroll Help while it is open, otherwise scroll messages (±3 lines per notch); default inline mode does not deliver wheel events to the TUI |
+| Click a timeline-rail tick | Jump to that turn — the rail covers every turn (folded ones included); a folded tick reveals its turn first, then scrolls it into place |
 | `Esc` | Cancel an in-progress drag selection (no copy) |
 | Single-click a message line | Expand/collapse that line |
 | Click "load earlier messages" / "ctrl+e show previous N" | Load earlier messages / expand all |
@@ -268,6 +296,16 @@ chat / tool base events ──> persisted Session log ──> TUI / Web
 - **Layout-level virtualization**: per-frame cost for long sessions drops from
   O(entire session) to O(visible window) — off-screen message lines render as
   height-only placeholders whose subtrees never take part in layout.
+- **Zero-allocation hot paths**: the visibleRows pipeline (slice/filter/margins)
+  is memoized on rows identity, length, and a Uint8Array streaming-bit
+  fingerprint — zero array/Map allocations per scroll tick, while in-place
+  settle writes still rebuild the cache instantly (empty-row filtering never
+  lags); wrapText and markdown tokens flow through global LRU caches that
+  reuse measurements across mounts.
+- **Framed backfill and landing anchor**: opening the main screen mounts the
+  tail window first and backfills history in frames; `/resume` asserts a final
+  state where the newest message's last row is visible and reachable, and
+  long-session restores skip the splash animation to land straight on content.
 - **Context progress bar**: based on the pi-nano-context algorithm (largest-remainder
   segmented coloring + multi-level condensed readouts).
 - **TPS meter**: based on pi-tps-meter — a streaming 1/8-block gauge, historical
