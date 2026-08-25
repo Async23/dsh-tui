@@ -455,6 +455,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     thinkingFold: config.thinkingFold,
     toolBackground: config.toolBackground,
     scrollGutter: config.scrollGutter,
+    foldTerminalCommand: config.foldTerminalCommand,
     promptSessionLabel: config.promptSessionLabel,
     statusBar: config.statusBar,
     handle,
@@ -493,6 +494,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         thinkingFold: Schema.union(['preview', 'full']).default('preview'),
         toolBackground: Schema.union(['none', 'subtle', 'strong']).default('none'),
         scrollGutter: Schema.union(['timeline', 'scrollbar', 'hidden']).default('timeline'),
+        // No default on purpose (same rule as `fullscreen` below): a schema
+        // default here would come back from scope.get()/watch() and shadow
+        // an explicit cordis.yml `foldTerminalCommand: true` while the
+        // settings user layer is unset — applyDisplay's
+        // `?? config.foldTerminalCommand ?? false` already supplies the
+        // default and keeps cordis.yml decisive.
+        foldTerminalCommand: Schema.boolean(),
         promptSessionLabel: Schema.boolean().default(false),
         statusBar: Schema.object({
           compact: Schema.boolean().default(DEFAULT_STATUS_BAR.compact),
@@ -542,6 +550,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       thinkingFold?: 'preview' | 'full'
       toolBackground?: ToolBackground
       scrollGutter?: ScrollGutterMode
+      foldTerminalCommand?: boolean
       promptSessionLabel?: boolean
       statusBar?: Partial<StatusBarConfig>
       shortcuts?: Partial<Record<ShortcutActionId, string>>
@@ -581,6 +590,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       channel.setThinkingFold(value.thinkingFold ?? config.thinkingFold ?? 'preview')
       channel.setToolBackground(normalizeToolBackground(value.toolBackground ?? config.toolBackground))
       channel.setScrollGutter(normalizeScrollGutter(value.scrollGutter ?? config.scrollGutter))
+      channel.setFoldTerminalCommand(value.foldTerminalCommand ?? config.foldTerminalCommand ?? false)
       channel.setPromptSessionLabel(value.promptSessionLabel ?? config.promptSessionLabel ?? false)
       channel.setStatusBar(normalizeStatusBar(value.statusBar ?? config.statusBar))
     }
@@ -836,6 +846,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
             { value: 'scrollbar', label: 'Scrollbar', descriptions: { zh: '滚动条' } },
             { value: 'hidden', label: 'Hidden', descriptions: { zh: '隐藏' } },
           ],
+        },
+        {
+          path: ['foldTerminalCommand'],
+          label: 'Fold terminal command',
+          descriptions: { zh: '折叠终端命令' },
+          hint: 'Terminal cards (Bash/PowerShell): collapse a multi-line command header to its first line + count; Ctrl+O or a click expands it.',
+          hintDescriptions: { zh: '终端卡（Bash/PowerShell）：多行命令头部折叠为首行 + 计数；Ctrl+O 或点击卡片展开。' },
+          kind: 'boolean',
+          format(value: unknown): string {
+            // Unset in settings.yaml: show the effective resolution (cordis.yml
+            // → off) instead of a blank — same rule as `fullscreen`'s field.
+            return String(typeof value === 'boolean' ? value : config.foldTerminalCommand === true)
+          },
         },
         {
           path: ['promptSessionLabel'],

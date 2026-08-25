@@ -3066,6 +3066,7 @@ export function Chat({
           diffLayout={channel.diffLayout}
           thinkingFold={channel.thinkingFold}
           toolBackground={channel.toolBackground}
+          foldTerminalCommand={channel.foldTerminalCommand}
           activityFrames={channel.activityFrames}
           showAll={showAllMessages}
           thinkingVisible={thinkingVisible}

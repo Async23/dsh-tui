@@ -568,6 +568,9 @@ export interface Channel {
    *  `dsh-tui.scrollGutter`: turn timeline / proportional scrollbar /
    *  nothing). */
   readonly scrollGutter: ScrollGutterMode
+  /** Terminal-card header folding (settings `dsh-tui.foldTerminalCommand`):
+   *  collapse a multi-line command title to its first line + count hint. */
+  readonly foldTerminalCommand: boolean
   /** Whether the session-name chip shows on the prompt top border's right
    *  side (settings `dsh-tui.promptSessionLabel`; off by default). */
   readonly promptSessionLabel: boolean
@@ -966,6 +969,8 @@ export interface ChannelState {
   toolBackground: ToolBackground
   /** Transcript gutter mode (see the public Channel type). */
   scrollGutter: ScrollGutterMode
+  /** Terminal-card header folding (see the public Channel type). */
+  foldTerminalCommand: boolean
   /** Session-name chip on the prompt border (see the public Channel type). */
   promptSessionLabel: boolean
   /** Status-footer preferences (see the public Channel type). */
@@ -978,6 +983,8 @@ export interface ChannelState {
   setToolBackground(background: ToolBackground): void
   /** Apply a transcript gutter mode change. */
   setScrollGutter(mode: ScrollGutterMode): void
+  /** Apply a terminal-card header folding change. */
+  setFoldTerminalCommand(enabled: boolean): void
   /** Apply a prompt session-name chip change. */
   setPromptSessionLabel(enabled: boolean): void
   /** Apply status-footer preference changes. */
@@ -1504,6 +1511,9 @@ export function createChannel(
     toolBackground?: ToolBackground
     /** Transcript gutter mode; default `timeline` (settings `dsh-tui.scrollGutter`). */
     scrollGutter?: ScrollGutterMode
+    /** Terminal-card header folding; default off (settings
+     *  `dsh-tui.foldTerminalCommand`). */
+    foldTerminalCommand?: boolean
     /** Session-name chip on the prompt top border; default off (settings
      *  `dsh-tui.promptSessionLabel`). */
     promptSessionLabel?: boolean
@@ -2564,6 +2574,7 @@ export function createChannel(
     thinkingFold: options.thinkingFold ?? 'preview',
     toolBackground: normalizeToolBackground(options.toolBackground),
     scrollGutter: normalizeScrollGutter(options.scrollGutter),
+    foldTerminalCommand: options.foldTerminalCommand === true,
     promptSessionLabel: options.promptSessionLabel === true,
     statusBar: normalizeStatusBar(options.statusBar),
     whale: options.whale !== false,
@@ -4322,6 +4333,11 @@ export function createChannel(
       const normalized = normalizeScrollGutter(mode)
       if (normalized === state.scrollGutter) return
       state.scrollGutter = normalized
+      state.emit()
+    },
+    setFoldTerminalCommand(enabled) {
+      if (enabled === state.foldTerminalCommand) return
+      state.foldTerminalCommand = enabled
       state.emit()
     },
     setPromptSessionLabel(enabled) {
