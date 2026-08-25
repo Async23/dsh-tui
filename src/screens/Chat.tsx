@@ -14,7 +14,14 @@ import { isPlainReturnInput, modLabel } from '../utils/modifiers.js'
 import { actionMatches } from '../utils/keymap.js'
 import { formatTokens } from '../cc/format.js'
 import { homeDir } from '../utils/paths.js'
-import type { LlmModelInfo } from '../dsh-adapter/types.js'
+import type { LlmModelInfo, LlmProviderInfo } from '../dsh-adapter/types.js'
+import {
+  deriveModelGroups,
+  modelPickerLanding,
+  recentCatalogModels,
+  RECENTS_GROUP_PROVIDER,
+} from '../modelGroups.js'
+import { readModelRecents, recordModelUse, type ModelRecentsRef } from '../modelRecents.js'
 import { sessionCwdMatches, type Channel, type ChatRow, type EffortOption, type PresetOption, type SkillInfo } from '../dsh-adapter/channel.js'
 import type { QuestionStore } from '../dsh-adapter/questions.js'
 import { TuiDialogStore } from '../dsh-adapter/dialogs.js'
@@ -49,6 +56,7 @@ import { ModelPicker } from '../components/ModelPicker.js'
 import { PluginSceneBoundary } from '../components/PluginSceneBoundary.js'
 import { SkillsPicker, SkillsPickerLoading } from '../components/SkillsPicker.js'
 import { SessionBrowser } from './SessionBrowser.js'
+import { SessionTree } from './SessionTree.js'
 import { Settings } from './Settings.js'
 import { WorkspacePicker } from '../components/WorkspacePicker.js'
 import { WorkspaceMenuPicker } from '../components/WorkspaceMenuPicker.js'
@@ -340,11 +348,49 @@ export function Chat({
    */
   const [overlay, dispatchOverlay] = React.useReducer(chatOverlayReducer, NO_OVERLAY)
   const [models, setModels] = React.useState<readonly LlmModelInfo[]>([])
+  /** Provider display identities for the /model group level; refreshed alongside `models`. */
+  const [providerInfos, setProviderInfos] = React.useState<readonly LlmProviderInfo[]>([])
+  /** /model 最近使用分组：成功切换即记录（去重置顶，上限 10），重启保留。 */
+  const [modelRecents, setModelRecents] = React.useState<readonly ModelRecentsRef[]>(() => readModelRecents())
+  /** Two-level /model: the drilled-in provider route; undefined = group level.
+   *  Reset on open; stale ids resolve back to the group level via `activeModelGroup`. */
+  const [modelGroup, setModelGroup] = React.useState<string | undefined>(undefined)
+  /** Group rows over the current catalog, first-appearance (registry) order,
+   *  with the pinned recents pseudo-group first when any entry is catalogued. */
+  const modelGroups = React.useMemo(
+    () => deriveModelGroups(models, providerInfos, modelRecents),
+    [models, providerInfos, modelRecents],
+  )
+  /** The drilled-in group, but only while it still exists in the catalog. */
+  const activeModelGroup = modelGroup !== undefined && modelGroups.some(group => group.provider === modelGroup)
+    ? modelGroup
+    : undefined
+  const groupModels = React.useMemo(() => {
+    if (activeModelGroup === undefined) return []
+    if (activeModelGroup === RECENTS_GROUP_PROVIDER) return recentCatalogModels(modelRecents, models)
+    return models.filter(model => model.provider === activeModelGroup)
+  }, [models, modelRecents, activeModelGroup])
+  /** Switch + record: every successful switch feeds the /model recents group
+   *  (picker Enter/click, `/model provider/id`, the wizard's live switch,
+   *  and /reload's applied model all ride this one path). */
+  const switchModelRecorded = (provider: string, id: string, name?: string): Promise<boolean> => {
+    if (name !== undefined) channel.notify(t('model-switching', { name }))
+    return channel.switchModel(provider, id).then((ok) => {
+      if (!ok) return ok
+      if (name !== undefined) channel.notify(t('model-switched', { name }))
+      setModelRecents(recordModelUse({ provider, id }))
+      return ok
+    })
+  }
   /** `/skills` 技能目录（issue #204）：null = 注册表快照在途。 */
   const [skillsList, setSkillsList] = React.useState<readonly SkillInfo[] | null>(null)
   /** `/resume` opens the session browser, a screen rather than a panel. It
    *  owns its own selection, filters and keyboard — Chat only opens it. */
   const [browserOpen, setBrowserOpen] = React.useState(false)
+  /** `/tree` opens the session family tree (pi's Session Tree): every rewind
+   *  fork stitched back onto the message it diverged from, hover previews,
+   *  and per-node rewind/fork/adopt actions. Like the browser, a screen. */
+  const [treeOpen, setTreeOpen] = React.useState(false)
   /** `/settings` opens the plugin settings screen (issue #165) — like the
    *  browser, a screen rather than a panel: it owns its own focus, staged
    *  drafts and keyboard; Chat only opens it. */
@@ -1122,10 +1168,7 @@ export function Chat({
               channel.notify(t('model-unknown', { spec }), { color: 'error', timeoutMs: 8000 })
               return
             }
-            channel.notify(t('model-switching', { name: model.name }))
-            void channel.switchModel(provider, id).then((ok) => {
-              if (ok) channel.notify(t('model-switched', { name: model.name }))
-            })
+            void switchModelRecorded(provider, id, model.name)
           })
           return true
         }
@@ -1133,22 +1176,32 @@ export function Chat({
         // Opens over the cached catalog (empty cache shows the loading
         // pane); the fresh list lands with the authoritative focus, and the
         // kind-guarded set-index cannot re-focus a picker the user left.
-        dispatchOverlay({
-          type: 'open',
-          overlay: {
-            kind: 'model',
-            index: Math.max(0, models.findIndex(
-              model => model.provider === channel.provider && model.id === channel.model,
-            )),
-          },
-        })
+        // Seed-on-open: the model in use IS a use — recording it here means
+        // the recents group exists before the first post-update switch, and
+        // switching A→B keeps A in the list (the file records what was
+        // used, not only switches made after the file appeared).
+        let recentsNow = modelRecents
+        if (channel.provider !== '' && channel.model !== ''
+          && !recentsNow.some(ref => ref.provider === channel.provider && ref.id === channel.model)) {
+          recentsNow = recordModelUse({ provider: channel.provider, id: channel.model })
+          setModelRecents(recentsNow)
+        }
+        // Two-level landing: recents (when catalogued) focus their pinned
+        // row; else multi-provider catalogs focus the current provider's
+        // group row; a single-provider catalog without a meaningful recents
+        // list drills straight into its model list (pre-grouping UX).
+        {
+          const landing = modelPickerLanding(models, channel.provider, channel.model, recentsNow)
+          setModelGroup(landing.group)
+          dispatchOverlay({ type: 'open', overlay: { kind: 'model', index: landing.index } })
+        }
         void channel.listModels().then((list) => {
           setModels(list)
-          const index = list.findIndex(
-            model => model.provider === channel.provider && model.id === channel.model,
-          )
-          dispatchOverlay({ type: 'set-index', kind: 'model', index: index >= 0 ? index : 0 })
+          const landing = modelPickerLanding(list, channel.provider, channel.model, recentsNow)
+          setModelGroup(landing.group)
+          dispatchOverlay({ type: 'set-index', kind: 'model', index: landing.index })
         })
+        void channel.listProviders().then(setProviderInfos).catch(() => setProviderInfos([]))
         return true
       }
       case 'skills': {
@@ -1203,7 +1256,7 @@ export function Chat({
           notify: (text, options) => channel.notify(text, options),
           pushLocal: (title, lines) => channel.pushLocal(title, lines),
           working: () => channel.working,
-          switchModel: (provider, model) => channel.switchModel(provider, model),
+          switchModel: (provider, model) => switchModelRecorded(provider, model),
         }).catch(() => {
           // The wizard notifies on every handled failure; this only swallows
           // an unexpected reject so it never surfaces as an unhandled promise.
@@ -1292,6 +1345,21 @@ export function Chat({
         setHelpOpen(false)
         openRewind()
         return true
+      case 'tree': {
+        // The session family tree (pi's Session Tree): every fork branch
+        // stitched back, hover previews, per-node rewind/fork/adopt.
+        setHelpOpen(false)
+        setTreeOpen(true)
+        return true
+      }
+      case 'fork': {
+        // Tip fork (kimi-code semantics): a persisted copy of the whole
+        // conversation the user enters via /resume — the live session and
+        // its running turn stay untouched.
+        setHelpOpen(false)
+        void channel.forkSession()
+        return true
+      }
       case 'exit':
       case 'quit':
       case 'q':
@@ -1394,12 +1462,16 @@ export function Chat({
         setHelpOpen(false)
         void channel.describeCredential('DEEPSEEK_API_KEY')
           .catch(() => undefined)
-          .then(status => {
+          .then(async status => {
             const keyStatus = status === undefined
               ? t('login-credentials-unavailable')
               : status.configured
                 ? t('login-key-configured', { ref: 'DEEPSEEK_API_KEY' })
                 : t('login-key-missing')
+            // OAuth account states ride along only while a dsh-auth-style
+            // plugin is mounted; absent it the lines below are exactly the
+            // pre-plugin set.
+            const oauth = await channel.oauthProviderStatuses().catch(() => undefined)
             channel.pushLocal('/login', [
               t('login-api-key', { status: keyStatus }),
               ...(status === undefined
@@ -1411,6 +1483,20 @@ export function Chat({
                     }),
                   ]),
               t('login-base-url', { url: process.env.DEEPSEEK_BASE_URL ?? t('login-official-endpoint') }),
+              ...(oauth === undefined
+                ? []
+                : [
+                    t('login-oauth-heading'),
+                    ...oauth.map(row => t('login-oauth-row', {
+                      provider: row.provider,
+                      state: row.signedIn
+                        ? t('login-oauth-in', { time: new Date(row.expiresAt ?? 0).toISOString() })
+                        : row.expired
+                          ? t('login-oauth-expired')
+                          : t('login-oauth-signed-out'),
+                    })),
+                    t('login-oauth-hint'),
+                  ]),
             ])
           })
         return true
@@ -1569,7 +1655,7 @@ export function Chat({
               break
             case 'model':
               if (item.route !== undefined) {
-                void channel.switchModel(item.route.provider, item.route.model)
+                void switchModelRecorded(item.route.provider, item.route.model)
               }
               break
             case 'activity':
@@ -1996,6 +2082,9 @@ export function Chat({
     // so every key belongs to it — including the plain letters that drive its
     // search box, which Chat would otherwise route into the prompt.
     if (browserOpen) return
+    // Same for the session tree: plain letters drive its search, clicks and
+    // Enter drive its action menu.
+    if (treeOpen) return
     // Same for the settings screen: plain letters (s save / d discard) and
     // the field draft editor belong to it alone.
     if (settingsOpen) return
@@ -2224,25 +2313,55 @@ export function Chat({
       return
     }
     if (overlay.kind === 'model') {
+      // Two-level picker: group rows at the top (Enter drills in), one
+      // provider's models below (Enter switches, the same live-fork path as
+      // the flat picker always had). Esc/⌫ climbs one level and only closes
+      // at the top; a single-group catalog never shows the group level, so
+      // Esc there closes directly.
+      const rowCount = activeModelGroup === undefined ? modelGroups.length : groupModels.length
       if (key.upArrow || key.downArrow) {
-        dispatchOverlay({ type: 'move', delta: key.upArrow ? -1 : 1, count: models.length })
+        dispatchOverlay({ type: 'move', delta: key.upArrow ? -1 : 1, count: rowCount })
       } else if (plainReturn) {
-        const model = models[overlay.index]
+        if (activeModelGroup === undefined) {
+          const group = modelGroups[overlay.index]
+          if (!group) {
+            dispatchOverlay({ type: 'close' })
+            return
+          }
+          setModelGroup(group.provider)
+          // The recents group opens on its most-recent entry; a provider
+          // group on its current model when it owns one, else its first row.
+          if (group.provider === RECENTS_GROUP_PROVIDER) {
+            dispatchOverlay({ type: 'set-index', kind: 'model', index: 0 })
+            return
+          }
+          const landing = modelPickerLanding(
+            models.filter(model => model.provider === group.provider),
+            channel.provider,
+            channel.model,
+          )
+          dispatchOverlay({ type: 'set-index', kind: 'model', index: landing.index })
+          return
+        }
+        const model = groupModels[overlay.index]
         // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: out-of-range index on an empty list
         if (model) {
           // Enter switches the live model right away: the conversation is
           // forked at its end and continued with an agent routed to the new
-          // model (history replays unchanged).
+          // model (history replays unchanged) — and feeds the recents group.
           dispatchOverlay({ type: 'close' })
-          channel.notify(t('model-switching', { name: model.name }))
-          void channel.switchModel(model.provider, model.id).then((ok) => {
-            if (ok) channel.notify(t('model-switched', { name: model.name }))
-          })
+          void switchModelRecorded(model.provider, model.id, model.name)
         } else {
           dispatchOverlay({ type: 'close' })
         }
-      } else if (key.escape) {
-        dispatchOverlay({ type: 'close' })
+      } else if (key.escape || key.backspace) {
+        if (activeModelGroup !== undefined && modelGroups.length > 1) {
+          setModelGroup(undefined)
+          const groupIndex = Math.max(0, modelGroups.findIndex(group => group.provider === activeModelGroup))
+          dispatchOverlay({ type: 'set-index', kind: 'model', index: groupIndex })
+        } else {
+          dispatchOverlay({ type: 'close' })
+        }
       }
       return
     }
@@ -2691,6 +2810,24 @@ export function Chat({
     return fullscreen ? browser : <AlternateScreen>{browser}</AlternateScreen>
   }
 
+  // The session tree follows the browser's rule exactly: it REPLACES the
+  // conversation (an early return after every hook above has run), so there
+  // is no transcript underneath to be repainted or bled through. The dropped
+  // turn's prompt returns through the same fill path a rewind picker uses.
+  if (treeOpen) {
+    const tree = (
+      <SessionTree
+        channel={channel}
+        currentSessionId={channel.agentId}
+        onClose={() => setTreeOpen(false)}
+        onRestoreText={(text) => {
+          setHistoryFill(text)
+        }}
+      />
+    )
+    return fullscreen ? tree : <AlternateScreen>{tree}</AlternateScreen>
+  }
+
   // The settings screen follows the browser's rule exactly: it REPLACES the
   // conversation (an early return after every hook above has run), so there
   // is no transcript underneath to be repainted or bled through.
@@ -3106,20 +3243,44 @@ export function Chat({
             <Box flexDirection="column" marginTop={1}>
               {models.length === 0 ? (
                 <ModelPickerLoading />
+              ) : activeModelGroup === undefined ? (
+                <ModelPicker
+                  groups={modelGroups}
+                  focusIndex={overlay.index}
+                  currentProvider={channel.provider}
+                  onPick={(index) => {
+                    // 点击分组行 = 进入该组（与 Enter 同一条路径）
+                    const group = modelGroups[index]
+                    if (!group) return
+                    setModelGroup(group.provider)
+                    if (group.provider === RECENTS_GROUP_PROVIDER) {
+                      dispatchOverlay({ type: 'set-index', kind: 'model', index: 0 })
+                      return
+                    }
+                    const landing = modelPickerLanding(
+                      models.filter(model => model.provider === group.provider),
+                      channel.provider,
+                      channel.model,
+                    )
+                    dispatchOverlay({ type: 'set-index', kind: 'model', index: landing.index })
+                  }}
+                />
               ) : (
                 <ModelPicker
-                  models={models}
+                  models={groupModels}
+                  groupLabel={activeModelGroup === RECENTS_GROUP_PROVIDER
+                    ? t('picker-group-recent')
+                    : modelGroups.find(group => group.provider === activeModelGroup)?.label}
+                  showBack={modelGroups.length > 1}
+                  showProviderPrefix={activeModelGroup === RECENTS_GROUP_PROVIDER}
                   focusIndex={overlay.index}
                   currentModel={`${channel.provider}/${channel.model}`}
                   onPick={(index) => {
                     // 点击行 = 应用该行模型（与 Enter 同一条路径）
-                    const model = models[index]
+                    const model = groupModels[index]
                     if (!model) return
                     dispatchOverlay({ type: 'close' })
-                    channel.notify(t('model-switching', { name: model.name }))
-                    void channel.switchModel(model.provider, model.id).then((ok) => {
-                      if (ok) channel.notify(t('model-switched', { name: model.name }))
-                    })
+                    void switchModelRecorded(model.provider, model.id, model.name)
                   }}
                 />
               )}
