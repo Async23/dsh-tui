@@ -18,13 +18,13 @@
  */
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const argOut = process.argv.indexOf('--out')
-const outDir = argOut >= 0 ? process.argv[argOut + 1] : join(root, 'dist-bundle')
+const outDir = resolve(argOut >= 0 ? process.argv[argOut + 1] : join(root, 'dist-bundle'))
 const pkgDirName = 'dsh-tui-setup'
 const zipName = 'dsh-tui-setup.zip'
 
