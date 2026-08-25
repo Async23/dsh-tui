@@ -100,6 +100,21 @@ Manual alternative: `dsh plugin --profile dsh-tui add @deepseek-harness-tui/dsh-
 (the repository's `sh install.sh` wraps this step and checks the required
 commands), then `dsh-tui` and `dsh --profile dsh-tui` are equivalent.
 
+> **New-user note**: if `dsh plugin` fails with `ERR_PNPM_IGNORED_BUILDS`
+> (pnpm ≥11 blocks dependencies that carry install scripts by default, e.g.
+> `@google/genai` and `protobufjs` — none of these scripts is needed at
+> runtime, so they can safely be ignored), add to the profile's
+> `pnpm-workspace.yaml`:
+>
+> ```yaml
+> allowBuilds:
+>   '@google/genai': false
+>   protobufjs: false
+> ```
+>
+> `/update` and `dsh-tui update` seed this configuration automatically —
+> no manual step needed.
+
 `dsh-tui --resume` restores the most recently selected session; on Windows
 the repository's `dsh-tui.cmd` works the same way.
 

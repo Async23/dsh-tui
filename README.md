@@ -105,6 +105,16 @@ sh install.sh
 # 之后 dsh-tui 与 dsh --profile dsh-tui 等价
 ```
 
+> **新用户提示**：若 `dsh plugin` 安装时报 `ERR_PNPM_IGNORED_BUILDS`（pnpm ≥11 默认阻止带安装脚本的依赖，如 `@google/genai`、`protobufjs`——这些脚本运行时不需要，忽略即可），在 profile 的 `pnpm-workspace.yaml` 里加入：
+>
+> ```yaml
+> allowBuilds:
+>   '@google/genai': false
+>   protobufjs: false
+> ```
+>
+> `/update` 与 `dsh-tui update` 会自动写入这份配置，无需手工处理。
+
 更面向零基础的安装流程、profile 叠加机制、源码构建与常见问题见[安装与快速开始](docs/getting-started.md)。
 
 
