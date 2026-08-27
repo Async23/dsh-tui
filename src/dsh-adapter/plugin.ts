@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import React from 'react'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
-import UserQuestionService from '@deepseek-ai/dsh-user-questions'
+import UserQuestionService, { type UserQuestionProvider } from '@deepseek-ai/dsh-user-questions'
+import { decideQuestionProviderYield, incumbentQuestionProviderId, tagTuiQuestionProvider } from './providerGuard.js'
 import * as toolAskUser from '@deepseek-ai/dsh-tool-ask-user'
 import type { Context } from '@deepseek-ai/cordis'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -265,13 +266,41 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // @deepseek-ai/dsh-web-app (its api-gateway registers first) used to fail
   // the boot with DUPLICATE_PROVIDER. The incumbent UI then owns questionnaire
   // rendering; this TUI's ask_user_question requests are answered there.
+  //
+  // Security follow-up: silence must be reserved for host-VERIFIED front
+  // doors. A plugin that registers FIRST owns the seat just the same, and
+  // would then answer ask_user_question on the user's behalf without any
+  // signal. The DUPLICATE_PROVIDER error carries no incumbent identity, so
+  // the seat is probed structurally: the silent yield now requires this
+  // TUI's private symbol tag (or any future host-verified marker) on a
+  // whitelisted incumbent; a whitelist name the incumbent merely
+  // SELF-REPORTED (name/hostId/id fields are trivially copyable) gets an
+  // honest "identity not host-verified" alert instead — forgeable silence
+  // is worse than a loud warning. Anything else stays unregistered (the
+  // composition must not crash) but the user is told loudly.
+  const tuiQuestionProvider: UserQuestionProvider = { ask: request => questionStore.ask(request) }
+  tagTuiQuestionProvider(tuiQuestionProvider)
+  let questionSeatNotice: string | undefined
   try {
-    userQuestions.registerProvider({
-      ask: request => questionStore.ask(request),
-    })
+    userQuestions.registerProvider(tuiQuestionProvider)
     ctx.effect(() => () => questionStore.rejectAll())
   } catch (error) {
     if ((error as { code?: string }).code !== 'DUPLICATE_PROVIDER') throw error
+    const decision = decideQuestionProviderYield(incumbentQuestionProviderId(userQuestions))
+    if (decision.action === 'alert-unverified') {
+      ctx.logger.error(
+        `dsh-tui: user-questions provider seat is held by a component self-reporting as ${decision.incumbentId} ` +
+          '(identity not host-verified); this TUI will not register its questionnaire and model questions may be answered by it',
+      )
+      questionSeatNotice = t('question-provider-occupied-unverified', { id: decision.incumbentId ?? '' })
+    } else if (decision.action === 'alert') {
+      const displayId = decision.incumbentId ?? t('question-provider-occupied-unknown')
+      ctx.logger.error(
+        `dsh-tui: user-questions provider seat is held by a non-host component (${displayId}); ` +
+          'this TUI will not register its questionnaire and model questions may be answered by it',
+      )
+      questionSeatNotice = t('question-provider-occupied', { id: displayId })
+    }
   }
 
   // Child-process stderr guard (issue #17): MCP servers spawned with an
@@ -1075,6 +1104,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   if (ctx.get('approval') !== undefined) {
     ctx.on('approval/request', (req, next) =>
       String(req.agent.id) === channel.agentId ? approvalStore.park(req) : next())
+    // Badge-flip push (P-4): React does not know the session log appended —
+    // a source-badge verdict that only flips inside getSnapshot() surfaces
+    // solely when something else re-renders. Feed the session firehose to
+    // the store: it reacts only to tool/result (the sole verdict-flipping
+    // event type), and its internal log-length memo skips appends from any
+    // session other than the active ask's, so no agent filtering is needed
+    // here. The firehose fires post-commit, after the event entered
+    // session.events, so the recheck sees the settled result.
+    ctx.on('session/event', (_session, event) => approvalStore.noteSessionEvent(event))
     ctx.effect(() => () => approvalStore.settleAll('cancelled'))
   }
   const herdr = attachHerdrIntegration({
@@ -1099,6 +1137,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Attach the stderr reporter to the live channel and flush anything a
   // startup-spawned server produced while the channel didn't exist yet.
   notifyStderr = (text, options) => channel.notify(text, options)
+  // The question-seat alert was raised before the channel existed; flush it
+  // now so it lands as an in-UI notice, not only in the log file.
+  if (questionSeatNotice !== undefined) {
+    channel.notify(questionSeatNotice, { color: 'error' })
+    questionSeatNotice = undefined
+  }
   for (const [text, options] of stderrBacklog.splice(0)) {
     notifyStderr(text, options)
   }
