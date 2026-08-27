@@ -130,6 +130,14 @@ const GROUPS = {
 // 字节、不得拉回 raw mode——在途回复与鼠标事件由清理后的 re-drain
 // 吞掉，不再落入 shell。
     ["verify-exit-mouse-residue", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-mouse-residue.tsx']],
+// 组件级拖拽协议回归：无修饰左键 press 捕获 drag target，首动 dragstart、
+// 连续 dragmove、release/focus-out/reset 收尾 dragend；未移动仍走 click，
+// 无 handler 与修饰键区域保留基线文本选择；真实 SGR 管线 + 最小滑块消费者。
+    ["verify-drag-protocol", ['node', '--import', 'tsx/esm', 'scripts/verify-drag-protocol.tsx']],
+// hover 事件性能与健壮性回归：同批 motion 保留兴趣边界（tooltip dwell
+// 不提前）、无兴趣矩形快路径跳过全树 hit-test，且渲染提交/帧边界/
+// 多 root 失效；拖拽 motion 逐事件到达。
+    ["verify-hover-coalesce", ['node', '--import', 'tsx/esm', 'scripts/verify-hover-coalesce.tsx']],
 // /update 纯函数回归：版本探测（双布局+外来 manifest 拒绝）、
 // registry 解析（env/npmrc/默认）、semver 比较、pnpm --latest。
     ["verify-update", ['node', 'scripts/verify-update.mjs']],
@@ -224,6 +232,10 @@ const GROUPS = {
 // vim 编辑模式回归（/vim 命令 + normal/insert 键位 + 徽标 + 撤销栈 +
 // insert Esc 让位回合打断）。
     ["verify-vim-mode", ['node', 'scripts/verify-vim-mode.mjs']],
+// 输入框鼠标选区编辑回归（drag 协议消费者）：SGR 拖选/Shift+click 扩展/
+// 双击选词自检测/Backspace/Delete 删选区/打字替换/Esc 分层/Ctrl+C 经
+// Chat→控制器复制选区、CJK 宽字符显示列与 fold block 侧钳制。
+    ["verify-input-selection", ['node', '--import', 'tsx/esm', 'scripts/verify-input-selection.tsx']],
 // 输入历史草稿回归（issue #287）：首次 ↑ 保存未提交草稿，遍历历史后
 // ↓ 回到末尾必须恢复原文，重复越界不能把草稿清空。
     ["verify-prompt-history-draft", ['node', 'scripts/verify-prompt-history-draft.mjs']],
@@ -259,6 +271,10 @@ const GROUPS = {
 // （等价于「上方每个区域都放得下、没有多占行、没有被挤出屏幕」）。
 // 中文必测：所有文案都本地化，按字符数而非列宽排版在英文下看不出来。
     ["verify-session-browser-layout", ['node', 'scripts/verify-session-browser-layout.mjs']],
+// Tooltip 悬停提示回归：悬停截断元素 ~600ms 后弹完整内容浮层——延迟未到
+// 不出现、到点内容正确、leave 即隐、leave 早于延迟取消、自定义 delayMs、
+// 多行内容锚点上方、屏顶锚点转下方、resize 隐藏（几何失效）、窄屏水平钳制。
+    ["verify-tooltip", ['node', '--import', 'tsx/esm', 'scripts/verify-tooltip.tsx']],
 // 便携包更新解压链安全回归：Windows 解压优先 tar.exe 数组参数，回退
 // Expand-Archive 的两个路径按 PowerShell 约定把 ' 双写为 ''——路径派生
 // 自环境变量，不转义即可注入任意命令；解压与替换之间的提取树校验拒绝
