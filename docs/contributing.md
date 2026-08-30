@@ -42,6 +42,17 @@ DeepSeek Harness 拥有，TUI 只消费它们。
 - `src/index.ts`：公共 Cordis 插件入口、配置 Schema，与对运行时插件的惰性移交。
 - `src/dsh-adapter/plugin.ts`：TTY 校验、服务注册、Agent 创建/恢复、React 树挂载，以及
   终端/进程的收尾清理。
+- `src/dsh-adapter/questions-answerer.ts` 与 `preset-resolution.ts`：隔离
+  user-questions / agent-preset 的上游预发布兼容分派，避免把版本分支散进
+  bootstrap 与 channel 动作面。注意：问卷
+  "provider 座位"守卫（DUPLICATE_PROVIDER 探测 + 私有 symbol 校验，#586）只在
+  rc 的 `registerProvider` 路径生效。alpha.2 的 `user-questions/request`
+  waterfall 对带 agent 的请求先按 scope 过滤 listener；agentless 的 `/auth` 请求
+  不带 scope carrier。按 answerer 约定，首个不调用 `next()` 委派的 eligible
+  listener 会 claim 请求；但 Cordis waterfall 是 around middleware，外层 listener
+  即使调用 `next()` 也能观察、替换或拒绝下游结果，`{ prepend: true }` 会把 listener
+  插到队首。上游没有受支持的方法发现或保留可验证的独占 claimant，因此 legacy
+  seat guard 及其告警无法在本地复现。
 - `src/dsh-adapter/channel.ts`：事件到视图的投影 + 非 React 的动作面。把 DSH 会话事件
   翻译成 transcript 行，实现 submit、steer、rewind、resume、模型/preset 切换、
   本地报告及相关状态迁移。
@@ -101,8 +112,11 @@ Cordis config
 ## 工具链（Toolchain）
 
 - 支持 Node `^22.19 || >=24`；CI 用 Node 24。
-- CI 与发布用 pnpm 11；开发也请用 pnpm。
-- 干净检出安装：`pnpm install --frozen-lockfile`。
+- CI 与发布用 pnpm 11；开发也请用 pnpm。根 `package.json` 的 `packageManager`
+  字段是 pnpm 版本的唯一真源，CI 与 corepack 都从这里取值。
+- 干净检出安装：先 `git clone --recurse-submodules`（或在已有检出里
+  `git submodule update --init --recursive`），再 `pnpm install --frozen-lockfile`。
+  `vendor/dsh-std` 与 `dsh-auth` 是 workspace / `link:` 依赖，子模块为空时安装必失败。
 - `pnpm-lock.yaml` 是唯一锁文件。npm 消费方不读依赖包的 lockfile，
   `package-lock.json` 已移除（见 #173 后续处理）。
 - 有意改依赖时：用 `pnpm add` 更新 `pnpm-lock.yaml`，检查完整 lockfile diff，
