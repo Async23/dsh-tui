@@ -60,11 +60,13 @@ const isBigInput = (text: string): boolean =>
  */
 const EDITABLE_CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f]/u
 
+/** Normalize editable text so no terminal control characters remain in state. */
 function sanitizeEditableText(text: string): string {
   // Fast path for ordinary and multi-line drafts: newline is intentionally
   // absent from the probe, so a large clean paste returns without regex work.
   if (!EDITABLE_CONTROL.test(text)) return text
   return stripAnsi(text)
+    .replace(/\r\n?/gu, '\n')
     .replace(/\t/gu, '        ')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, '')
 }
@@ -1258,9 +1260,7 @@ export function PromptInput({
       // supports extended key reporting (kitty/modifyOtherKeys allowlist in
       // ink/terminal.ts); Option+Enter (ESC CR) is the fallback on terminals
       // that can't report shift — e.g. macOS Terminal.app (issue #110).
-      const next = value.slice(0, cursor) + '\n' + value.slice(cursor)
-      setInput(next, cursor + 1)
-      setSelectedCommand(0)
+      insertAtCaret('\n')
       return
     }
     if (key.return && expandedRef.current) {
@@ -2134,7 +2134,7 @@ export function PromptInput({
     return (
       <Text key={absoluteLine} wrap="truncate-end">
         {prefix}
-        {pieces.map((piece, pieceIndex) =>
+        {pieces.length === 0 ? ' ' : pieces.map((piece, pieceIndex) =>
           piece.inverse ? (
             <Text key={pieceIndex} inverse>
               {piece.text}

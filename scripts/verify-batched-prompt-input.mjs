@@ -12,18 +12,31 @@
  */
 import { PassThrough, Writable } from 'node:stream'
 import React from 'react'
+import xtermHeadless from '@xterm/headless'
 import { render } from '../lib/types/ui.js'
 import { PromptInput } from '../lib/types/components/PromptInput.js'
-import { settled, sleep } from './lib/term-test.mjs'
+import { settled, sleep, viewportLines } from './lib/term-test.mjs'
+
+const { Terminal: XTerm } = xtermHeadless
 
 let failed = 0
+/** Print one pass/fail line and keep a running failure count. */
 function check(name, ok, extra = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${extra ? `  (${extra})` : ''}`)
   if (!ok) failed += 1
 }
 
-function makeStreams() {
-  const stdout = new Writable({ write(_chunk, _encoding, callback) { callback() } })
+/** Build the writable TTY streams used by the headless prompt harness. */
+function makeStreams(term) {
+  const stdout = new Writable({
+    write(chunk, _encoding, callback) {
+      if (term === undefined) {
+        callback()
+      } else {
+        term.write(String(chunk), callback)
+      }
+    },
+  })
   stdout.columns = 100
   stdout.rows = 30
   stdout.isTTY = true
@@ -67,7 +80,8 @@ const channel = {
   listFiles: async () => [],
 }
 
-const { stdout, stderr, stdin } = makeStreams()
+const term = new XTerm({ cols: 100, rows: 30, scrollback: 100, allowProposedApi: true })
+const { stdout, stderr, stdin } = makeStreams(term)
 const instance = await render(
   React.createElement(PromptInput, {
     channel,
@@ -239,6 +253,30 @@ for (const [index, [label, newlineKey, prefix]] of modifiedCtrlJCases.entries())
     JSON.stringify(submitted),
   )
 }
+
+stdin.write('a')
+await sleep(100)
+stdin.write('\x1b\r')
+await sleep(100)
+stdin.write('\x1b\r')
+await sleep(100)
+stdin.write('b')
+check(
+  'consecutive Option+Enter keeps both blank prompt lines visible',
+  await settled(() => {
+    const lines = viewportLines(term)
+    const top = lines.findIndex(line => line.includes('╭'))
+    const bottom = lines.findIndex((line, index) => index > top && line.includes('╰'))
+    return top >= 0 && bottom - top === 4 && lines.some(line => line.includes('b'))
+  }),
+  viewportLines(term).join('\n'),
+)
+stdin.write('\r')
+check(
+  'consecutive Option+Enter submits both newlines',
+  await settled(() => submitted.at(-1) === 'a\n\nb'),
+  JSON.stringify(submitted),
+)
 
 instance.unmount()
 
