@@ -87,6 +87,7 @@ import { RecapPanel } from '../components/RecapPanel.js'
 import { isValidSessionColor, SESSION_COLOR_NAMES } from '../cc/sessionColors.js'
 import { TipsPanel } from '../components/TipsPanel.js'
 import { SubagentDashboard } from '../components/SubagentDashboard.js'
+import { JobsPanel } from '../components/JobsPanel.js'
 import { SubagentDetailScene } from '../components/SubagentDetailScene.js'
 import { FileActionsPanel, FILE_ACTION_COUNT } from '../components/FileActionsPanel.js'
 import { openExternal, openFile, revealInFileManager } from '../utils/openExternal.js'
@@ -552,6 +553,7 @@ export function Chat({
   }, [lastUserRowId, recap])
   /** Subagent dashboard (Ctrl+A): displays active/completed subagents. */
   const [subagentDashboardOpen, setSubagentDashboardOpen] = React.useState(false)
+  const [jobsPanelOpen, setJobsPanelOpen] = React.useState(false)
   /** Detail view for a specific subagent (opened from dashboard). */
   const [subagentDetailId, setSubagentDetailId] = React.useState<string | null>(null)
   /**
@@ -1587,6 +1589,10 @@ export function Chat({
         else channel.notify(t('agentsmd-created', { result }))
         return true
       }
+      case 'jobs':
+        setHelpOpen(false)
+        setJobsPanelOpen(true)
+        return true
       case 'agents':
         setHelpOpen(false)
         void channel.listSubagents().then((lines) => {
@@ -3087,6 +3093,25 @@ export function Chat({
 
   // Subagent dashboard: displays all active and completed subagents.
   // Like the browser and settings, it replaces the conversation entirely.
+  if (jobsPanelOpen) {
+    const panel = (
+      <JobsPanel
+        jobs={channel.backgroundJobs ?? []}
+        onClose={() => setJobsPanelOpen(false)}
+        onKill={(id) => {
+          // Stub channels (verify harnesses) have no jobControl — surface
+          // the same failure toast as a refused kill instead of throwing.
+          if (channel.jobControl?.kill(id) !== true) {
+            channel.notify(t('jobs-kill-failed', { id }), { color: 'error' })
+          }
+        }}
+      />
+    )
+    return fullscreen ? panel : <AlternateScreen>{panel}</AlternateScreen>
+  }
+
+  // Subagent dashboard: displays all active and completed subagents.
+  // Like the browser and settings, it replaces the conversation entirely.
   if (subagentDashboardOpen) {
     const dashboard = (
       <SubagentDashboard
@@ -3219,6 +3244,7 @@ export function Chat({
           onUnseenCount={setUnseenCount}
           onTimeline={setTimeline}
           onOpenSubagent={(agentId) => setSubagentDetailId(agentId)}
+          onOpenJobs={() => setJobsPanelOpen(true)}
           onOpenFile={openFileActions}
         />
         </ScrollBox>
