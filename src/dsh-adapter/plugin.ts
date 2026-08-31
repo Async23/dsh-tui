@@ -41,6 +41,7 @@ import { detectLegacyEnv, migrateLegacyDataDir, RENAMED_ENV } from '../utils/pat
 import { attachHerdrIntegration } from '../herdr.js'
 import { logMouseDebug } from '../utils/debug.js'
 import { Chat } from '../screens/Chat.js'
+import { openInjectChannel, type InjectController } from './inject-channel.js'
 import { getHostDialogStore, type TuiDialogRuntime } from './dialogs.js'
 import { getHostStatusStore, type TuiStatusRuntime } from './status.js'
 import { getHostToastStore, type TuiToastRuntime } from './toast.js'
@@ -1373,6 +1374,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   const handleExit = funnel.handleExit
 
+  // External injection controller: Chat fills it with `{ append, submit }`
+  // every render; the injection socket (opened below) drives it. A ref rather
+  // than a prop callback so the socket handler always reaches the live Chat.
+  const injectControllerRef = React.createRef<InjectController | null>() as React.RefObject<InjectController | null>
+
   // Chat's `fullscreen` prop must match the root wrap below, or the
   // full-screen surfaces inside Chat (session browser, settings, trajectory,
   // subagent pages) would nest a SECOND <AlternateScreen> — whose unmount
@@ -1386,6 +1392,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     channel,
     questionStore,
     approvalStore,
+    injectControllerRef,
     // The dsh-tui-extensions row's services (managed dialogs, status line,
     // shortcuts). Soft-consumed: absent the row (stale patch, bare embed),
     // Chat falls back to inert stores and no shortcut registry.
@@ -1480,6 +1487,23 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // parent only within the survival window — this line is the durable mark).
   if (process.env.DSH_TUI_RESTART_CHILD === '1') {
     logRestartEvent('boot: UI mounted', { fullscreen: bootedFullscreen, isRecompose })
+  }
+
+  // External injection channel (dsh.nvim etc.): expose a per-session local
+  // socket that appends text into the prompt input and submits it. Optional
+  // integration — a bind failure degrades to "no channel" and never fails the
+  // session. Closed on teardown so the socket and discovery record do not leak.
+  const injectChannel = openInjectChannel(
+    agent.session.id,
+    channel.cwd,
+    {
+      append: (text) => injectControllerRef.current?.append(text),
+      submit: () => injectControllerRef.current?.submit(),
+    },
+    (message) => ctx.logger.warn(`dsh-tui: ${message}`),
+  )
+  if (injectChannel) {
+    ctx.effect(() => () => injectChannel.close())
   }
 
   // Check in the background so registry latency never delays the first frame.

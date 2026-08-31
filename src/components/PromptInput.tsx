@@ -268,6 +268,13 @@ export interface PromptController {
   hasText(): boolean
   clear(): void
   /**
+   * Append `text` at the end of the input (external injection channel; see
+   * dsh-adapter/inject-channel.ts). Unlike `fillText`, which replaces the
+   * whole value, this accumulates — matching OpenCode's `tui.prompt.append`
+   * so repeated editor sends build one prompt. Returns the resulting value.
+   */
+  append(text: string): string
+  /**
    * Copy the active mouse selection to the system clipboard (OSC 52 + the
    * native fallback) and KEEP the selection for further editing. Returns
    * true when a selection existed and consumed the key; Chat's Ctrl+C
@@ -278,8 +285,7 @@ export interface PromptController {
   toggleVim(): boolean
   /** True while vim mode is on (either submode). Esc belongs to vim then —
    *  Chat's working-turn Esc interrupt must yield in BOTH submodes. */
-  vimActive(): boolean
-}
+  vimActive(): boolean}
 
 export interface PromptInputProps {
   channel: Channel
@@ -484,6 +490,14 @@ export function PromptInput({
         setValue('')
         setCursor(0)
       },
+      append: (text: string) => {
+        const next = valueRef.current + text
+        valueRef.current = next
+        cursorRef.current = next.length
+        setValue(next)
+        setCursor(next.length)
+        return next
+      },
       consumeSelectionCopy: () => {
         const sel = selectionRef.current
         if (!sel) return false
@@ -508,8 +522,7 @@ export function PromptInput({
         vimUndoRef.current = []
         return next
       },
-      vimActive: () => vimEnabledRef.current,
-    }
+      vimActive: () => vimEnabledRef.current,    }
     return () => {
       controllerRef.current = null
     }

@@ -50,6 +50,7 @@ import { normalizeScrollGutter } from '../tuiDisplayPrefs.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { TooltipLayer } from '../components/Tooltip.js'
 import { PromptInput, type PromptController } from '../components/PromptInput.js'
+import type { InjectController } from '../dsh-adapter/inject-channel.js'
 import { PromptEditorLayer } from '../components/PromptEditor.js'
 import { GoalTodoPanel } from '../components/GoalTodoPanel.js'
 import { AutoRecapRow } from '../components/AutoRecapRow.js'
@@ -224,6 +225,7 @@ export function Chat({
   onRestart,
   fullscreen = false,
   trajectorySeen: trajectorySeenProp,
+  injectControllerRef,
 }: {
   channel: Channel
   questionStore: QuestionStore
@@ -267,6 +269,14 @@ export function Chat({
    * persisted flag when the host does not supply one.
    */
   trajectorySeen?: boolean
+  /**
+   * External injection controller (dsh-adapter/inject-channel.ts). When the
+   * host runs the injection socket, Chat publishes `{ append, submit }` into
+   * this ref every render so the adapter-owned socket drives the prompt input
+   * without reaching into React state directly. Absent for hosts that do not
+   * open the channel (headless scripts, bare embeds).
+   */
+  injectControllerRef?: React.RefObject<InjectController | null>
 }) {
   const writeRaw = React.useContext(TerminalWriteContext)
   // Re-render whenever the channel mutates; rows/status are read fresh below.
@@ -809,6 +819,33 @@ export function Chat({
   // Live view into the prompt's text for the Ctrl+C rule (clears text when
   // non-empty; the double-press exit only arms on an empty input).
   const promptControllerRef = React.useRef<PromptController | null>(null)
+  // Publish the external-injection controller (dsh.nvim etc.) every render so
+  // the adapter-owned socket can append to the prompt and submit. `submit`
+  // mirrors an Enter press: `channel.submit` routes through the DSH inbox
+  // (queued after the current turn while working), then the input is cleared.
+  React.useEffect(() => {
+    if (!injectControllerRef) return
+    injectControllerRef.current = {
+      append: (text: string) => {
+        promptControllerRef.current?.append(text)
+      },
+      submit: () => {
+        const controller = promptControllerRef.current
+        if (!controller) return
+        const text = controller.append('').trim()
+        if (text === '') return
+        channel.submit(text)
+        controller.clear()
+        channel.notify(
+          channel.working ? t('input-sent-after-turn') : t('input-injected'),
+          { timeoutMs: 2500 },
+        )
+      },
+    }
+    return () => {
+      injectControllerRef.current = null
+    }
+  })
   const requestExit = () => {
     if (exitPendingRef.current) {
       onExit()
