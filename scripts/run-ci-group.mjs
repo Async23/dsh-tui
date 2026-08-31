@@ -39,6 +39,12 @@ const GROUPS = {
     ["verify-thinking-preview", ['node', '--import', 'tsx/esm', 'scripts/verify-thinking-preview.tsx']],
     ["repro-thinking-stream-fold", ['node', '--import', 'tsx/esm', 'scripts/repro-thinking-stream-fold.tsx']],
     ["verify-streaming-markdown-spacing", ['node', '--import', 'tsx/esm', 'scripts/verify-streaming-markdown-spacing.tsx']],
+// 流式平滑揭示回归（dsh-tui.smoothStreaming）：调度器步进/游标生命周期
+// （追加保游标、替换 snap、追平不再重打）+ MessageList 集成（流式行/
+// 非流式 fresh 行渐进揭示、回放行直出、开关关闭直出）+ 组件契约
+// （thinking ticker 跟随已到达文本而展开体吃切片、工具卡行级揭示、
+// result 落定即全显）。
+    ["verify-smooth-reveal", ['node', '--import', 'tsx/esm', 'scripts/verify-smooth-reveal.tsx']],
 // 滚动/pill/内联模式回归：新消息 pill 计数递减、Ctrl+C 交互、
 // 内联 scrollback 第三方终端适配。曾因 mock channel 缺新字段而
 // 静默冻结（render 期 TypeError 被 ink 吞掉），不在 CI 里烂了

@@ -3205,6 +3205,7 @@ export function Chat({
           thinkingFold={channel.thinkingFold}
           toolBackground={channel.toolBackground}
           foldTerminalCommand={channel.foldTerminalCommand}
+          smoothStreaming={channel.smoothStreaming}
           activityFrames={channel.activityFrames}
           showAll={showAllMessages}
           thinkingVisible={thinkingVisible}
