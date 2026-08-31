@@ -14,6 +14,9 @@ import type { Theme } from '../../theme.js'
 import type { ClickEvent } from '../../ink/events/click-event.js'
 import { getRevealVersion, revealLinesOf, snapReveal, subscribeReveal } from '../smoothReveal.js'
 
+const NOOP_REVEAL_SUBSCRIBE = (_listener: () => void): (() => void) => () => {}
+const getNoRevealVersion = (): number => 0
+
 type Props = {
   tool: ToolRow
   /** Adds the top margin between messages (CC: addMargin). */
@@ -68,6 +71,8 @@ type Props = {
   /** Live-arrived row (channel `fresh`): gates reveal participation —
    *  replayed cards must paint complete. */
   fresh?: boolean
+  /** Reveal version supplied by MessageList to avoid one store subscriber per card. */
+  revealVersion?: number
 }
 
 /** Tool display names: DSH emits lowercase tool ids (`bash`); Claude Code
@@ -418,11 +423,15 @@ export function AssistantToolUseMessage({
   foldTerminalCommand = false,
   smoothReveal = false,
   fresh = false,
+  revealVersion,
 }: Props): React.ReactNode {
-  // Reveal-frame wakeups: the shared scheduler bumps its version, which
-  // re-renders this card even while MemoRow props hold still (the reveal
-  // lives outside React — see smoothReveal.ts).
-  React.useSyncExternalStore(subscribeReveal, getRevealVersion)
+  // MessageList owns the single production subscription and passes a version
+  // prop only to active reveal rows. Standalone consumers keep the fallback
+  // subscription so the component contract remains self-contained.
+  React.useSyncExternalStore(
+    revealVersion === undefined ? subscribeReveal : NOOP_REVEAL_SUBSCRIBE,
+    revealVersion === undefined ? getRevealVersion : getNoRevealVersion,
+  )
   const isRunning = tool.status === 'running'
   const isError = tool.status === 'error'
   const displayArgs = verbose ? tool.argsFull ?? tool.argsText : tool.argsText

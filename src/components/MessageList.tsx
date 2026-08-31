@@ -467,7 +467,7 @@ export function MessageList({
   /** True when frame-budgeted history painting still has batches left
    *  (main-screen open): the layout effect schedules the next slice. */
   const paintPendingRef = React.useRef(false)
-  const paintQueuedRef = React.useRef(false)
+  const paintTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Persistent history-paint edge: how far batched painting has advanced
    *  (index into visibleRows). -1 = not painting / reset (list head change:
    *  rewind, new session, loadOlder — must repaint from scratch). */
@@ -482,9 +482,19 @@ export function MessageList({
   if (listHeadId !== undefined) paintedBaseRef.current = listHeadId
   /** Content-space offset of visibleRows[0] (header + dividers), measured. */
   const baseRef = React.useRef<number | null>(null)
-  const measureQueuedRef = React.useRef(false)
+  const measureTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const [, setMeasureTick] = React.useState(0)
   const [, setScrollTick] = React.useState(0)
+  React.useEffect(() => () => {
+    if (measureTimerRef.current !== null) {
+      clearTimeout(measureTimerRef.current)
+      measureTimerRef.current = null
+    }
+    if (paintTimerRef.current !== null) {
+      clearTimeout(paintTimerRef.current)
+      paintTimerRef.current = null
+    }
+  }, [])
 
   // A width change reflows every row — all measurements are stale.
   const lastColumns = React.useRef(columns)
@@ -996,15 +1006,15 @@ export function MessageList({
         )
       }
     }
-    if (changed && !measureQueuedRef.current) {
-      // Layout corrections can cascade for many rows. Yield between commits
-      // so React does not count the valid convergence as nested updates.
-      measureQueuedRef.current = true
-      queueMicrotask(() => {
-        measureQueuedRef.current = false
+    if (changed && measureTimerRef.current === null) {
+      // Layout corrections can cascade for many rows. Yield to the next
+      // macrotask so React does not count the valid convergence as nested
+      // updates when a streaming/reveal commit is already in flight.
+      measureTimerRef.current = setTimeout(() => {
+        measureTimerRef.current = null
         noteFrameCause('measure')
         setMeasureTick(t => t + 1)
-      })
+      }, 0)
     }
     // History-paint continuation (main-screen open): more never-painted
     // batches remain — schedule the next slice on the macrotask queue so
@@ -1013,10 +1023,9 @@ export function MessageList({
     // enough: each batch's mount+measure work is bounded (~2 viewports),
     // unlike the previous single-commit full mount that saturated the main
     // thread for seconds.
-    if (paintPendingRef.current && !paintQueuedRef.current) {
-      paintQueuedRef.current = true
-      setTimeout(() => {
-        paintQueuedRef.current = false
+    if (paintPendingRef.current && paintTimerRef.current === null) {
+      paintTimerRef.current = setTimeout(() => {
+        paintTimerRef.current = null
         if (!paintPendingRef.current) return
         noteFrameCause('measure')
         setMeasureTick(t => t + 1)
@@ -1049,6 +1058,10 @@ export function MessageList({
           const addMargin = margins.get(row.id) === true
           const tool = row.tool
           const subagent = row.kind === 'subagent' ? row.subagent : undefined
+          const revealVersion = smoothStreaming && row.kind === 'tool' && row.fresh === true &&
+            row.tool?.status === 'running' && row.tool.resultView === undefined
+            ? getRevealVersion()
+            : 0
           // Smooth reveal feeds the SAME flattened text prop a chunk feeds,
           // and keeps the streaming layout alive until the reveal catches up
           // (settling mid-reveal must not snap — a one-shot non-streaming
@@ -1089,6 +1102,7 @@ export function MessageList({
               foldTerminalCommand={foldTerminalCommand}
               smoothStreaming={smoothStreaming}
               fresh={row.fresh === true}
+              revealVersion={revealVersion}
               activityFrames={activityFrames}
               background={rowBackground(row.id)}
               toolCallId={tool?.callId}
@@ -1151,6 +1165,8 @@ type MemoRowProps = {
   smoothStreaming: boolean
   /** Live-arrived row flag (drives tool-card reveal participation). */
   fresh: boolean
+  /** Version tick for active tool reveal; 0 keeps settled rows memoized. */
+  revealVersion: number
   thinkingFold: 'preview' | 'full'
   toolBackground: ToolBackground
   /** Terminal-card header folding (forwarded to tool cards). */
@@ -1223,6 +1239,7 @@ function TranscriptRow({
   diffLayout,
   smoothStreaming,
   fresh,
+  revealVersion,
   thinkingFold,
   toolBackground,
   foldTerminalCommand,
@@ -1394,6 +1411,7 @@ function TranscriptRow({
             toolBackground={toolBackground}
             smoothReveal={smoothStreaming}
             fresh={fresh}
+            revealVersion={revealVersion}
             foldTerminalCommand={foldTerminalCommand}
             onClick={foldOnClick}
             onOpenFile={onOpenFile}

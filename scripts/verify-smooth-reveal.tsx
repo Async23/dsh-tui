@@ -319,6 +319,62 @@ console.log('--- C: component contracts ---')
   )
 }
 
+// D: long-session tool-card fanout — only MessageList may subscribe to the
+// reveal store in the production path. A single active card is enough to
+// advance the scheduler; settled cards must not each force a store rerender.
+console.log('--- D: long-session reveal subscriber fanout ---')
+{
+  resetRevealForTest()
+  const historyTools: ChatRow[] = Array.from({ length: 80 }, (_, i) => ({
+    id: 1000 + i,
+    kind: 'tool' as const,
+    text: '',
+    fresh: false,
+    tool: {
+      callId: `history-${i}`,
+      name: 'edit',
+      argsText: '{}',
+      argsFull: '{}',
+      status: 'done' as const,
+      resultView: { card: 'generic' as const, title: 'Edited', content: [{ type: 'text' as const, text: 'done' }] },
+      startedAt: Date.now() - 1000,
+      durationMs: 1000,
+    },
+  }))
+  const activeTool: ChatRow = {
+    id: 2000,
+    kind: 'tool',
+    text: '',
+    fresh: true,
+    tool: {
+      callId: 'active-long-session',
+      name: 'edit',
+      argsText: '{}',
+      argsFull: '{}',
+      status: 'running',
+      callView: {
+        card: 'diff',
+        title: 'Edit /src/active.ts',
+        diffs: [{
+          path: '/src/active.ts',
+          oldText: Array.from({ length: 8 }, (_, i) => `old line ${i}`).join('\n'),
+          newText: Array.from({ length: 8 }, (_, i) => `new line ${i}`).join('\n'),
+        }],
+      },
+      startedAt: Date.now(),
+    },
+  }
+  await withTerminal(
+    () => <MessageList rows={[...historyTools, activeTool]} smoothStreaming {...listProps} />,
+    async screen => {
+      await sleep(120)
+      check(screen().includes('old line 0'), 'D1 active tool remains visible with many history cards')
+      await sleep(2200)
+      check(screen().includes('lines (ctrl+o to expand)'), 'D1 active tool reveal completes without nested store updates')
+    },
+  )
+}
+
 console.log('')
 if (failures > 0) {
   console.error(`verify-smooth-reveal: ${failures} FAILURE(S)`)
