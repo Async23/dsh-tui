@@ -369,16 +369,17 @@ export function Chat({
   // permission focus synchronous so arrow+Enter in the same batch uses the
   // post-arrow row rather than the previous render's index.
   const permissionOverlayFocusRef = React.useRef<{ overlay: unknown; index: number } | null>(null)
-  if (overlay.kind === 'permission') {
-    // Seed each concrete picker instance once. Subsequent renders from
-    // channel/store updates must not overwrite a focus change that has already
-    // been applied synchronously for an arrow+Enter batch.
-    if (permissionOverlayFocusRef.current?.overlay !== overlay) {
-      permissionOverlayFocusRef.current = { overlay, index: overlay.index }
+  React.useEffect(() => {
+    if (overlay.kind === 'permission') {
+      // Seed each concrete picker instance after commit. Keyboard handlers
+      // update this ref synchronously; render must remain side-effect free.
+      if (permissionOverlayFocusRef.current?.overlay !== overlay) {
+        permissionOverlayFocusRef.current = { overlay, index: overlay.index }
+      }
+    } else {
+      permissionOverlayFocusRef.current = null
     }
-  } else {
-    permissionOverlayFocusRef.current = null
-  }
+  }, [overlay])
   const [models, setModels] = React.useState<readonly LlmModelInfo[]>([])
   /** Provider display identities for the /model group level; refreshed alongside `models`. */
   const [providerInfos, setProviderInfos] = React.useState<readonly LlmProviderInfo[]>([])
@@ -1228,6 +1229,7 @@ export function Chat({
           // top, then clear native scrollback and repaint the whale homepage.
           setExpanded(false)
           setExpandedRows(new Set())
+          setStreamViewToggledRows(new Set())
           setSelectedId(null)
           setSelectionActive(false)
           setShowAllMessages(false)
@@ -1249,6 +1251,7 @@ export function Chat({
         // channel.clear() resets row ids to 0; stale expanded/selection
         // state would mis-highlight fresh rows (known-limitation fix).
         setExpandedRows(new Set())
+        setStreamViewToggledRows(new Set())
         setSelectedId(null)
         setSelectionActive(false)
         return true
@@ -2588,12 +2591,16 @@ export function Chat({
     }
     if (overlay.kind === 'permission') {
       if (key.upArrow || key.downArrow) {
-        const currentIndex = permissionOverlayFocusRef.current?.index ?? overlay.index
+        const currentIndex = permissionOverlayFocusRef.current?.overlay === overlay
+          ? permissionOverlayFocusRef.current.index
+          : overlay.index
         const nextIndex = wrapIndex(currentIndex, key.upArrow ? -1 : 1, overlay.snapshot.options.length)
         permissionOverlayFocusRef.current = { overlay, index: nextIndex }
         dispatchOverlay({ type: 'set-index', kind: 'permission', index: nextIndex })
       } else if (plainReturn) {
-        const currentIndex = permissionOverlayFocusRef.current?.index ?? overlay.index
+        const currentIndex = permissionOverlayFocusRef.current?.overlay === overlay
+          ? permissionOverlayFocusRef.current.index
+          : overlay.index
         const option = overlay.snapshot.options[currentIndex]
         permissionOverlayFocusRef.current = null
         dispatchOverlay({ type: 'close' })
@@ -3819,7 +3826,13 @@ function NewMessagesPill({
 }): React.ReactNode {
   const [hover, setHover] = React.useState(false)
   return (
-    <Box paddingX={2} paddingTop={1}>
+    // noSelect: the pill is chrome (a button), not transcript. Without this,
+    // its text row is ordinary selectable cells — a selection anchored at
+    // the screen bottom (or extended across it) captures
+    // "↓ 回到底部（Enter/End）" into the copy on release. noSelect keeps the
+    // click/hover wiring (dispatchClick ignores noSelect) and only removes
+    // the cells from the highlight and getSelectedText.
+    <NoSelect paddingX={2} paddingTop={1}>
       <Box
         backgroundColor={hover ? 'userMessageBackgroundHover' : 'background'}
         onClick={onClick}
@@ -3834,7 +3847,7 @@ function NewMessagesPill({
           {' '}
         </Text>
       </Box>
-    </Box>
+    </NoSelect>
   )
 }
 
