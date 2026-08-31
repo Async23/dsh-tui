@@ -65,7 +65,7 @@ import { isPathLikeQuery, rankFileCandidates, type FileCandidate } from '../util
 import { readEffortPref, writeEffortPref } from '../effortPrefs.js'
 import { readModelPref, writeModelPref } from '../modelPrefs.js'
 import { explicitModelRoute, recordedModelRoute, resolveModelRoute, validateModelRoute } from '../modelRoute.js'
-import type { OAuthProviderStatus, OAuthSetupHost, ProviderSetupHost } from './providerWizard.js'
+import type { OAuthProviderStatus, OAuthSetupHost, ProfilePathOp, ProviderSetupHost } from './providerWizard.js'
 import { migratePresetPref, readPresetPref, writePresetPref } from '../presetPrefs.js'
 import { composePreset, resolvePersistedPreset, resolvePersistedRoute, runningPresetOf, serviceForAgent } from './presets.js'
 import { resolveCompatiblePreset, rosterOf, type AgentPresetInfo } from './preset-resolution.js'
@@ -1097,6 +1097,11 @@ export interface Channel {
   listModels(): Promise<readonly LlmModelInfo[]>
   /** Provider display identities for the same routes (picker group labels). */
   listProviders(): Promise<readonly LlmProviderInfo[]>
+  /** Drop the `/model <provider/id>` completion cache so the next `/model `
+   *  refetch reflects a provider-catalog change (`/provider` add/edit/delete,
+   *  OAuth sign-in/out) — the same consistency the picker's per-open refetch
+   *  already provides. */
+  invalidateModelCompletion(): void
   /** The live agent's full skill catalog for `/skills` (issue #204) — name,
    *  description, invocation flags and source bucket. Undefined on a failed
    *  or incomplete registry read (the picker shows an error); empty only
@@ -1506,6 +1511,8 @@ export interface ChannelState {
   listModels(): Promise<readonly LlmModelInfo[]>
   /** Provider display identities (see the public Channel type). */
   listProviders(): Promise<readonly LlmProviderInfo[]>
+  /** Drop the `/model` completion cache (see the public Channel type). */
+  invalidateModelCompletion(): void
   /** The live agent's skill catalog for `/skills` (see the public Channel type). */
   listSkills(): Promise<readonly SkillInfo[] | undefined>
   /** Safe credential metadata for `/login` (see the public Channel type). */
@@ -3236,10 +3243,16 @@ export function createChannel(
   const modelNodeCache = {
     nodes: undefined as readonly CommandCompletionNode[] | undefined,
     load: undefined as Promise<void> | undefined,
+    // Monotonic load generation. dropModelNodeCache bumps it so a warm that
+    // was already in flight when the cache was dropped cannot publish its
+    // stale catalog on resolve — only the newest load may write nodes.
+    generation: 0,
   }
   const warmModelNodes = (): void => {
     if (modelNodeCache.load !== undefined) return
+    const generation = modelNodeCache.generation
     modelNodeCache.load = state.listModels().then((list) => {
+      if (generation !== modelNodeCache.generation) return
       modelNodeCache.nodes = list.map((model) => ({
         name: `${model.provider}/${model.id}`,
         description: model.name,
@@ -3249,11 +3262,23 @@ export function createChannel(
       }))
       state.emit()
     }).catch(() => {
+      if (generation !== modelNodeCache.generation) return
       // listModels already swallows per-provider failures; this only fires
       // when the llm service shape itself is missing — settle on an empty
       // menu rather than retrying on every keystroke.
       modelNodeCache.nodes = []
     })
+  }
+
+  /** Drop the `/model <provider/id>` completion cache so the next `/model `
+   *  keystroke refetches a fresh catalog. Model switches (the [current] tag
+   *  re-resolves against the new route) and every `/provider` catalog change
+   *  (add / edit / delete / OAuth sign-in-out) invalidate it, so completion
+   *  always matches what the picker would list. */
+  const dropModelNodeCache = (): void => {
+    modelNodeCache.generation += 1
+    modelNodeCache.nodes = undefined
+    modelNodeCache.load = undefined
   }
 
   // `/preset <id>` completion: same warm-cache pattern as models. The
@@ -5356,8 +5381,7 @@ export function createChannel(
       // /model completion cache: the [current] tag was resolved at fetch
       // time — drop the cache so the next `/model ` refetches for the new
       // route.
-      modelNodeCache.nodes = undefined
-      modelNodeCache.load = undefined
+      dropModelNodeCache()
       state.tps = undefined
       state.tpsSamples = []
       state.lastUsage = undefined
@@ -5661,6 +5685,11 @@ export function createChannel(
         | undefined
       return Promise.resolve(llm === undefined ? [] : llm.listProviders().map(info => ({ ...info })))
     },
+    invalidateModelCompletion() {
+      // `/provider` changed the catalog (add/edit/delete/OAuth): the next
+      // `/model <provider/id>` keystroke must not serve the stale snapshot.
+      dropModelNodeCache()
+    },
     async listSkills() {
       // snapshot() over list(): only a COMPLETE observation is authoritative
       // (same contract as the skill-command merge above) — a partial catalog
@@ -5804,11 +5833,14 @@ export function createChannel(
         | undefined
       const settings = ctx.get('settings') as
         | {
-          describe(): readonly { ns: string; revision: number }[]
+          describe(): readonly { ns: string; revision: number; user?: unknown }[]
           get(ns: string): unknown
           mutate(
             ns: string,
-            ops: readonly { op: 'set'; path: readonly string[]; value: unknown }[],
+            ops: readonly (
+              | { op: 'set'; path: readonly string[]; value: unknown }
+              | { op: 'unset'; path: readonly string[] }
+            )[],
             expectedRevision?: number,
           ): Promise<void>
         }
@@ -5835,6 +5867,17 @@ export function createChannel(
       // optional: mounting the plugin lights up the wizard's OAuth branch,
       // and without it the wizard is exactly what it was before.
       const oauthApi = (ctx.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
+      // Real catalog membership on this mount: routes the adapter knows from
+      // its installed catalog (`declared !== true`). A stored profile naming
+      // such a route is an activation/override of the catalog route — even
+      // when it carries an explicit `api` field — while routes the adapter
+      // only knows because a profile names them are custom. Classifying by
+      // anything less (a profile-shape guess) misroutes the edit semantics.
+      const catalogMembers = (): Set<string> => new Set(
+        llm.listConfigurableProviders()
+          .filter(entry => entry.settingsNs === 'llm-pi-ai' && entry.declared !== true)
+          .map(entry => entry.provider),
+      )
       return {
         ...(oauthApi === undefined ? {} : { oauth: oauthApi }),
         listCatalogProviders() {
@@ -5851,11 +5894,91 @@ export function createChannel(
             | undefined
           return section?.providers !== undefined && route in section.providers
         },
+        listRefUsers(ref, exceptRoute) {
+          // The RESOLVED merge (settings.get), not the user layer: a base
+          // provider or composition-base route naming this ref is invisible
+          // to listConfiguredProviders() but still consumes the credential.
+          const section = settings.get('llm-pi-ai') as
+            | { providers?: Record<string, unknown> }
+            | undefined
+          const providers = section?.providers
+          if (providers === undefined || typeof providers !== 'object' || providers === null) return []
+          return Object.entries(providers).flatMap(([route, profile]) => {
+            if (route === exceptRoute) return []
+            if (typeof profile !== 'object' || profile === null) return []
+            const stored = profile as Record<string, unknown>
+            return stored.apiKeyEnv === ref ? [route] : []
+          })
+        },
+        listConfiguredProviders() {
+          // The editable/deletable set is the USER layer only: `describe()`'s
+          // `user` is the raw user section — the same source the /settings
+          // screen treats as overrides. `settings.get()` is the resolved
+          // merge; listing a route inherited from a composition base would
+          // promise a delete that cannot land (the unset only clears the
+          // user layer, so the base value re-inherits) while the credential
+          // is really gone. When the running base exposes no `user` layer,
+          // fall back to the resolved section: such builds (the official
+          // dsh-base) carry zero base routes anyway, so the layers coincide.
+          const descriptor = settings.describe().find(row => row.ns === 'llm-pi-ai')
+          // Only an absent `user` (older base) falls back; a present-but-empty
+          // user layer legitimately exposes nothing to edit.
+          const section = (descriptor?.user !== undefined
+            ? descriptor.user
+            : settings.get('llm-pi-ai')) as
+            | { providers?: Record<string, unknown> }
+            | undefined
+          const providers = section?.providers
+          if (providers === undefined || typeof providers !== 'object' || providers === null) return []
+          const catalog = catalogMembers()
+          return Object.entries(providers).flatMap(([route, profile]) => {
+            // The settings section is user-editable, so a `providers.<route>`
+            // entry may be null or a scalar; skip anything that is not a plain
+            // object instead of dereferencing it and throwing (which would
+            // block the edit/delete menu for every route).
+            if (typeof profile !== 'object' || profile === null) return []
+            const stored = profile as Record<string, unknown>
+            const ref = typeof stored.apiKeyEnv === 'string' ? stored.apiKeyEnv : ''
+            const baseURL = typeof stored.baseURL === 'string' && stored.baseURL !== ''
+              ? stored.baseURL
+              : undefined
+            const api = typeof stored.api === 'string' && stored.api !== ''
+              ? stored.api
+              : undefined
+            // Keep the raw model entries: a model-list re-selection must
+            // rewrite kept ids with their stored objects, so per-model fields
+            // this wizard never learned about survive the edit.
+            const modelEntries = Array.isArray(stored.models)
+              ? stored.models.filter(
+                (model): model is Record<string, unknown> =>
+                  typeof model === 'object' && model !== null,
+              )
+              : undefined
+            const models = modelEntries?.flatMap(
+              entry => typeof entry.id === 'string' ? [entry.id] : [],
+            )
+            return [{
+              route,
+              ref,
+              isCatalog: catalog.has(route),
+              shadowed: ref !== '' && process.env[ref] !== undefined,
+              ...(baseURL !== undefined ? { baseURL } : {}),
+              ...(api !== undefined ? { api } : {}),
+              ...(models !== undefined ? { models } : {}),
+              ...(modelEntries !== undefined && modelEntries.length > 0
+                ? { modelEntries }
+                : {}),
+            }]
+          })
+        },
         discoverModels(request) {
           return llm.discoverModels('llm-pi-ai', request)
         },
         envShadows(ref) {
           return process.env[ref] !== undefined
+        },
+        envValue(ref) {
+          return process.env[ref]
         },
         async readCredential(ref) {
           const resolved = await credentials.resolve(ref)
@@ -5875,6 +5998,34 @@ export function createChannel(
             // One retry on a stale-revision conflict (a concurrent write
             // landed between describe and mutate); anything else propagates
             // so the wizard can report and roll back the credential.
+            const code = (error as { code?: unknown })?.code
+            if (code !== 'SETTINGS_CONFLICT') throw error
+            await settings.mutate('llm-pi-ai', ops, revision())
+          }
+        },
+        async mutateProfile(route, ops) {
+          // Route-relative path patch: only the addressed fields inside
+          // `providers.<route>` enter the write, so stored fields the TUI
+          // does not model never pass through here and cannot be dropped.
+          const full: readonly ProfilePathOp[] = ops.map(op => op.op === 'set'
+            ? { op: 'set', path: ['providers', route, ...op.path], value: op.value }
+            : { op: 'unset', path: ['providers', route, ...op.path] })
+          try {
+            await settings.mutate('llm-pi-ai', full, revision())
+          } catch (error) {
+            // Same stale-revision retry as writeProfile.
+            const code = (error as { code?: unknown })?.code
+            if (code !== 'SETTINGS_CONFLICT') throw error
+            await settings.mutate('llm-pi-ai', full, revision())
+          }
+        },
+        async removeProfile(route) {
+          const ops = [{ op: 'unset' as const, path: ['providers', route] }]
+          try {
+            await settings.mutate('llm-pi-ai', ops, revision())
+          } catch (error) {
+            // Same stale-revision retry as writeProfile: the wizard reports
+            // any real failure so the credential deletion can be skipped.
             const code = (error as { code?: unknown })?.code
             if (code !== 'SETTINGS_CONFLICT') throw error
             await settings.mutate('llm-pi-ai', ops, revision())
