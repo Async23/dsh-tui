@@ -676,6 +676,19 @@ export default class App extends PureComponent<Props, State> {
 		stdin.setRawMode(false);
 		stdin.removeListener("readable", this.handleReadable);
 		stdin.unref();
+		// Raw mode fully released: no more input can reach the parser, so
+		// an incomplete escape sequence can never complete. Cancel its
+		// timer and reset the parse state — otherwise the timer re-arms
+		// forever on the leftover readableLength (no reader attached) and
+		// a partial paste/escape corrupts the next raw session. This runs
+		// on BOTH release paths (borrow-drain and the shutdown funnel's
+		// concludeShutdown) because it is the physical release that ends
+		// parser input, not the borrow bookkeeping.
+		if (this.incompleteEscapeTimer) {
+			clearTimeout(this.incompleteEscapeTimer);
+			this.incompleteEscapeTimer = null;
+		}
+		this.keyParseState = { ...INITIAL_STATE };
 	}
 
 	// Helper to flush incomplete escape sequences
@@ -685,6 +698,14 @@ export default class App extends PureComponent<Props, State> {
 
 		// Only proceed if we have incomplete sequences
 		if (!this.keyParseState.incomplete) return;
+
+		// Raw mode released while a sequence was incomplete: the parser is
+		// dead (no readable listener, no further input), so the sequence can
+		// never complete — drop it instead of re-arming forever.
+		if (this.rawModeEnabledCount === 0) {
+			this.keyParseState = { ...INITIAL_STATE };
+			return;
+		}
 
 		// Fullscreen: if stdin has data waiting, it's almost certainly the
 		// continuation of the buffered sequence (e.g. `[<64;74;16M` after a

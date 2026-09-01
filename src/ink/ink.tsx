@@ -11,10 +11,11 @@ import { getYogaCounters } from '../native-ts/yoga-layout/index.js';
 import { logForDebugging } from '../utils/debug.js';
 import { logError } from '../utils/log.js';
 import { format } from 'util';
+import type { Writable } from 'stream';
 import { colorize } from './colorize.js';
 import App from './components/App.js';
 import type { CursorDeclaration, CursorDeclarationSetter } from './components/CursorDeclarationContext.js';
-import { FRAME_INTERVAL_MS, PTY_BACKLOG_BYTES } from './constants.js';
+import { DRAIN_BACKOFF_BASE_MS, DRAIN_BACKOFF_MAX_MS, FRAME_INTERVAL_MS, PTY_BACKLOG_BYTES } from './constants.js';
 import * as dom from './dom.js';
 import { beginGeometryFrame, endGeometryFrame, GEOMETRY_TRACE_ENABLED, noteFrameCause } from './geometry-trace.js';
 import { callWithUpdateOverflowGuard, installNestedUpdateOverflowProcessGuard } from './update-overflow-guard.js';
@@ -128,11 +129,20 @@ export default class Ink {
   private readonly unsubscribeTTYHandlers?: () => void;
   private terminalColumns: number;
   private terminalRows: number;
+  /** Columns the Yoga root was last constrained with (see onComputeLayout). */
+  private lastLayoutColumns = -1;
   private currentNode: ReactNode = null;
   private frontFrame: Frame;
   private backFrame: Frame;
   private lastPoolResetTime = performance.now();
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True while the stream holds unflushed output above the backlog gate;
+   *  frame writes are skipped (coalesced) until the stream drains. */
+  private backpressured = false;
+  /** The pending stdout 'drain' listener (one per stream). */
+  private drainListener: (() => void) | null = null;
+  /** Fallback re-probe delay while backpressured (bounded backoff). */
+  private drainBackoffMs = DRAIN_BACKOFF_BASE_MS;
   // Every scheduled microtask carries the generation that created it. Immediate
   // renders invalidate older trailing work before it can append an old frame.
   private renderGeneration = 0;
@@ -320,8 +330,23 @@ export default class Ink {
       }
       if (this.rootNode.yogaNode) {
         const t0 = performance.now();
-        this.rootNode.yogaNode.setWidth(this.terminalColumns);
-        this.rootNode.yogaNode.calculateLayout(this.terminalColumns);
+        const root = this.rootNode.yogaNode;
+        // setWidth marks the WHOLE tree dirty — calling it with an unchanged
+        // value would force a full layout pass on every commit (idle commits
+        // included). Only touch the constraint when the terminal width
+        // actually changed; handleResize re-renders with the new size, so
+        // the first commit after a resize still re-constrains.
+        if (this.lastLayoutColumns !== this.terminalColumns) {
+          this.lastLayoutColumns = this.terminalColumns;
+          root.setWidth(this.terminalColumns);
+        }
+        // Clean-tree early bail: every style/text mutation marks its node
+        // dirty (the engine's own dirty-skip depends on it), so a fully
+        // clean tree with unchanged constraints has nothing to recompute —
+        // skip the layout walk (and its round pass) entirely.
+        if (root.isDirty()) {
+          root.calculateLayout(this.terminalColumns);
+        }
         const ms = performance.now() - t0;
         recordYogaMs(ms);
         const c = getYogaCounters();
@@ -418,6 +443,8 @@ export default class Ink {
     this.renderGeneration++;
     this.pendingRenderGeneration = null;
     this.scheduleRender.cancel?.();
+    this.detachDrainListener();
+    this.backpressured = false;
     if (this.drainTimer !== null) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
@@ -589,7 +616,14 @@ export default class Ink {
     this.renderGeneration++;
     this.pendingRenderGeneration = null;
     this.scheduleRender.cancel?.();
-    if (this.drainTimer !== null) {
+    // A fresh frame is being produced right now — any pending drain-wait
+    // (listener or timer) is obsolete; this render re-arms what it needs.
+    // EXCEPT while backpressured: the drain event may already have been
+    // emitted before the listener attached (a one-shot signal), and the
+    // backing-off re-probe is then the ONLY recovery path — cancelling it
+    // here on every animation render would deadlock the writer.
+    this.detachDrainListener();
+    if (this.drainTimer !== null && !this.backpressured) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
     }
@@ -607,31 +641,94 @@ export default class Ink {
    *    (DECSTBM + ~10 patches); scroll throughput is unchanged.
    *  - IN-FLIGHT GATE: while stdout still holds unflushed bytes above
    *    PTY_BACKLOG_BYTES (slow ConPTY round trip, ssh link), queue nothing
-   *    further — re-probe at quarter interval instead. Grok's equivalent
-   *    (in_flight_target + writer ack) exists to keep latency bounded
-   *    under exactly this backpressure; without it each stacked frame adds
-   *    its full render+write to the input→paint latency, which reads as
-   *    sticky, laggy scrolling on Windows terminals.
+   *    further — wait for the stream's OWN drain event instead of
+   *    re-probing at quarter interval (a 250Hz busy loop that never
+   *    advances while the terminal stays saturated). A bounded fallback
+   *    timer (backing off 250ms → 1s) covers streams that never emit
+   *    drain; each fire re-checks the backlog and either resumes or
+   *    re-arms. Grok's equivalent (in_flight_target + writer ack) exists
+   *    to keep latency bounded under exactly this backpressure; without it
+   *    each stacked frame adds its full render+write to the
+   *    input→paint latency, which reads as sticky, laggy scrolling on
+   *    Windows terminals.
    *
    * The gate holds only DRAIN frames; React-driven renders (keystrokes,
    * streaming) still render via the normal throttle — user-visible updates
    * must never wait behind scroll output.
    */
   private scheduleDrain(): void {
-    if (this.drainTimer !== null) return;
-    const stdout = this.options.stdout;
+    const stdout = this.options.stdout as Writable & { writableLength?: number };
     const backlog =
-      typeof (stdout as { writableLength?: number }).writableLength === 'number'
-        ? (stdout as { writableLength: number }).writableLength
+      typeof stdout.writableLength === 'number'
+        ? stdout.writableLength
         : 0;
-    if (backlog > PTY_BACKLOG_BYTES) {
-      this.drainTimer = setTimeout(() => {
-        this.drainTimer = null;
-        this.scheduleDrain();
-      }, FRAME_INTERVAL_MS >> 2);
+    // Fast path only when the writer is NOT backpressured: write() === false
+    // is the authoritative signal (a stream with a small high-water mark can
+    // reject writes while writableLength is still under the threshold), and
+    // the backlog check is an additional bound, never a way to override a
+    // rejected write into a 4ms retry loop.
+    if (!this.backpressured && backlog <= PTY_BACKLOG_BYTES) {
+      if (this.drainTimer !== null) return;
+      this.drainTimer = setTimeout(this.renderNow, FRAME_INTERVAL_MS >> 2);
       return;
     }
-    this.drainTimer = setTimeout(this.renderNow, FRAME_INTERVAL_MS >> 2);
+    // Backpressure path: wait for the stream's own drain event (fires once
+    // the buffered bytes flush after a rejected write); a bounded, backing-
+    // off re-probe covers streams that never emit it. The re-probe
+    // OPTIMISTICALLY clears the flag at the slow cadence (250ms→1s) — the
+    // write result re-asserts the true state — so a stream that silently
+    // recovered resumes painting without ever busy-looping. Never a fixed
+    // 4ms poll while backpressured.
+    this.backpressured = true;
+    // ALWAYS ensure the drain listener exists while backpressured — even
+    // when the fallback timer is already armed. renderNow() detaches the
+    // listener on every immediate render (obsolete-wait invalidation) but
+    // deliberately KEEPS the backoff timer; if this early-returned on the
+    // armed timer, a drain event landing in that window would be missed and
+    // recovery would degrade from drain-first (~instant) to polling
+    // (250ms→1s backoff). Listener first, timer second.
+    this.attachDrainListener();
+    if (this.drainTimer !== null) return;
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = null;
+      if (this.isUnmounted) return;
+      const nowBacklog =
+        typeof stdout.writableLength === 'number'
+          ? stdout.writableLength
+          : 0;
+      if (nowBacklog <= PTY_BACKLOG_BYTES) {
+        // The stream looks drained (or never reports a backlog): try a
+        // frame; the write result re-asserts the gate.
+        this.backpressured = false;
+      }
+      this.scheduleDrain();
+    }, this.drainBackoffMs);
+    this.drainBackoffMs = Math.min(DRAIN_BACKOFF_MAX_MS, this.drainBackoffMs * 2);
+  }
+
+  /** Arm the one-per-stream 'drain' listener; a no-op when already armed. */
+  private attachDrainListener(): void {
+    if (this.drainListener !== null) return;
+    const stdout = this.options.stdout;
+    const handler = (): void => {
+      this.drainListener = null;
+      stdout.removeListener('drain', handler);
+      if (this.isUnmounted || this.isPaused) return;
+      // The stream drained: clear the gate so this render actually writes
+      // (the write result re-asserts the true backpressure state).
+      this.backpressured = false;
+      this.renderNow();
+    };
+    this.drainListener = handler;
+    stdout.once('drain', handler);
+  }
+
+  /** Cancel the drain listener; keeps the timer handling intact. */
+  private detachDrainListener(): void {
+    if (this.drainListener !== null) {
+      this.options.stdout.removeListener('drain', this.drainListener);
+      this.drainListener = null;
+    }
   }
 
   onRender() {
@@ -642,7 +739,10 @@ export default class Ink {
     // Entering a render cancels any pending drain tick — this render will
     // handle the drain (and re-schedule below if needed). Prevents a
     // wheel-event-triggered render AND a drain-timer render both firing.
-    if (this.drainTimer !== null) {
+    // While backpressured this render SKIPS its write (see the gate below),
+    // so it does not handle the drain — keep the backing-off re-probe
+    // armed or the writer deadlocks (drain may already have been emitted).
+    if (this.drainTimer !== null && !this.backpressured) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
     }
@@ -913,9 +1013,10 @@ export default class Ink {
     // implementation deviates from xterm and garbles scrolling content.
     isDecstbmSafe());
     const diffMs = performance.now() - tDiff;
-    // Swap buffers
-    this.backFrame = this.frontFrame;
-    this.frontFrame = frame;
+    // NOTE: frontFrame/backFrame are NOT swapped here — the candidate frame
+    // may be skipped by the backpressure gate below, and the diff engine
+    // must keep comparing against the last frame the terminal actually
+    // received. The swap happens in the write-success branch.
 
     // Periodically reset char/hyperlink pools to prevent unbounded growth
     // during long sessions. 5 minutes is infrequent enough that the O(cells)
@@ -944,7 +1045,14 @@ export default class Ink {
     const optimized = optimize(diff);
     const optimizeMs = performance.now() - tOptimize;
     const hasDiff = optimized.length > 0;
-    if (this.altScreenActive && hasDiff) {
+    // Backpressure gate, computed BEFORE the optimized patch list is built:
+    // write() === false is the authoritative signal (a stream with a small
+    // high-water mark can reject writes while writableLength is still below
+    // the threshold); the backlog check is an additional bound only.
+    const stdout = this.options.stdout as Writable & { writableLength?: number };
+    const backlog = typeof stdout.writableLength === 'number' ? stdout.writableLength : 0;
+    const writing = !this.backpressured && backlog <= PTY_BACKLOG_BYTES;
+    if (this.altScreenActive && hasDiff && writing) {
       // Prepend CSI H to anchor the physical cursor to (0,0) so
       // log-update's relative moves compute from a known spot (self-healing
       // against out-of-band cursor drift, see the ALT_SCREEN_ANCHOR_CURSOR
@@ -1067,19 +1175,48 @@ export default class Ink {
       }
     }
     const tWrite = performance.now();
-    writeDiffToTerminal(this.terminal, optimized, this.altScreenActive && !SYNC_OUTPUT_SUPPORTED);
-    const writeMs = performance.now() - tWrite;
-    // One frame reached the terminal. Components holding a widened mount
-    // window until its content is actually flushed (MessageList's paint
-    // expansion hold) key off this tick — a commit can be superseded before
-    // its frame flushes, so "mounted" alone must never unlock tightening.
-    noteTerminalFlush();
+    // Skip THIS write while backpressured (see the gate above) and wait for
+    // the stream's own drain. The diff engine compares against frontFrame —
+    // the last frame the terminal ACTUALLY received — so a skipped frame
+    // coalesces into the next write instead of being lost (and its erase/
+    // cursor patches never reach the terminal, so needsEraseBeforePaint and
+    // displayCursor stay truthful).
+    let writeMs = 0;
+    if (writing) {
+      const flushed = writeDiffToTerminal(this.terminal, optimized, this.altScreenActive && !SYNC_OUTPUT_SUPPORTED);
+      writeMs = performance.now() - tWrite;
+      this.backpressured = !flushed;
+      if (flushed && this.drainBackoffMs !== DRAIN_BACKOFF_BASE_MS) {
+        this.drainBackoffMs = DRAIN_BACKOFF_BASE_MS;
+      }
+      // One frame reached the terminal. Components holding a widened mount
+      // window until its content is actually flushed (MessageList's paint
+      // expansion hold) key off this tick — a commit can be superseded before
+      // its frame flushes, so "mounted" alone must never unlock tightening.
+      noteTerminalFlush();
 
-    // Update blit safety for the NEXT frame. The frame just rendered
-    // becomes frontFrame (= next frame's prevScreen). If we applied the
-    // selection overlay, that buffer has inverted cells. selActive/hlActive
-    // are only ever true in alt-screen; in main-screen this is false→false.
-    this.prevFrameContaminated = selActive || hlActive;
+      // The terminal now holds `frame`: it becomes the diff baseline for
+      // every later pass. Swap AFTER a successful write — a skipped frame
+      // must never advance the baseline or the delta against it would be
+      // lost forever.
+      this.backFrame = this.frontFrame;
+      this.frontFrame = frame;
+
+      // Update blit safety for the NEXT frame. The frame just rendered
+      // becomes frontFrame (= next frame's prevScreen). If we applied the
+      // selection overlay, that buffer has inverted cells. selActive/hlActive
+      // are only ever true in alt-screen; in main-screen this is false→false.
+      this.prevFrameContaminated = selActive || hlActive;
+    } else {
+      // Skipped write: the frame never reached the terminal, so the cursor
+      // park target (displayCursor, set above) and the contamination flag
+      // must stay at their last-WRITTEN values — displayCursor was already
+      // updated for this frame, so roll it back; the next written frame
+      // recomputes both fresh from the same baseline.
+      this.displayCursor = parked;
+      this.backpressured = true;
+      noteFrameCause('backpressure');
+    }
 
     // A ScrollBox has pendingScrollDelta left to drain — schedule the next
     // frame via scheduleDrain (cadence + pty backpressure gate, see there).
@@ -1089,7 +1226,7 @@ export default class Ink {
     // → leadingEdge fires IMMEDIATELY → double render ~0.1ms apart → jank.
     // If a wheel event or immediate render arrives first, renderNow cancels
     // this timer — no double.
-    if (frame.scrollDrainPending) {
+    if (frame.scrollDrainPending || this.backpressured) {
       noteFrameCause('scroll-drain');
       this.scheduleDrain();
     }
@@ -1406,15 +1543,32 @@ export default class Ink {
     if (this.shutdownPhase >= 1) return;
     this.shutdownPhase = 1;
     this.isUnmounted = true;
+    // Render producer kills (#713 backpressure pipeline × #701 shutdown
+    // funnel): ALL of these must land BEFORE the exit funnel's stdout
+    // barrier / terminal cleanup — a late microtask render or a drain-event
+    // callback firing after DISABLE_MOUSE_TRACKING would write an ordinary
+    // frame onto the post-cleanup terminal.
     const steps: Array<() => void> = [
       // Cancel any pending throttled render so it doesn't fire between
       // cleanupTerminalModes() and process.exit() and write to main screen.
       () => this.scheduleRender.cancel?.(),
+      // Invalidate pending microtask renders: a trailing render scheduled
+      // before the latch must not append a frame after the barrier.
+      () => {
+        this.renderGeneration++;
+        this.pendingRenderGeneration = null;
+      },
+      // Backpressure recovery producers: the stdout drain listener and the
+      // bounded fallback re-probe are ordinary-frame producers — a late
+      // `drain` event must not trigger renderNow past the cleanup bytes.
+      () => this.detachDrainListener(),
       () => {
         if (this.drainTimer !== null) {
           clearTimeout(this.drainTimer);
           this.drainTimer = null;
         }
+        this.backpressured = false;
+        this.drainBackoffMs = DRAIN_BACKOFF_BASE_MS;
       },
       () => (this.app ?? this.shutdownApp)?.beginShutdown(),
       // Shutdown bypasses the normal unmount path, so release the process
@@ -2520,10 +2674,21 @@ export default class Ink {
 
       // Cancel any pending throttled renders to prevent accessing freed Yoga nodes
       this.scheduleRender.cancel?.();
+      // Invalidate pending microtask renders (see beginShutdown) — a trailing
+      // render must not append a frame past the cleanup block above.
+      this.renderGeneration++;
+      this.pendingRenderGeneration = null;
+      // The final renderNow() above may have re-armed the backpressure wait
+      // (a backpressured final frame re-attaches the drain listener): release
+      // it unconditionally so a stdout that never drains cannot hold the
+      // renderer (and its stream listener) past unmount.
+      this.detachDrainListener();
       if (this.drainTimer !== null) {
         clearTimeout(this.drainTimer);
         this.drainTimer = null;
       }
+      this.backpressured = false;
+      this.drainBackoffMs = DRAIN_BACKOFF_BASE_MS;
 
       // @ts-ignore -- ported CC build; type drift tolerated updateContainerSync exists in react-reconciler but not in @types/react-reconciler
       reconciler.updateContainerSync(null, this.container, null, noop);

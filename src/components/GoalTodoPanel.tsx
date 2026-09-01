@@ -134,16 +134,27 @@ export function GoalTodoPanel({
   // render (idempotent lazy ref init) so a fresh mount with a live goal
   // starts counting immediately.
   const startRef = React.useRef<{ id: string; at: number } | undefined>(undefined)
-  if (goal !== undefined && startRef.current?.id !== goal.id) {
-    startRef.current = { id: goal.id, at: Date.now() }
+  const phaseRef = React.useRef<ChannelGoal['phase'] | undefined>(undefined)
+  if (goal !== undefined) {
+    if (startRef.current?.id !== goal.id) {
+      startRef.current = { id: goal.id, at: Date.now() }
+    } else if (phaseRef.current !== undefined && phaseRef.current !== 'active' && goal.phase === 'active') {
+      // Resume from paused/blocked: re-base the elapsed clock so the count
+      // restarts at the moment the goal becomes active again (frozen time
+      // does not silently accrue while paused).
+      startRef.current = { id: goal.id, at: Date.now() }
+    }
+    phaseRef.current = goal.phase
   }
   const [now, setNow] = React.useState(() => Date.now())
   // Hover tint for the clickable todo fold header (mouse affordance).
   const [headerHovered, setHeaderHovered] = React.useState(false)
   React.useEffect(() => {
-    // Tick only while the goal is open; a complete goal freezes the last
-    // elapsed reading instead of counting past the finish line.
-    if (goal === undefined || goal.phase === 'complete') return
+    // Tick only while the goal is actively running: a complete goal freezes
+    // the last elapsed reading instead of counting past the finish line, and
+    // paused/blocked goals are static — no periodic wakeup for a frozen
+    // timer (resume re-bases via the phaseRef transition above).
+    if (goal === undefined || goal.phase !== 'active') return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [goal])

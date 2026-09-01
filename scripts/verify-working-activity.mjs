@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { settled } from './lib/term-test.mjs'
+import { settled, sleep } from './lib/term-test.mjs'
 
 const testHome = mkdtempSync(join(tmpdir(), 'dsh-tui-activity-home-'))
 process.env.HOME = testHome
@@ -196,6 +196,78 @@ sessionEvent()(agent.session, {
   data: { turn: 'minimal-turn', step: 'step-1', chunk: { type: 'text-delta', text: 'hi' } },
 })
 assert.match(minimalChannel.workingActivity.line, /思考中|Thinking/)
+
+// ── the 500ms tick retires once the turn is done and the line is stable ───
+// (P1-4): a live phase holds the tick; a done summary keeps it only through
+// the completed-tool fragment window (~3s), then the timer stops and an
+// idle conversation emits nothing.
+{
+  const fresh = makeAgent('agent-3', 'session-3')
+  const tickChannel = createChannel(ctx, fresh, {
+    model: 'test-model', provider: 'test-provider', cwd: testHome, activity: true,
+  })
+  let emits = 0
+  const unsubscribe = tickChannel.subscribe(() => { emits += 1 })
+  // Run a full turn to completion.
+  handlers.get('agent/status')({ agent: fresh, status: 'running' })
+  handlers.get('session/event')(fresh.session, {
+    type: 'turn/start', seq: 0, time: Date.now(), data: { turn: 'tick-turn' },
+  })
+  handlers.get('session/event')(fresh.session, {
+    type: 'assistant/chunk', seq: 1, time: Date.now(),
+    data: { turn: 'tick-turn', step: 'step-1', chunk: { type: 'text-delta', text: 'hi' } },
+  })
+  handlers.get('session/event')(fresh.session, {
+    type: 'turn/end', seq: 2, time: Date.now(),
+    data: { turn: 'tick-turn', reason: { kind: 'completed' } },
+  })
+  handlers.get('agent/status')({ agent: fresh, status: 'idle' })
+  assert.equal(tickChannel.workingActivity?.phase, 'done')
+  // The done summary carries a short-lived fragment; after it stabilizes
+  // (~3s window + 4s grace) the tick must stop: no further emits.
+  const emitsAtDone = emits
+  await settled(() => emits > emitsAtDone || tickChannel.workingActivity?.phase === 'done')
+  await sleep(5500)
+  const emitsAfterIdle = emits
+  await sleep(2000)
+  assert.equal(emits, emitsAfterIdle, 'no activity emits while the done line is stable')
+  unsubscribe()
+}
+
+// ── streaming revive bumps rowsStreamingVersion (P2-7) ────────────────────
+// A reconnect replay that revives a previously sealed assistant row flips
+// `streaming` IN PLACE — invisible to rows identity/length, so the
+// transcript filter cache must hear about it via the version counter.
+{
+  const fresh = makeAgent('agent-4', 'session-4')
+  const reviveChannel = createChannel(ctx, fresh, {
+    model: 'test-model', provider: 'test-provider', cwd: testHome, activity: false,
+  })
+  const before = reviveChannel.rowsStreamingVersion
+  // Stream a step, then seal it with an assistant/message.
+  handlers.get('session/event')(fresh.session, {
+    type: 'turn/start', seq: 0, time: Date.now(), data: { turn: 1, step: 1 },
+  })
+  handlers.get('session/event')(fresh.session, {
+    type: 'assistant/chunk', seq: 1, time: Date.now(),
+    data: { turn: 1, step: 1, chunk: { type: 'text-delta', text: 'hello' } },
+  })
+  handlers.get('session/event')(fresh.session, {
+    type: 'assistant/message', seq: 2, time: Date.now(),
+    data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'hello' }] } },
+  })
+  assert.ok(reviveChannel.rowsStreamingVersion > before, 'settle bumps rowsStreamingVersion')
+  const settledVersion = reviveChannel.rowsStreamingVersion
+  // A reconnect replay of the same step's chunk revives the sealed row.
+  handlers.get('session/event')(fresh.session, {
+    type: 'assistant/chunk', seq: 3, time: Date.now(),
+    data: { turn: 1, step: 1, chunk: { type: 'text-delta', text: 'hello' } },
+  })
+  assert.ok(
+    reviveChannel.rowsStreamingVersion > settledVersion,
+    'revive of a sealed row bumps rowsStreamingVersion',
+  )
+}
 
 for (const dispose of effects.reverse()) dispose()
 rmSync(testHome, { recursive: true, force: true })

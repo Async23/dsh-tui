@@ -69,6 +69,44 @@ function statusLabel(status: AgentViewStatus): string {
   }
 }
 
+/** Safety cap for the bucket-boundary wake (local midnight). */
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The next wall-clock instant at which {@link formatWhen} would render a
+ * DIFFERENT label for a row last touched at `at` — the display-bucket
+ * boundary: "now" flips at 45s, minutes at each half-minute, hours at each
+ * half-hour, days at each half-day, and the date form at the next local
+ * midnight. A view whose rows all fall in the same bucket can sleep until
+ * the nearest of these instead of re-rendering every second.
+ */
+function nextWhenBoundaryAt(at: number, now: number): number {
+  const age = Math.max(0, now - at)
+  const ageSec = age / 1000
+  if (ageSec < 45) return now + (45_000 - age)
+  const minutes = ageSec / 60
+  if (minutes < 60) {
+    // The label shows round(minutes); it changes when the age crosses a
+    // half-minute mark (k + 0.5 minutes).
+    const displayed = Math.round(minutes)
+    return now + Math.max(1, ((displayed + 0.5) * 60_000) - age)
+  }
+  const hours = minutes / 60
+  if (hours < 24) {
+    const displayed = Math.round(hours)
+    return now + Math.max(1, ((displayed + 0.5) * 3_600_000) - age)
+  }
+  const days = hours / 24
+  if (days <= 7) {
+    const displayed = Math.round(days)
+    return now + Math.max(1, ((displayed + 0.5) * 86_400_000) - age)
+  }
+  // Date form: the label changes at the next local midnight.
+  const midnight = new Date(now)
+  midnight.setHours(24, 0, 0, 0)
+  return midnight.getTime()
+}
+
 /** A thrown value's message, for a notification that has to say something. */
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -233,16 +271,37 @@ export function AgentView({
   const stopArmRef = React.useRef<{ id: string; deadline: number } | null>(null)
 
   // One clock per render pass: every relative time on screen must agree.
+  // Scheduled at the NEXT display-bucket boundary instead of a fixed 1s
+  // interval — `formatWhen` only changes at 45s / minute / hour / day / local
+  // midnight boundaries, so a static list wakes at most once per bucket
+  // (sub-second buckets cannot occur). The wake re-arms itself: `now` is in
+  // the deps, so the effect recomputes the next boundary after every tick
+  // (and on every rows change).
   React.useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [])
+    if (agentRows.length === 0) return
+    const nowMs = Date.now()
+    let boundaryAt = Infinity
+    for (const row of agentRows) {
+      const next = nextWhenBoundaryAt(row.updatedAt, nowMs)
+      if (next < boundaryAt) boundaryAt = next
+    }
+    if (!Number.isFinite(boundaryAt)) return
+    // nextWhenBoundaryAt returns an ABSOLUTE timestamp; setTimeout wants a
+    // relative delay. Cap the target at one day so an anomalous value can
+    // never stall the clock entirely.
+    const target = Math.min(boundaryAt, nowMs + DAY_MS)
+    const delay = Math.max(0, target - nowMs)
+    const timer = setTimeout(() => setNow(Date.now()), delay)
+    return () => clearTimeout(timer)
+  }, [agentRows, now])
 
   // CC parity: working rows animate their glyph (the `·✢*✶✻✽` cycle). The
   // shared clock only runs while at least one row is working and pauses
-  // otherwise, so an idle view costs no extra ticks.
+  // otherwise, so an idle view costs no extra ticks. The ref is attached to
+  // the list container so the viewport gate pauses the clock when the list
+  // is out of view (peek panel covering, narrow split).
   const workingCount = agentRows.filter(row => row.status === 'working').length
-  const [, spinnerTime] = useAnimationFrame(workingCount > 0 ? 120 : null)
+  const [spinnerViewportRef, spinnerTime] = useAnimationFrame(workingCount > 0 ? 120 : null)
   const spinnerFrame = Math.floor(spinnerTime / 120)
 
   // The delete arm expires after its window without an explicit keystroke;
@@ -630,7 +689,7 @@ export function AgentView({
 
       <Box flexGrow={1} flexShrink={1}>
         {!soloPreview && (
-          <Box flexDirection="column" width={listWidth} height={listHeight} flexShrink={0}>
+          <Box ref={spinnerViewportRef} flexDirection="column" width={listWidth} height={listHeight} flexShrink={0}>
             {agentRows.length === 0 && (
               <Text dimColor italic>{` ${truncateWidth(t('agentview-none'), listWidth - 2)}`}</Text>
             )}
