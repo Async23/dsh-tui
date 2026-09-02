@@ -1842,6 +1842,24 @@ type InkShutdownState = {
  * call while one is running simply awaits the first; its done() is
  * deliberately NOT invoked — the process-level exit action belongs to the
  * exit that actually ran the terminal cleanup.
+ *
+ * INVARIANT (process-owning runtime uniqueness): dsh-tui creates exactly ONE
+ * process-owning TUI runtime per process — plugin apply() renders a single
+ * Ink root (the single `render(tree)` call), and /restart + /update hand the
+ * terminal to CHILD processes rather than mounting a second in-process
+ * runtime. Under that invariant this module-global guard is sound: any two
+ * concurrent finishExit calls necessarily target the same (or an already
+ * dead) runtime, so exactly-once terminal cleanup and exactly-one final
+ * process action is the required semantics — a /exit vs error-boundary vs
+ * /restart vs /update race must never double-run terminal cleanup nor fire
+ * two process actions. If that invariant ever changes (multiple independent
+ * Ink roots in one process), this guard must move per-runtime: the terminal
+ * cleanup serialization keyed by the runtime (or its stdout), with only the
+ * process-level exit action arbiter staying global.
+ *
+ * Regression: scripts/verify-shutdown-fallback.tsx exercises the concurrent
+ * calls; scripts/verify-exit-runtime-selection.tsx additionally proves a
+ * map-vs-handle drift cannot latch the wrong runtime.
  */
 let activeFinishExit: Promise<void> | undefined
 
@@ -1880,24 +1898,28 @@ async function finishExitOnce(
 ): Promise<void> {
   let runtime: InkShutdownState | undefined
   try {
-    // Resolve the Ink runtime twice: the instances map is keyed by stdout
-    // identity, so a replaced/overridden stdout misses it; the render()
-    // handle is the caller's own instance and always matches (issue #522 —
-    // a missed lookup skipped detachForShutdown, leaving the stdin pump,
-    // TTY handlers and querier alive so the self-heal probe re-wrote
-    // ENABLE_MOUSE_TRACKING after DISABLE_MOUSE_TRACKING had been sent).
+    // Resolve the Ink runtime. HANDLE-FIRST: the explicitly passed render
+    // handle is the runtime THIS exit call actually corresponds to — when it
+    // is a valid Ink runtime (exposes any shutdown hook), it wins. The
+    // instances map is only a fallback for callers without a handle. The
+    // previous map-first order could clean up the WRONG runtime in
+    // multi-instance / custom-stdout / process.stdout-identity-drift setups:
+    // finishExit(..., instanceA) with instances.get(process.stdout) === B
+    // latched B (begin/conclude + cleanup bytes on B's stream) while A —
+    // the runtime actually exiting — kept its pump, TTY handlers and mouse
+    // state (issue #522's residue through a second door).
     const fromMap = readInkShutdownState(instances.get(process.stdout))
     const fromHandle = instance === undefined ? undefined : readInkShutdownState(instance)
     // A handle that exposes no shutdown hook at all is not an Ink runtime we
     // can latch (e.g. the fake render handles in shutdown regressions) —
     // treat it as a lookup miss so the full-unmount fallback below can run.
-    runtime = fromMap ?? (
-      fromHandle?.detachForShutdown === undefined
-      && fromHandle?.beginShutdown === undefined
-      && fromHandle?.detachStdinForHandoff === undefined
-        ? undefined
-        : fromHandle
-    )
+    const handleIsRuntime =
+      fromHandle !== undefined && (
+        fromHandle.detachForShutdown !== undefined ||
+        fromHandle.beginShutdown !== undefined ||
+        fromHandle.detachStdinForHandoff !== undefined
+      )
+    runtime = handleIsRuntime ? fromHandle : fromMap
     if (runtime === undefined) {
       ctx.logger.debug('dsh-tui: Ink runtime unavailable during shutdown; using generic terminal cleanup')
       if (instance !== undefined) {
@@ -1913,8 +1935,8 @@ async function finishExitOnce(
           ctx.logger.debug('dsh-tui: Ink shutdown unmount fallback failed; continuing with generic terminal cleanup')
         }
       }
-    } else if (fromMap === undefined) {
-      ctx.logger.debug('dsh-tui: Ink runtime resolved from the render handle (instances map missed); detaching')
+    } else if (!handleIsRuntime) {
+      ctx.logger.debug('dsh-tui: Ink runtime resolved from the instances map (no usable render handle); detaching')
     }
     const cursor = fullscreen ? '' : cursorMoveToFrameEnd(runtime)
     // Every byte below targets the runtime's OWN stream. The instances map

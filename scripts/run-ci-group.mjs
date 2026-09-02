@@ -167,6 +167,18 @@ const GROUPS = {
 // concludeShutdown）；写前 stdout 队列 barrier 排空预排队帧/ENABLE；
 // 写入失败（fd 与 stream 都抛）仍必进 conclude/handoff/done。
     ["verify-exit-mouse-disable-order", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-mouse-disable-order.tsx']],
+// finishExit runtime 选择回归（#701 整合审）：显式传入的 render handle 优先
+// 于 instances map——map/process.stdout 指向 B 时 finishExit(...,A) 只
+// begin/conclude A、清理字节只落 A 的流，B 零 latch 零清理；无 handle 时
+// map 兜底仍可用。
+    ["verify-exit-runtime-selection", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-runtime-selection.tsx']],
+// #711（手势/协议闩锁）× #701（两相 shutdown）交叉回归：Case A 手势
+// active 时退出零 probe/ENABLE/DECRQM 且 DISABLE→EXIT_ALT 保序；Case B
+// 分片 SGR candidate active 时退出不等待补全、shutdown 后输入 drain-only；
+// Case C pendingAltScreenReentry/pendingProbe 被 beginShutdown 永久取消；
+// Case D 正常手势的 release→batch-tail→probe 恢复不被 shutdown gate 破坏；
+// 各 Case 均断言 teardown 后 stdin readable listener === 0。
+    ["verify-exit-gesture-protocol", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-gesture-protocol.tsx']],
 // 组件级拖拽协议回归：无修饰左键 press 捕获 drag target，首动 dragstart、
 // 连续 dragmove、release/focus-out/reset 收尾 dragend；未移动仍走 click，
 // 无 handler 与修饰键区域保留基线文本选择；真实 SGR 管线 + 最小滑块消费者。
