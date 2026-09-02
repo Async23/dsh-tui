@@ -455,13 +455,21 @@ fire('skills/change')
   // Establish a last-good command set first (complete observation).
   let snapshotCalls = 0
   let incomplete = false
+  let recovered = false
   ctx.get = (name) => {
     if (name === 'commands') return { list: () => [{ name: 'plan', description: 'Toggle plan mode' }] }
     if (name === 'skills') {
       return {
         snapshot: async () => {
           snapshotCalls += 1
-          return incomplete ? { skills: [], complete: false } : {
+          if (incomplete) return { skills: [], complete: false }
+          if (recovered) {
+            return {
+              skills: [{ name: 'recovered-skill', description: 'Recovered', invocation: { modelInvocable: true, userInvocable: true } }],
+              complete: true,
+            }
+          }
+          return {
             skills: [{ name: 'kept-skill', description: 'Kept', invocation: { modelInvocable: true, userInvocable: true } }],
             complete: true,
           }
@@ -494,11 +502,18 @@ fire('skills/change')
     `snapshot calls=${snapshotCalls}`)
   check('retry ladder: last-good skills survive the exhausted ladder',
     channel.commandList.some(command => command.name === 'kept-skill'))
-  // Recovery: the provider's own skills/change re-enters and completes.
+  // Recovery: the provider's own skills/change re-enters and completes. The
+  // provider now returns a DIFFERENT skill — asserting on `kept-skill` again
+  // would be a false positive (last-good kept it visible through the whole
+  // exhausted ladder, so the old check passed even if the re-read never
+  // landed). The NEW command appearing is the actual proof of recovery.
   incomplete = false
+  recovered = true
   fire('skills/change')
-  check('retry ladder: a later skills/change recovers',
-    await settled(() => channel.commandList.some(command => command.name === 'kept-skill')))
+  check('retry ladder: a later skills/change recovers with fresh content',
+    await settled(() => channel.commandList.some(command => command.name === 'recovered-skill')))
+  check('retry ladder: recovered snapshot replaced the last-good entry',
+    !channel.commandList.some(command => command.name === 'kept-skill'))
 }
 
 console.log(failed === 0 ? 'ALL PASS' : `${failed} FAILED`)

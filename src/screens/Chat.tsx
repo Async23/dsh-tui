@@ -559,6 +559,12 @@ export function Chat({
     auto?: boolean
     expanded?: boolean
     rowsAtTrigger?: number
+    /** rowsGeneration when the auto run started. Row ids are
+     * transcript-SCOPED: /clear restarts them at 0 under the same agentId,
+     * so a same-generation comparison (`lastUserRowId > rowsAtTrigger`)
+     * alone would keep a stale recap on screen long after its transcript
+     * was deleted — in a NEW generation, any new user row retires it. */
+    genAtTrigger?: number
   } | null>(null)
   const recapAbortRef = React.useRef<AbortController | null>(null)
   const closeRecap = () => {
@@ -603,7 +609,7 @@ export function Chat({
     const controller = new AbortController()
     recapAbortRef.current = controller
     const lastUserId = channel.rows.filter(row => row.kind === 'user').at(-1)?.id ?? -1
-    setRecap({ raw: '', summary: '', error: undefined, done: false, titleApplied: false, auto: true, expanded: false, rowsAtTrigger: lastUserId })
+    setRecap({ raw: '', summary: '', error: undefined, done: false, titleApplied: false, auto: true, expanded: false, rowsAtTrigger: lastUserId, genAtTrigger: channel.rowsGeneration })
     void channel.recapRecent({
       signal: controller.signal,
       onText: delta => setRecap(prev => (prev ? { ...prev, raw: prev.raw + delta } : prev)),
@@ -621,18 +627,33 @@ export function Chat({
   // The user starts a new message → the auto recap has served its purpose
   // (catching them up) and bows out. A newer user row is the signal; the
   // assistant's own streamed rows don't count. `lastUserRowId` is tracked
-  // amortized O(1) per render: user rows are only ever APPENDED to the tail
-  // (folds keep the newest), so only rows appended past the last scan can
-  // hold a newer user row, and a session swap (agentId change) rescans the
-  // new session's rows exactly once.
-  const lastUserRowStateRef = React.useRef<{ agentId: string; scanned: number; id: number }>({
+  // amortized O(1) per render: within ONE transcript generation user rows
+  // are only ever APPENDED to the tail (folds keep the newest), so only rows
+  // appended past the last scan can hold a newer user row. The scan state
+  // keys on BOTH agentId and rowsGeneration: `/clear` keeps the agentId and
+  // REUSES row ids from 0, so agentId alone cannot detect the reset — a
+  // stale `scanned` would suppress rescans until the new transcript grew
+  // past the old length, leaving lastUserRowId (and the auto-recap retire
+  // below) stuck on the previous transcript. `rows.length < scanned` is a
+  // defensive reset for hosts without a generation seam.
+  const lastUserRowStateRef = React.useRef<{
+    agentId: string
+    rowsGeneration: number | undefined
+    scanned: number
+    id: number
+  }>({
     agentId: '',
+    rowsGeneration: undefined,
     scanned: 0,
     id: -1,
   })
   const lastUserRowState = lastUserRowStateRef.current
   let lastUserRowId = lastUserRowState.id
-  if (lastUserRowState.agentId !== channel.agentId) {
+  const transcriptEpochChanged =
+    lastUserRowState.agentId !== channel.agentId ||
+    lastUserRowState.rowsGeneration !== channel.rowsGeneration ||
+    channel.rows.length < lastUserRowState.scanned
+  if (transcriptEpochChanged) {
     lastUserRowId = -1
     for (let index = channel.rows.length - 1; index >= 0; index--) {
       if (channel.rows[index]?.kind === 'user') {
@@ -642,6 +663,7 @@ export function Chat({
     }
     lastUserRowStateRef.current = {
       agentId: channel.agentId,
+      rowsGeneration: channel.rowsGeneration,
       scanned: channel.rows.length,
       id: lastUserRowId,
     }
@@ -658,11 +680,17 @@ export function Chat({
       recap !== null &&
       recap.auto &&
       recap.rowsAtTrigger !== undefined &&
-      lastUserRowId > recap.rowsAtTrigger
+      lastUserRowId >= 0 &&
+      // Row ids are transcript-SCOPED: within the recap's own generation a
+      // strictly newer user row retires it; in a NEW generation (/clear
+      // restarted ids at 0 under the same agentId) ANY new user row does —
+      // the old absolute-id comparison would wait for the fresh transcript
+      // to outgrow the deleted one's id space before retiring.
+      (recap.genAtTrigger !== channel.rowsGeneration || lastUserRowId > recap.rowsAtTrigger)
     ) {
       closeRecap()
     }
-  }, [lastUserRowId, recap])
+  }, [lastUserRowId, recap, channel.rowsGeneration])
   /**
    * Session switches that do not go through `/new` (agent-view attach,
    * backgrounding, `/resume`) remount the transcript tree without resetting
@@ -879,7 +907,10 @@ export function Chat({
         ? null
         : channel.rows.find(row => row.id === anchorUserRowId)?.text ?? null,
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-    [anchorUserRowId, channel.agentId],
+    // rowsGeneration is part of the key: /clear / rewind reuse row ids from
+    // 0 while agentId stays — without it the memo could serve the PREVIOUS
+    // transcript's prompt for the new id-identical anchor row.
+    [anchorUserRowId, channel.agentId, channel.rowsGeneration],
   )
 
   // "N new messages" pill: new rows whose top edge is still BELOW the
@@ -2413,8 +2444,12 @@ export function Chat({
     // off the streaming frame path: an idle/long session re-renders without
     // touching rows at all, and a streaming session scans only when an error
     // actually lands.
+    // rowsGeneration must be part of the key: /clear reuses row ids from 0
+    // under the SAME agentId, so the memoized id could otherwise point at a
+    // fresh, healthy row in the new transcript and pin the stale failure
+    // footnote under it.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [trajectory.counts.errors, channel.agentId, unreadFailures])
+  }, [trajectory.counts.errors, channel.agentId, channel.rowsGeneration, unreadFailures])
 
   // Row seeking under layout virtualization: a mounted row seeks directly;
   // an unmounted one is force-mounted first, then sought by the completion

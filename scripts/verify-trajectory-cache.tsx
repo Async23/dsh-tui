@@ -157,6 +157,13 @@ function makeHarness(cols: number, rows: number): {
   for (const value of instances.values()) instances.set(process.stdout, value)
   await sleep(200)
   const callsAfterMount = traceCalls
+  // The mount itself must be getter-free too: recording a post-mount
+  // baseline and only checking "no increase" would let a mount that called
+  // traceEvents 20 times pass — the trajectory() seam must be authoritative
+  // from the very first render.
+  check('A0: mount itself never calls traceEvents (trajectory seam authoritative)',
+    callsAfterMount === 0,
+    `traceCalls=${callsAfterMount} at mount`)
   // Ten idle version bumps (the streaming-cadence wakeup pattern): renders
   // must not re-read events through the getter.
   for (let i = 0; i < 10; i++) {

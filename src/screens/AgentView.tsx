@@ -7,7 +7,7 @@ import { SessionPreview } from '../components/sessions/SessionPreview.js'
 import { useTerminalFocus } from '../ink/hooks/use-terminal-focus.js'
 import { useAnimationFrame } from '../ink/hooks/use-animation-frame.js'
 import { isMod, isPlainReturn } from '../utils/modifiers.js'
-import { formatProject, formatWhen, spreadRow, tailWidth, truncateWidth } from '../sessions/format.js'
+import { formatProject, formatWhen, nextFormatWhenChange, spreadRow, tailWidth, truncateWidth } from '../sessions/format.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import { t } from '../i18n.js'
 import type { Channel } from '../dsh-adapter/channel.js'
@@ -69,43 +69,8 @@ function statusLabel(status: AgentViewStatus): string {
   }
 }
 
-/** Safety cap for the bucket-boundary wake (local midnight). */
+/** Safety cap for the bucket-boundary wake (see the clock effect). */
 const DAY_MS = 24 * 60 * 60 * 1000
-
-/**
- * The next wall-clock instant at which {@link formatWhen} would render a
- * DIFFERENT label for a row last touched at `at` — the display-bucket
- * boundary: "now" flips at 45s, minutes at each half-minute, hours at each
- * half-hour, days at each half-day, and the date form at the next local
- * midnight. A view whose rows all fall in the same bucket can sleep until
- * the nearest of these instead of re-rendering every second.
- */
-function nextWhenBoundaryAt(at: number, now: number): number {
-  const age = Math.max(0, now - at)
-  const ageSec = age / 1000
-  if (ageSec < 45) return now + (45_000 - age)
-  const minutes = ageSec / 60
-  if (minutes < 60) {
-    // The label shows round(minutes); it changes when the age crosses a
-    // half-minute mark (k + 0.5 minutes).
-    const displayed = Math.round(minutes)
-    return now + Math.max(1, ((displayed + 0.5) * 60_000) - age)
-  }
-  const hours = minutes / 60
-  if (hours < 24) {
-    const displayed = Math.round(hours)
-    return now + Math.max(1, ((displayed + 0.5) * 3_600_000) - age)
-  }
-  const days = hours / 24
-  if (days <= 7) {
-    const displayed = Math.round(days)
-    return now + Math.max(1, ((displayed + 0.5) * 86_400_000) - age)
-  }
-  // Date form: the label changes at the next local midnight.
-  const midnight = new Date(now)
-  midnight.setHours(24, 0, 0, 0)
-  return midnight.getTime()
-}
 
 /** A thrown value's message, for a notification that has to say something. */
 function message(error: unknown): string {
@@ -271,22 +236,23 @@ export function AgentView({
   const stopArmRef = React.useRef<{ id: string; deadline: number } | null>(null)
 
   // One clock per render pass: every relative time on screen must agree.
-  // Scheduled at the NEXT display-bucket boundary instead of a fixed 1s
-  // interval — `formatWhen` only changes at 45s / minute / hour / day / local
-  // midnight boundaries, so a static list wakes at most once per bucket
-  // (sub-second buckets cannot occur). The wake re-arms itself: `now` is in
-  // the deps, so the effect recomputes the next boundary after every tick
-  // (and on every rows change).
+  // Scheduled at the NEXT true label boundary (nextFormatWhenChange shares
+  // formatWhen's exact nested-rounding semantics) instead of a fixed 1s
+  // interval — a static list wakes at most once per bucket. Rows already in
+  // the absolute-date regime never wake again: that label depends on `at`
+  // alone, so the function returns Infinity and no timer is armed. The wake
+  // re-arms itself: `now` is in the deps, so the effect recomputes the next
+  // boundary after every tick (and on every rows change).
   React.useEffect(() => {
     if (agentRows.length === 0) return
     const nowMs = Date.now()
     let boundaryAt = Infinity
     for (const row of agentRows) {
-      const next = nextWhenBoundaryAt(row.updatedAt, nowMs)
+      const next = nextFormatWhenChange(row.updatedAt, nowMs)
       if (next < boundaryAt) boundaryAt = next
     }
     if (!Number.isFinite(boundaryAt)) return
-    // nextWhenBoundaryAt returns an ABSOLUTE timestamp; setTimeout wants a
+    // nextFormatWhenChange returns an ABSOLUTE timestamp; setTimeout wants a
     // relative delay. Cap the target at one day so an anomalous value can
     // never stall the clock entirely.
     const target = Math.min(boundaryAt, nowMs + DAY_MS)

@@ -12,7 +12,7 @@
  *
  * Run via `node --import tsx/esm scripts/verify-grants-watch.mjs`.
  */
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sleep } from './lib/term-test.mjs'
@@ -58,18 +58,24 @@ const check = (name: string, ok: boolean, extra = ''): void => {
   rmSync(dir, { recursive: true, force: true })
 }
 
-// ── B. Missing file: slow fallback poll picks up creation ─────────────────
+// ── B. Missing PARENT DIRECTORY: the slow fallback poll is what runs ──────
+// The watcher targets the PARENT DIRECTORY (atomic-replace safety), so a
+// missing file alone does NOT force the fallback — fs.watch(dirname) still
+// succeeds and the scenario would silently test the directory watcher
+// instead. Subscribe while the parent directory ITSELF does not exist:
+// fs.watch must fail (ENOENT) and arm the 2s fallback poll.
 {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-grants-watch-'))
+  const dir = join(tmpdir(), `dsh-grants-watch-missing-${process.pid}-${Date.now()}`)
   const file = join(dir, EXTENSION_GRANTS_FILE)
   const store = readGrantStore(dir)
   let notified = 0
   const stop = store.onChange?.(() => { notified += 1 })
-  check('B0: onChange seam exists on a missing file', typeof stop === 'function')
+  check('B0: onChange seam exists on a missing directory', typeof stop === 'function')
   await sleep(300)
-  // fs.watch on a nonexistent path errors → the 2s fallback poll arms.
-  // Create the file: the poll must pick it up (allow up to ~2.8s for the
-  // first poll tick + debounce).
+  // fs.watch on a nonexistent directory errors → the 2s fallback poll arms.
+  // Create the directory + file: the poll must pick it up (allow up to ~2.8s
+  // for the first poll tick).
+  mkdirSync(dir, { recursive: true })
   writeFileSync(file, JSON.stringify({ grants: { late: ['commands.invoke'] } }))
   await sleep(2800)
   check('B1: fallback poll picks up a created file', notified >= 1, `notified=${notified}`)

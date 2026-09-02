@@ -8466,7 +8466,17 @@ ${output}
     activityTickTimer = setInterval(() => {
       const previous = state.workingActivity
       const rendered = updateWorkingActivity('activity tick')
-      if (rendered === undefined) return
+      if (rendered === undefined) {
+        // Projection unavailable (render/projection error — updateWorkingActivity
+        // swallowed and reported it, or the activity sidecar was switched off).
+        // Retire the tick instead of spinning forever: every 500ms wake would
+        // re-throw inside the tracker for zero UI value. A later REAL activity
+        // event (turn start, phase change, tool start) goes through
+        // updateWorkingActivity again, whose live-phase branch re-arms this
+        // tick — so recovery costs nothing.
+        stopActivityTick()
+        return
+      }
       if (rendered.phase === 'done') {
         // Retire once the done line has been stable past the fragment
         // window — no more React updates, timer or tracker work needed.

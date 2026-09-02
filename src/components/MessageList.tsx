@@ -349,6 +349,14 @@ export function MessageList({
   const visibleRowsCacheRef = React.useRef<{
     rows: readonly ChatRow[]
     rowsLength: number
+    /** Transcript epoch for the cached pass (channel.rowsGeneration). The
+     * rows array is LIVE and mutated in place: /clear / rewind / session
+     * swap keep its identity while row ids restart from 0 — the same
+     * length + ids + streaming bits can recur, and a generation-blind key
+     * would serve the PREVIOUS transcript's ChatRow objects for the new
+     * one. undefined = host passes no seam; then identity+length+bits is
+     * the best available key. */
+    rowsGeneration: number | undefined
     showAll: boolean
     thinkingVisible: boolean
     out: readonly ChatRow[]
@@ -389,6 +397,7 @@ export function MessageList({
     visibleCache === null ||
     visibleCache.rows !== rows ||
     visibleCache.rowsLength !== rows.length ||
+    visibleCache.rowsGeneration !== rowsGeneration ||
     visibleCache.showAll !== (showAll || hiddenCount <= 0) ||
     visibleCache.thinkingVisible !== thinkingVisible ||
     !streamBitsSame
@@ -444,6 +453,7 @@ export function MessageList({
     visibleRowsCacheRef.current = {
       rows,
       rowsLength: rows.length,
+      rowsGeneration,
       showAll: showAll || hiddenCount <= 0,
       thinkingVisible,
       out,
