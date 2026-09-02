@@ -126,6 +126,25 @@ const GROUPS = {
 // 恢复历史会话落点回归：/resume 后最新消息末行必须可见且可达
 // （scrollToBottom 补画完成后的锚定终态），不再落屏外。
     ["repro-resume-position", ['node', '--import', 'tsx/esm', 'scripts/repro-resume-position.tsx']],
+// rowsGeneration 缓存身份回归（#713 整合审 blocker 1-3）：/clear 复用
+// row id（同一 live 数组、同长度、同 streaming bits、不同 generation）
+// 后——MessageList 可见行缓存渲染新行；failureHint 不钉在新行上；
+// lastUserRowId 重跟新 transcript 且 auto recap 在新 generation 的首条
+// user 消息即退场。
+    ["verify-rows-generation", ['node', '--import', 'tsx/esm', 'scripts/verify-rows-generation.tsx']],
+// formatWhen 边界确定性回归（#713 整合审 blocker 6）：now→minutes、
+// 分钟内、分钟→小时、小时→天、day 7→绝对日期的精确翻转时刻（嵌套
+// round 语义、oracle 二分），绝对日期后 Infinity（零 wake）。
+    ["verify-format-when-boundary", ['node', '--import', 'tsx/esm', 'scripts/verify-format-when-boundary.ts']],
+// GoalTodoPanel elapsed 基线回归（#713 整合审 blocker 5）：active 推进、
+// paused 冻结零 timer、resume 以已提交 transition 重定基线（标签从 ~0s
+// 重新计）、新 goal id 换新基线——transition 只落在 commit 后的 effect。
+    ["verify-goal-todo-baseline", ['node', '--import', 'tsx/esm', 'scripts/verify-goal-todo-baseline.tsx']],
+// 静态 UI 零空闲唤醒回归（#713）：Chat idle / JobsPanel settled /
+// GoalTodo paused / AgentView 静态列表在静默窗口零 frame，对应活跃态
+// 有 frame；trajectory seam 渲染零 getter 调用（含 mount 时）。
+    ["verify-idle-wakeups", ['node', '--import', 'tsx/esm', 'scripts/verify-idle-wakeups.tsx']],
+    ["verify-trajectory-cache", ['node', '--import', 'tsx/esm', 'scripts/verify-trajectory-cache.tsx']],
   ],
   'input-terminal': [
 // 按键解析回归（issue #110）：Option+Enter（ESC CR）精确/合并/分块
@@ -162,6 +181,28 @@ const GROUPS = {
 // 字节、不得拉回 raw mode——在途回复与鼠标事件由清理后的 re-drain
 // 吞掉，不再落入 shell。
     ["verify-exit-mouse-residue", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-mouse-residue.tsx']],
+// 退出回显窗口回归（#522 的 SSH 慢链路门）：DISABLE_MOUSE 同步写在 raw
+// mode 仍持有时落盘，settle 窗也在 raw 态度过（cooked 恢复只在最后的
+// concludeShutdown）；写前 stdout 队列 barrier 排空预排队帧/ENABLE；
+// 写入失败（fd 与 stream 都抛）仍必进 conclude/handoff/done。
+    ["verify-exit-mouse-disable-order", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-mouse-disable-order.tsx']],
+// finishExit runtime 选择回归（#701 整合审）：显式传入的 render handle 优先
+// 于 instances map——map/process.stdout 指向 B 时 finishExit(...,A) 只
+// begin/conclude A、清理字节只落 A 的流，B 零 latch 零清理；无 handle 时
+// map 兜底仍可用。
+    ["verify-exit-runtime-selection", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-runtime-selection.tsx']],
+// #711（手势/协议闩锁）× #701（两相 shutdown）交叉回归：Case A 手势
+// active 时退出零 probe/ENABLE/DECRQM 且 DISABLE→EXIT_ALT 保序；Case B
+// 分片 SGR candidate active 时退出不等待补全、shutdown 后输入 drain-only；
+// Case C pendingAltScreenReentry/pendingProbe 被 beginShutdown 永久取消；
+// Case D 正常手势的 release→batch-tail→probe 恢复不被 shutdown gate 破坏；
+// 各 Case 均断言 teardown 后 stdin readable listener === 0。
+    ["verify-exit-gesture-protocol", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-gesture-protocol.tsx']],
+// #713（stdout 背压）× #701（shutdown 漏斗）交叉回归（整合审 §8）：饱和
+// stdout + drain listener/fallback 在挂时执行 finishExit——shutdown 窗口
+// 内 emit drain 不得触发普通 frame；DISABLE→EXIT_ALT 保序；结束后
+// drain listener 与 fallback timer 均为 0、stdin readable 为 0。
+    ["verify-exit-backpressure", ['node', '--import', 'tsx/esm', 'scripts/verify-exit-backpressure.tsx']],
 // 组件级拖拽协议回归：无修饰左键 press 捕获 drag target，首动 dragstart、
 // 连续 dragmove、release/focus-out/reset 收尾 dragend；未移动仍走 click，
 // 无 handler 与修饰键区域保留基线文本选择；真实 SGR 管线 + 最小滑块消费者。
@@ -211,6 +252,10 @@ const GROUPS = {
 // 转录拉进不可选取区。真实 Chat 树 + SGR 拖选注入，静息/上滚阅读+
 // 流式并发/流式结束后三场景断言 OSC 52 携带完整选中文本。
     ["repro-drag-select-streaming", ['node', '--import', 'tsx/esm', 'scripts/repro-drag-select-streaming.tsx']],
+// grants 文件 watcher 回归（#713）：目录 watcher 事件驱动通知（原子
+// rename/delete-recreate 均覆盖）、退订即停、父目录不存在时经 2s 轮询
+// fallback 拾取新建（真 fallback 路径——目录本身不存在时 fs.watch 才失败）。
+    ["verify-grants-watch", ['node', '--import', 'tsx/esm', 'scripts/verify-grants-watch.ts']],
   ],
   'session-workspace': [
 // 审批服务配置回归（issue #49 尾巴）：裸组合 cordis.yml 必须挂载
