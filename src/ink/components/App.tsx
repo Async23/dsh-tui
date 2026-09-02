@@ -746,6 +746,14 @@ export default class App extends PureComponent<Props, State> {
 		try {
 			let chunk;
 			while ((chunk = this.props.stdin.read() as string | null) !== null) {
+				// Chunk-level shutdown gate: a mid-batch exit (Ctrl+C in an
+				// earlier chunk of this same readable event) latches
+				// beginShutdown synchronously — later chunks in the loop must
+				// not be dispatched to React handlers anymore. Drain them.
+				if (this.shutdownLatched) {
+					void chunk;
+					continue;
+				}
 				// Process the input chunk
 				this.processInput(chunk);
 			}
