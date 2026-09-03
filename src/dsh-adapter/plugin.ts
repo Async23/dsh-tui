@@ -983,10 +983,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           path: ['pageMargin'],
           label: 'Page margin',
           descriptions: { zh: '页边距' },
-          hint: 'Inset the whole UI from the terminal edges. Type a preset (none / slim / normal / roomy) or a custom spec `NxM`: N columns per side, M rows top/bottom (e.g. 3x1, max 8x4; a bare `N` keeps rows at 1). Empty resets to the default `normal`. Applies immediately.',
-          hintDescriptions: { zh: '让整个界面相对终端四边内缩。输入预设名（none / slim / normal / roomy）或自定义 `NxM`：左右各 N 列、上下各 M 行（如 3x1，上限 8x4；只填 N 则上下保持 1 行）。清空恢复默认 normal。立即生效。' },
+          hint: 'Inset the whole UI from the terminal edges. ←/→ cycles presets (none / slim / normal / roomy); Enter types a custom spec `NxM`: N columns per side, M rows top/bottom (e.g. 3x1, max 8x4; a bare `N` keeps rows at 1). Empty resets to the default `normal`. Applies immediately.',
+          hintDescriptions: { zh: '让整个界面相对终端四边内缩。←/→ 循环预设（none / slim / normal / roomy）；Enter 输入自定义 `NxM`：左右各 N 列、上下各 M 行（如 3x1，上限 8x4；只填 N 则上下保持 1 行）。清空恢复默认 normal。立即生效。' },
           kind: 'text',
           placeholder: 'normal',
+          options: [
+            { value: 'none', label: 'None', descriptions: { zh: '无' } },
+            { value: 'slim', label: 'Slim', descriptions: { zh: '窄' } },
+            { value: 'normal', label: 'Normal', descriptions: { zh: '常规' } },
+            { value: 'roomy', label: 'Roomy', descriptions: { zh: '宽' } },
+          ],
           format(value: unknown): string {
             return String(value ?? config.pageMargin ?? DEFAULT_PAGE_MARGIN)
           },
