@@ -1054,7 +1054,10 @@ export default class Ink {
     // becomes frontFrame (= next frame's prevScreen). If we applied the
     // selection overlay, that buffer has inverted cells. selActive/hlActive
     // are only ever true in alt-screen; in main-screen this is false→false.
-    this.prevFrameContaminated = selActive || hlActive;
+    // poisonNextFrame: an absolute overlay shrank/moved this frame and its
+    // vacated cells were blitted stale — the next frame must render without
+    // prevScreen to re-derive them from the tree.
+    this.prevFrameContaminated = selActive || hlActive || frame.poisonNextFrame === true;
 
     // A ScrollBox has pendingScrollDelta left to drain — schedule the next
     // frame via scheduleDrain (cadence + pty backpressure gate, see there).
@@ -1064,8 +1067,8 @@ export default class Ink {
     // → leadingEdge fires IMMEDIATELY → double render ~0.1ms apart → jank.
     // If a wheel event or immediate render arrives first, renderNow cancels
     // this timer — no double.
-    if (frame.scrollDrainPending) {
-      noteFrameCause('scroll-drain');
+    if (frame.scrollDrainPending || frame.poisonNextFrame === true) {
+      noteFrameCause(frame.scrollDrainPending ? 'scroll-drain' : 'overlay-shrink');
       this.scheduleDrain();
     }
     const yogaMs = getLastYogaMs();
