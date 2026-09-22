@@ -1,5 +1,7 @@
 # AGENTS.md
 
+本仓库是 `Async23/dsh-tui` 个人 fork；定制清单见双语 README，发布与同步流程见 [docs/fork-maintenance.md](docs/fork-maintenance.md)。上游贡献准入规则只适用于向上游提交 PR；本仓库按用户授权开发。保留上游实现边界和下面的代码约定。
+
 dsh-TUI 是 DeepSeek Harness 的终端界面插件：零核心改动、纯插件挂载的交互式 TUI（`@deepseek-harness-tui/dsh-tui`）。Agent、会话、模型、工具、持久化与策略域由 DeepSeek Harness 拥有，本包只消费它们。改动前先读 [docs/contributing.md](docs/contributing.md)（本仓库共享开发契约的权威文本）与 [ADAPTER.md](ADAPTER.md)（上游边界与契约）；整体结构见 [docs/architecture.md](docs/architecture.md)。
 
 ## 仓库布局
@@ -39,6 +41,8 @@ pnpm compile                    # 干净编译 src/ → lib/types/（先删整�
 pnpm build                      # compile + 全部构建门禁
 pnpm verify:build               # 构建门禁（边界/契约/patch surface/plugin 系列等），不重复编译
 pnpm verify:package             # npm tarball 目标完整 + 入口 smoke import
+pnpm verify:release             # 个人版下载、校验、更新来源的离线回归
+pnpm release:pack               # 生成 dist-release/，须先 build
 pnpm smoke                      # 通用无头屏幕组装冒烟
 ```
 
@@ -65,7 +69,7 @@ pnpm smoke                      # 通用无头屏幕组装冒烟
 - **终端宽度是显示单元宽度**，不是 JS 字符串长度；考虑 ANSI 转义、组合字符、emoji 与东亚宽字符，用仓库的宽度/切片/换行辅助函数。
 - **双语文档同步**：行为、配置、快捷键与限制在 `README.md`（英文默认）与 `README_ZH.md`（中文）两版同步。插件配置、slash 命令、主题、渲染器、技能发现的跨文件同步清单见 [docs/contributing.md](docs/contributing.md)。
 - **密钥**：交互启动读取 `DEEPSEEK_API_KEY`；诊断只能报告是否已设置，绝不泄露完整值。
-- **Git 安全**：只暂存显式路径，不用 `git add .`/`git add -A`；不运行破坏性清理命令；未经要求不 commit、不打 tag、不 push、不发布。发布由 `v*` tag 驱动且必须与 `package.json` 版本完全一致。
+- **Git 安全**：只暂存显式路径，不用 `git add .`/`git add -A`；不运行破坏性清理命令；未经要求不 commit、不打 tag、不 push、不发布。个人发布由 `v*-async23.*` tag 驱动且必须与 `package.json` 版本完全一致；只发布本 fork 的 GitHub Release，不发布上游 npm 包。用户明确要求完整发版时包含 commit、tag、push 和 Release。
 
 ## 编辑本文件
 

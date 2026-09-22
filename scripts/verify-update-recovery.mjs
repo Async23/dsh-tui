@@ -44,6 +44,7 @@ if (process.env.DSH_TUI_UPDATED_FROM !== undefined) {
 
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -74,6 +75,13 @@ process.env.HOME = fakeHome
 process.env.USERPROFILE = fakeHome
 
 const { updateTuiAndRestart } = await import('../lib/types/update.js')
+// The installer still runs real child processes; only GitHub bytes are supplied offline.
+const originalFetch = globalThis.fetch
+const archiveBytes = Buffer.from('offline recovery fixture')
+const archiveHash = createHash('sha256').update(archiveBytes).digest('hex')
+globalThis.fetch = async url => new Response(
+  String(url).endsWith('/SHA256SUMS') ? `${archiveHash}  dsh-tui.tgz\n` : archiveBytes,
+)
 
 const EEXIST_STDERR =
   "ERR_PNPM_EEXIST  EEXIST: file already exists, rename " +
@@ -234,6 +242,7 @@ try {
   else process.env.USERPROFILE = USERPROFILE_BACKUP
   if (DSH_HOME_BACKUP === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = DSH_HOME_BACKUP
+  globalThis.fetch = originalFetch
   process.env.PATH = PATH_BACKUP
   delete process.env.FAKE_DSH_DIR
   delete process.env.DSH_TUI_RECOVERY_CHILD_MARKER

@@ -34,11 +34,10 @@ export function AutoRecapRow({
     summary: streaming ? t('recap-answering') : summary,
   })
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column">
       <Divider />
       <Box
         flexDirection="column"
-        marginTop={1}
         marginLeft={1}
         onClick={onExpand}
         onMouseEnter={(): void => setHovered(true)}

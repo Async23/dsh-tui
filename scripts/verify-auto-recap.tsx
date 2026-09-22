@@ -215,7 +215,7 @@ check('手动面板未打开（无建议标题）', !screenHas(term, '建议标�
 check('回顾行带「回顾：」前缀', screenHas(term, '回顾：'))
 {
   const line = findText(term, 'AUTO_RECAP_SUMMARY')
-  // Divider 与回顾行之间隔了 marginTop 空行——向上找最近的非空行。
+  // 向上找最近的非空行，确认回顾区域保留分隔线。
   const above = line === null ? undefined
     : viewportLines(term, ROWS).slice(0, line.row).reverse().find(text => text.trim() !== '')
   check('回顾行上方有分隔线', above !== undefined && above.includes('─'))

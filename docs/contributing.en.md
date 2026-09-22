@@ -1,5 +1,7 @@
 # Contributing
 
+> Fork policy: this is Async23/dsh-tui. Upstream PR admission rules below apply only to contributions to ccch1mneyyy/dsh-TUI. Personal releases and upstream syncing follow [fork-maintenance.md](fork-maintenance.md).
+
 [Documentation index](README.md) · [简体中文](contributing.md)
 
 Thanks for considering contributing to dsh-TUI! This guide is the shared

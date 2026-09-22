@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-harness-tui/dsh-tui",
-  "version": "0.10.2",
-  "description": "Interactive terminal interface for DeepSeek Harness agents, sessions and tools.",
+  "version": "0.10.2-async23.1",
+  "description": "Async23’s personal dsh-TUI fork, with compact Recap spacing and GitHub Release updates.",
   "keywords": [
     "dsh",
     "dsh-tui",
@@ -22,16 +22,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ccch1mneyyy/dsh-TUI.git"
+    "url": "https://github.com/Async23/dsh-tui.git"
   },
   "bugs": {
-    "url": "https://github.com/ccch1mneyyy/dsh-TUI/issues"
+    "url": "https://github.com/Async23/dsh-tui/issues"
   },
-  "homepage": "https://github.com/ccch1mneyyy/dsh-TUI#readme",
+  "homepage": "https://github.com/Async23/dsh-tui#readme",
   "packageManager": "pnpm@11.21.0",
-  "publishConfig": {
-    "access": "public"
-  },
   "type": "module",
   "imports": {
     "#dsh-ecosystem-spec/tui-channel": "./dsh-ecosystem-spec/protocols/tui-channel.js",
@@ -143,7 +140,7 @@
     "verify:liangshen-bootstrap": "node scripts/verify-liangshen-bootstrap.mjs",
     "verify:liangshen-instruction-hint": "node scripts/verify-liangshen-instruction-hint.mjs",
     "verify:liangshen-bash": "node scripts/verify-liangshen-bash.mjs",
-    "verify:package": "npm pack --dry-run --json --ignore-scripts | node scripts/verify-package.mjs",
+    "verify:package": "node scripts/with-publish-manifest.mjs npm pack --dry-run --json --ignore-scripts | node scripts/verify-package.mjs",
     "verify:bun-package": "node scripts/verify-bun-package.mjs",
     "verify:prompt-debug": "npm run build && node scripts/verify-prompt-debug.mjs",
     "verify:clipboard-image": "node --import tsx/esm scripts/verify-clipboard-image.ts",
@@ -221,7 +218,9 @@
     "verify:background-extraction": "node --import tsx/esm scripts/verify-background-extraction.ts",
     "verify:plugin-catalog-extraction": "node --import tsx/esm scripts/verify-plugin-catalog-extraction.ts",
     "verify:channel-composition": "node --import tsx/esm scripts/verify-channel-composition.ts",
-    "verify:channel-trace-read": "node --import tsx/esm scripts/verify-channel-trace-read.ts"
+    "verify:channel-trace-read": "node --import tsx/esm scripts/verify-channel-trace-read.ts",
+    "release:pack": "node scripts/pack-release.mjs",
+    "verify:release": "node scripts/verify-fork-release.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -474,5 +473,12 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  }
+  },
+  "private": true,
+  "contributors": [
+    {
+      "name": "Async23",
+      "url": "https://github.com/Async23"
+    }
+  ]
 }

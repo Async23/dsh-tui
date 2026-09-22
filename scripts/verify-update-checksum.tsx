@@ -19,10 +19,7 @@
  *  - 清单流式限额（CodeRabbit Moderate）：清单抓取同样流式中断——无
  *    content-length 的无界清单流注入 64KB 小上限，server 只送出上限
  *    附近字节而非全量（红态：response.text() 全量缓冲后才查上限）。
- *  - 镜像回退路径的清单校验（红队 P-2）：GitHub API 失败 → registry
- *    版本号 → 拼直链时 checksumUrl 丢失。断言回退路径按固定命名规则
- *    探测 SHA256SUMS：存在 → 强校验（篡改资产被拒）；404 → 保持
- *    transition 警告放行（老 release 兼容）。
+ *  - 个人更新源失败时返回未知，不回退到上游 npm。
  *
  * Run: node --import tsx/esm scripts/verify-update-checksum.tsx
  */
@@ -39,7 +36,7 @@ function check(name: string, condition: boolean, detail = ''): void {
   if (!condition) failures += 1
 }
 
-const updateModule = (await import('../src/update.js')) as Record<string, unknown>
+const updateModule = await import('../src/update.js')
 const verifyAssetChecksum = updateModule.verifyAssetChecksum as
   | ((buffer: Buffer, manifestText: string, assetName: string) => boolean)
   | undefined
@@ -101,12 +98,13 @@ const MANIFEST_STREAM_CHUNKS = 128 // 总量 2MB，注入上限 64KB → 中断�
 const realAssetBytes = makeAssetArchive('legit-new-binary\n')
 const evilAssetBytes = makeAssetArchive('evil-tampered-binary\n')
 const realDigest = createHash('sha256').update(realAssetBytes).digest('hex')
-const ASSET_NAME = 'dsh-tui-standalone-linux-x64.tar.gz'
+const ASSET_NAME = updateModule.getStandaloneAssetName()
+process.env.DSH_TUI_STANDALONE = '1'
 
 const server = http.createServer(async (req, res) => {
   const url = req.url ?? ''
   // 注意：fetchGithubLatestRelease 请求的是 `<apiBaseUrl>/repos/<repo>/releases/latest`。
-  if (url === '/repos/ccch1mneyyy/dsh-TUI/releases/latest') {
+  if (url === '/repos/Async23/dsh-tui/releases/latest') {
     const assets: Array<Record<string, string>> = [
       { name: ASSET_NAME, browser_download_url: `http://127.0.0.1:${serverPort()}/asset` },
     ]
@@ -358,117 +356,20 @@ if (typeof downloadFn === 'function') {
 }
 
 
-// ═══════════════ Part 4：镜像回退路径的清单校验（红队 P-2） ═══════════════
-
-// 场景：GitHub API 失败（超时/不可达）→ registry 提供 latest 版本号 →
-// 更新器拼 GitHub 直链下载。旧实现在这条回退路径上丢失 checksumUrl，
-// 篡改资产无校验直接放行。mock 全局 fetch 按 URL 分流（registry /
-// api.github.com / github.com 直链）。
+// ═══════════════ Part 4：个人更新源离线时不回退 npm ═══════════════
 {
   const realFetch = globalThis.fetch
-  const realStandalone = process.env.DSH_TUI_STANDALONE
-  const realRegistry = process.env.NPM_CONFIG_REGISTRY
-  const resolveTarget = updateModule.resolveTuiUpdateTarget as
-    | (() => Promise<Record<string, unknown>>)
-    | undefined
-
-  if (typeof resolveTarget === 'function' && typeof downloadFn === 'function') {
-    process.env.DSH_TUI_STANDALONE = '1'
-    process.env.NPM_CONFIG_REGISTRY = 'https://registry.npmjs.org'
-    const FALLBACK_DOWNLOAD = `https://github.com/ccch1mneyyy/dsh-TUI/releases/download/v9.9.9/${ASSET_NAME}`
-    const FALLBACK_SUMS = 'https://github.com/ccch1mneyyy/dsh-TUI/releases/download/v9.9.9/SHA256SUMS'
-
-    let manifestStatus = 200
-    let fallbackAssetTampered = false
-    globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (url.includes('api.github.com')) {
-        // GitHub API 不可达 → 触发 registry 回退路径。
-        return new Response('', { status: 503 })
-      }
-      if (url.endsWith('/latest')) {
-        return Response.json({ version: '9.9.9' })
-      }
-      if (url.endsWith('/SHA256SUMS')) {
-        if (manifestStatus !== 200) return new Response('not found', { status: manifestStatus })
-        return new Response(`${realDigest}  ${ASSET_NAME}\n`)
-      }
-      if (url.endsWith(ASSET_NAME)) {
-        const bytes = fallbackAssetTampered ? evilAssetBytes : realAssetBytes
-        return new Response(bytes, { headers: { 'content-length': String(bytes.length) } })
-      }
-      return new Response('', { status: 404 })
-    }) as typeof fetch
-
-    // (a) 回退路径解析出固定命名清单 URL，且清单匹配的资产成功替换
-    writeFileSync(fakeCurrentBinary, 'old binary\n')
-    fallbackAssetTampered = false
-    manifestStatus = 200
-    const targetA = await resolveTarget()
-    check(
-      '镜像回退路径探测到固定命名 SHA256SUMS（checksumUrl 不再丢失）',
-      targetA.kind === 'update' && targetA.checksumUrl === FALLBACK_SUMS,
-      JSON.stringify(targetA),
-    )
-    check(
-      '回退路径拼出的直链下载地址正确',
-      targetA.downloadUrl === FALLBACK_DOWNLOAD,
-      JSON.stringify(targetA.downloadUrl),
-    )
-    const resultA = await downloadFn(
-      targetA.downloadUrl as string, undefined, targetA.checksumUrl as string,
-    )
-    check('回退路径 + 清单匹配 → 更新成功且经过校验', resultA.success, JSON.stringify(resultA))
-    check(
-      '回退路径 + 清单匹配 → 二进制被替换为新内容',
-      readFileSync(fakeCurrentBinary, 'utf8') === 'legit-new-binary\n',
-    )
-
-    // (b) 清单存在但资产被篡改 → 回退路径同样拒绝（红态：旧实现无校验
-    // 直接放行，篡改归档是合法 tar.gz、解压替换全部成功）
-    writeFileSync(fakeCurrentBinary, 'old binary\n')
-    fallbackAssetTampered = true
-    const targetB = await resolveTarget()
-    const resultB = await downloadFn(
-      targetB.downloadUrl as string, undefined, targetB.checksumUrl as string,
-    )
-    check('回退路径 + 清单存在但资产被篡改 → 拒绝替换', !resultB.success, JSON.stringify(resultB))
-    check(
-      '回退路径篡改拒绝时错误信息提及校验和',
-      /checksum|sha256/i.test(resultB.error ?? ''),
-      JSON.stringify(resultB.error),
-    )
-    check(
-      '回退路径篡改拒绝时当前二进制保持原内容',
-      readFileSync(fakeCurrentBinary, 'utf8') === 'old binary\n',
-    )
-
-    // (c) 清单 404（老 release）→ transition 警告放行（兼容不变）
-    writeFileSync(fakeCurrentBinary, 'old binary\n')
-    fallbackAssetTampered = false
-    manifestStatus = 404
-    const lines: string[] = []
-    const targetC = await resolveTarget()
-    check(
-      '回退路径清单 404 → checksumUrl 缺省（transition 警告路径）',
-      targetC.kind === 'update' && targetC.checksumUrl === undefined,
-      JSON.stringify(targetC),
-    )
-    const resultC = await downloadFn(targetC.downloadUrl as string, text => lines.push(text), undefined)
-    check('回退路径清单 404 → 更新继续成功（老 release 兼容）', resultC.success, JSON.stringify(resultC))
-    check(
-      '回退路径清单 404 → 进度输出携带「无校验和」警告',
-      lines.some(line => /no checksum|no sha256sums|无校验和/i.test(line)),
-      JSON.stringify(lines),
-    )
-
+  const urls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    urls.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+    return new Response('', { status: 503 })
+  }) as typeof fetch
+  try {
+    const target = await updateModule.resolveTuiUpdateTarget()
+    check('GitHub 不可达时返回未知状态', target.kind === 'unknown')
+    check('不会查询 npm 或上游仓库', urls.length === 1 && urls[0]!.includes('/repos/Async23/dsh-tui/'))
+  } finally {
     globalThis.fetch = realFetch
-    if (realStandalone === undefined) delete process.env.DSH_TUI_STANDALONE
-    else process.env.DSH_TUI_STANDALONE = realStandalone
-    if (realRegistry === undefined) delete process.env.NPM_CONFIG_REGISTRY
-    else process.env.NPM_CONFIG_REGISTRY = realRegistry
-  } else {
-    check('resolveTuiUpdateTarget 已导出', typeof resolveTarget === 'function')
   }
 }
 

@@ -92,6 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/github-script@v9
+        if: github.repository == 'ccch1mneyyy/dsh-TUI'
         with:
           script: |
             const { pathToFileURL } = await import('node:url')
@@ -207,6 +208,7 @@ jobs:
       - run: pnpm verify:build
         env:
           NODE_ENV: production
+      - run: pnpm verify:release
 
       # Keep every main/types/bin/exports target inside the published tarball
       # and smoke-import the two runtime entry points.

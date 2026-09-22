@@ -25,6 +25,7 @@
  */
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -70,6 +71,7 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 function copyUpdateModule(dstDir) {
   mkdirSync(join(dstDir, 'utils'), { recursive: true })
   cpSync(compiledModulePath, join(dstDir, 'update.js'))
+  cpSync(new URL('../lib/types/release.js', import.meta.url), join(dstDir, 'release.js'))
   cpSync(compiledShellQuotePath, join(dstDir, 'utils', 'shellQuote.js'))
   cpSync(compiledPathsPath, join(dstDir, 'utils', 'paths.js'))
 }
@@ -229,15 +231,15 @@ const exactUpdateArgs = tuiUpdatePluginArgs('dsh-tui', '0.7.2')
 check(
   'update command pins the preflight target version',
   JSON.stringify(exactUpdateArgs) === JSON.stringify([
-    'plugin', '--profile', 'dsh-tui', 'update', '@deepseek-harness-tui/dsh-tui@0.7.2',
+    'plugin', '--profile', 'dsh-tui', 'add', 'https://github.com/Async23/dsh-tui/releases/download/v0.7.2/dsh-tui.tgz',
   ]),
   `got ${JSON.stringify(exactUpdateArgs)}`,
 )
 const fallbackUpdateArgs = tuiUpdatePluginArgs('custom-profile')
 check(
-  'update command falls back to --latest when preflight failed',
+  'update command falls back to the personal latest release when preflight failed',
   JSON.stringify(fallbackUpdateArgs) === JSON.stringify([
-    'plugin', '--profile', 'custom-profile', 'update', '--latest', '@deepseek-harness-tui/dsh-tui',
+    'plugin', '--profile', 'custom-profile', 'add', 'https://github.com/Async23/dsh-tui/releases/latest/download/dsh-tui.tgz',
   ]),
   `got ${JSON.stringify(fallbackUpdateArgs)}`,
 )
@@ -648,6 +650,15 @@ check(
 // 虚假的 updated X → X。真实模块、真实子进程，只有网络与 dsh 是假的。
 {
   const scratch3 = mkdtempSync(join(tmpdir(), 'verify-update-cli-'))
+  const originalFetch = globalThis.fetch
+  const cacheBackup = process.env.DSH_TUI_RELEASE_CACHE
+  const testArchive = Buffer.from('offline test archive')
+  const testHash = createHash('sha256').update(testArchive).digest('hex')
+  process.env.DSH_TUI_RELEASE_CACHE = join(scratch3, 'cache')
+  globalThis.fetch = async url => {
+    if (String(url).includes('api.github.com')) throw new Error('offline preflight')
+    return new Response(String(url).endsWith('/SHA256SUMS') ? `${testHash}  dsh-tui.tgz\n` : testArchive)
+  }
   const ENV_BACKUP = { reg: process.env.NPM_CONFIG_REGISTRY, regL: process.env.npm_config_registry, path: process.env.PATH }
   try {
     symlinkSync(join(repoRoot, 'node_modules'), join(scratch3, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
@@ -692,6 +703,9 @@ check(
     if (ENV_BACKUP.regL === undefined) delete process.env.npm_config_registry
     else process.env.npm_config_registry = ENV_BACKUP.regL
     process.env.PATH = ENV_BACKUP.path
+    globalThis.fetch = originalFetch
+    if (cacheBackup === undefined) delete process.env.DSH_TUI_RELEASE_CACHE
+    else process.env.DSH_TUI_RELEASE_CACHE = cacheBackup
     rmSync(scratch3, { recursive: true, force: true })
   }
 }

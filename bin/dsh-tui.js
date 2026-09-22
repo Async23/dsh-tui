@@ -75,6 +75,12 @@ const RESCUE_PROFILE = 'dsh-tui-safe'
 // 安装钉版本：ownVersion 缺失（bin 被单独拿走、package.json 不可读/改名）
 // 时拼出 `@undefined` 只会让 add 失败得更晚、更难懂——退回 @latest。
 const installVersion = ownVersion ?? 'latest'
+// Keep this shim self-contained: migration may copy it into an older global package.
+const releaseSpec = (version = 'latest') => {
+  if (version !== 'latest' && !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(version)) throw new Error('Invalid release version')
+  const path = version === 'latest' ? 'latest/download' : `download/v${version}`
+  return `https://github.com/Async23/dsh-tui/releases/${path}/dsh-tui.tgz`
+}
 
 // --- 内联小工具（见文件头：零 lib 依赖是迁移契约的一部分）---------------------
 // 与 lib/types/utils/shellQuote.js 同语义的最小实现：cmd.exe 以空格拼接参数
@@ -144,16 +150,16 @@ const MSG = {
     zh: '[dsh-tui] 首次安装需要 pnpm（dsh plugin 会把安装转发给它）：\n  npm install -g pnpm   （或启用 corepack：corepack enable pnpm）',
   },
   bootstrapStart: {
-    en: `[dsh-tui] First run — initializing the ${PROFILE} profile (${PACKAGE}@${installVersion})…`,
-    zh: `[dsh-tui] 首次运行，正在初始化 ${PROFILE} profile（${PACKAGE}@${installVersion}）…`,
+    en: `[dsh-tui] First run — initializing the ${PROFILE} profile (${releaseSpec(installVersion)})…`,
+    zh: `[dsh-tui] 首次运行，正在初始化 ${PROFILE} profile（${releaseSpec(installVersion)}）…`,
   },
   bootstrapRetryW: {
     en: '[dsh-tui] pnpm refused to add to the workspace root (ERR_PNPM_ADDING_TO_ROOT) — retrying with -w…',
     zh: '[dsh-tui] pnpm 拒绝写入 workspace 根（ERR_PNPM_ADDING_TO_ROOT）——带 -w 重试…',
   },
   installFailed: {
-    en: `[dsh-tui] Plugin install failed. Retry manually later:\n  dsh plugin --profile ${PROFILE} add -w ${PACKAGE}@${installVersion}`,
-    zh: `[dsh-tui] 插件安装失败。可稍后手工重试：\n  dsh plugin --profile ${PROFILE} add -w ${PACKAGE}@${installVersion}`,
+    en: `[dsh-tui] Plugin install failed. Retry manually later:\n  dsh plugin --profile ${PROFILE} add -w ${releaseSpec(installVersion)}`,
+    zh: `[dsh-tui] 插件安装失败。可稍后手工重试：\n  dsh plugin --profile ${PROFILE} add -w ${releaseSpec(installVersion)}`,
   },
   bootstrapUnreadable: {
     en: dir =>
@@ -175,9 +181,9 @@ const MSG = {
   },
   delegateFailed: {
     en: path =>
-      `[dsh-tui] cannot launch the profile copy:\n  ${path}\nReinstall the global launcher:\n  npm install -g --legacy-peer-deps ${PACKAGE}@latest\n(--legacy-peer-deps avoids an npm 12 peer-resolution crash; the launcher is a thin shim, so skipping global peer resolution is safe.)`,
+      `[dsh-tui] cannot launch the profile copy:\n  ${path}\nReinstall the global launcher:\n  npm install -g --legacy-peer-deps ${releaseSpec()}\n(--legacy-peer-deps avoids an npm 12 peer-resolution crash; the launcher is a thin shim, so skipping global peer resolution is safe.)`,
     zh: path =>
-      `[dsh-tui] 无法启动 profile 内副本：\n  ${path}\n请重装全局启动器：\n  npm install -g --legacy-peer-deps ${PACKAGE}@latest\n（--legacy-peer-deps 可绕过 npm 12 的 peer 解析崩溃；启动器是瘦壳，跳过全局 peer 解析是安全的。）`,
+      `[dsh-tui] 无法启动 profile 内副本：\n  ${path}\n请重装全局启动器：\n  npm install -g --legacy-peer-deps ${releaseSpec()}\n（--legacy-peer-deps 可绕过 npm 12 的 peer 解析崩溃；启动器是瘦壳，跳过全局 peer 解析是安全的。）`,
   },
   profileExited: {
     en: code => `[dsh-tui] dsh profile exited with code ${code}. Run it directly for diagnostics:\n  dsh --profile ${PROFILE}`,
@@ -402,8 +408,8 @@ const MSG = {
       pnpmMissing: 'not found — needed for install/update:  npm install -g pnpm',
       profileMissing: 'not installed — run `dsh-tui` once to bootstrap it',
       aligned: 'aligned',
-      profileNewer: v => `profile is newer — align the launcher:  npm install -g ${PACKAGE}@${v}`,
-      profileOlder: v => `profile is older — align it:  dsh plugin --profile ${PROFILE} add ${PACKAGE}@${v}`,
+      profileNewer: v => `profile is newer — align the launcher:  npm install -g ${releaseSpec(v)}`,
+      profileOlder: v => `profile is older — align it:  dsh plugin --profile ${PROFILE} add ${releaseSpec(v)}`,
       keySet: 'set',
       keySetEnv: 'set (environment)',
       keySetStore: 'set (DSH credential store)',
@@ -415,8 +421,8 @@ const MSG = {
       pnpmMissing: '未找到——安装/升级需要它：  npm install -g pnpm',
       profileMissing: '未安装——运行一次 `dsh-tui` 即可自举',
       aligned: '已对齐',
-      profileNewer: v => `profile 较新——对齐启动器：  npm install -g ${PACKAGE}@${v}`,
-      profileOlder: v => `profile 较旧——对齐它：  dsh plugin --profile ${PROFILE} add ${PACKAGE}@${v}`,
+      profileNewer: v => `profile 较新——对齐启动器：  npm install -g ${releaseSpec(v)}`,
+      profileOlder: v => `profile 较旧——对齐它：  dsh plugin --profile ${PROFILE} add ${releaseSpec(v)}`,
       keySet: '已设置',
       keySetEnv: '已设置（环境变量）',
       keySetStore: '已设置（DSH 凭据库）',
@@ -427,10 +433,10 @@ const MSG = {
   updateUnavailable: {
     en:
       `[dsh-tui] \`update\` needs the profile's compiled copy, but it is missing or too old to carry the CLI entry.\n` +
-      `Update manually instead:\n  dsh plugin --profile ${PROFILE} add ${PACKAGE}@latest`,
+      `Update manually instead:\n  dsh plugin --profile ${PROFILE} add ${releaseSpec()}`,
     zh:
       `[dsh-tui] \`update\` 需要 profile 的编译产物，但它缺失或版本过旧、不含 CLI 入口。\n` +
-      `请改用手工升级：\n  dsh plugin --profile ${PROFILE} add ${PACKAGE}@latest`,
+      `请改用手工升级：\n  dsh plugin --profile ${PROFILE} add ${releaseSpec()}`,
   },
   helpText: {
     en:
@@ -656,13 +662,13 @@ const renderGuide = lines => {
     lines.push(L.nothingThird)
   }
   lines.push(L.reinstallTui)
-  lines.push(`  dsh plugin --profile ${PROFILE} add ${PACKAGE}@${L.versionPlaceholder}`)
+  lines.push(`  dsh plugin --profile ${PROFILE} add ${releaseSpec(installVersion)}`)
   lines.push(L.diagnostics)
   lines.push(`  dsh-tui doctor`)
   lines.push(L.globalUpgrade)
-  lines.push(`  npm install -g --legacy-peer-deps ${PACKAGE}@${L.versionPlaceholder}`)
+  lines.push(`  npm install -g --legacy-peer-deps ${releaseSpec(installVersion)}`)
   lines.push(L.rescueProfile)
-  lines.push(`  dsh plugin --profile ${RESCUE_PROFILE} add ${PACKAGE}@${L.versionPlaceholder}`)
+  lines.push(`  dsh plugin --profile ${RESCUE_PROFILE} add ${releaseSpec(installVersion)}`)
   lines.push(`  dsh --profile ${RESCUE_PROFILE}`)
   // home 层是救援唯一的隐藏前置：该文件叠加到每个 profile 上，出问题时
   // 连救援一起起不来。指引先说清，用户不会把救援失败误判成救援本身坏了。
@@ -1023,7 +1029,7 @@ const createRescueProfile = () => {
   if (probe.error || probe.status !== 0) return { kind: 'failed', lines: [msg('safeRescueFailed')('dsh missing')] }
   console.log(msg('safeRescueCreating'))
   const runAdd = extraArgs => spawnSync(
-    ...cmd('dsh', ['plugin', '--profile', RESCUE_PROFILE, 'add', ...extraArgs, `${PACKAGE}@${installVersion}`]),
+    ...cmd('dsh', ['plugin', '--profile', RESCUE_PROFILE, 'add', ...extraArgs, `${releaseSpec(installVersion)}`]),
     { stdio: ['inherit', 'pipe', 'pipe'], env: rescueEnv(), ...shellOpt },
   )
   let add = runAdd([])
@@ -1101,7 +1107,7 @@ const bootstrapProfile = () => {
   }
   console.log(msg('bootstrapStart'))
   const runAdd = (extraArgs, capture) => spawnSync(
-    ...cmd('dsh', ['plugin', '--profile', PROFILE, 'add', ...extraArgs, `${PACKAGE}@${installVersion}`]),
+    ...cmd('dsh', ['plugin', '--profile', PROFILE, 'add', ...extraArgs, `${releaseSpec(installVersion)}`]),
     { stdio: capture ? ['inherit', 'pipe', 'pipe'] : 'inherit', ...shellOpt },
   )
   let add = runAdd([], true)
@@ -1154,14 +1160,14 @@ const checkProfileAlignment = installedVersion => {
   if (installedMajor < ownMajor || (installedMajor === ownMajor && installedMinor < ownMinor)) {
     console.error(
       `[dsh-tui] cannot start: the profile runs v${installedVersion} but this launcher is v${ownVersion}.\n` +
-        `  dsh plugin --profile ${PROFILE} add ${PACKAGE}@${ownVersion}`,
+        `  dsh plugin --profile ${PROFILE} add ${releaseSpec(ownVersion)}`,
     )
     process.exit(1)
   }
   if (isVersionNewer(installedVersion, ownVersion)) {
     console.error(
       `[dsh-tui] note: the profile is already v${installedVersion}; this launcher copy is v${ownVersion}.\n` +
-        `  npm install -g --legacy-peer-deps ${PACKAGE}@${installedVersion}\n` +
+        `  npm install -g --legacy-peer-deps ${releaseSpec(installedVersion)}\n` +
         `(--legacy-peer-deps avoids an npm 12 peer-resolution crash, see issue #459)`,
     )
   } else {
@@ -1169,7 +1175,7 @@ const checkProfileAlignment = installedVersion => {
     // profile 对齐到启动器版本（精确版本，@latest 可能越过对齐点）。
     console.error(
       `[dsh-tui] note: the profile is running v${installedVersion} but this launcher is v${ownVersion}.\n` +
-        `  dsh plugin --profile ${PROFILE} add ${PACKAGE}@${ownVersion}`,
+        `  dsh plugin --profile ${PROFILE} add ${releaseSpec(ownVersion)}`,
     )
   }
 }

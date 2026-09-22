@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { gte, gt, lt, valid } from 'semver'
 import { shellQuote } from './utils/shellQuote.js'
 import { DATA_DIR } from './utils/paths.js'
+import { RELEASE_REPOSITORY, RELEASE_PACKAGE_ASSET, downloadReleasePackage, releaseAssetUrl } from './release.js'
 
 // Re-exported for scripts/verify-update.mjs and the bin launcher, which reads
 // the compiled copy at lib/types/utils/shellQuote.js.
@@ -14,7 +15,7 @@ export { shellQuote }
 
 const PACKAGE_NAME = '@deepseek-harness-tui/dsh-tui'
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org'
-const GITHUB_REPO = 'ccch1mneyyy/dsh-TUI'
+const GITHUB_REPO = RELEASE_REPOSITORY
 const UPDATE_CHECK_TIMEOUT_MS = 4000
 const STANDALONE_DOWNLOAD_TIMEOUT_MS = 300000
 /**
@@ -318,31 +319,7 @@ export function releaseChecksumUrl(version: string): string {
 }
 
 /**
- * Probe whether a release publishes a checksum manifest at a URL. Only an OK
- * response resolves to the URL — a 404 (the release predates the checksum
- * workflow) or any network failure resolves to undefined so the update keeps
- * the transition-period warning path instead of being blocked (new releases
- * always ship the manifest; old ones must keep updating).
- */
-async function probeChecksumManifestUrl(url: string): Promise<string | undefined> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS)
-  try {
-    const response = await fetch(url, {
-      headers: { 'user-agent': 'dsh-tui-updater' },
-      redirect: 'follow',
-      signal: controller.signal,
-    })
-    return response.ok ? url : undefined
-  } catch {
-    return undefined
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-/**
- * Fetch latest release info from GitHub Releases API for the standalone asset.
+ * Fetch this fork’s GitHub Release and the asset for the current installation type.
  *
  * @param options - Injectable API base / fetch for tests.
  * @returns Release version tag, matching asset download URL, and the
@@ -364,7 +341,7 @@ export async function fetchGithubLatestRelease(options: GithubReleaseQuery = {})
     const rawTag = payload.tag_name.replace(/^v/, '')
     const version = valid(rawTag)
     if (version === null) return undefined
-    const assetName = getStandaloneAssetName()
+    const assetName = isStandaloneRuntime() ? getStandaloneAssetName() : RELEASE_PACKAGE_ASSET
     let downloadUrl: string | undefined
     let checksumUrl: string | undefined
     if (Array.isArray(payload.assets)) {
@@ -810,58 +787,23 @@ export async function downloadAndReplaceStandaloneBinary(
   }
 }
 
-/**
- * Classify this install against a fresh registry lookup: an update is
- * available, the install is already latest, or the answer is unknown
- * (offline / registry error / unreadable own version).
- *
- * The configured registry decides the install target (pnpm must be able to
- * fetch it), but when that registry is a mirror it can lag behind npmjs —
- * issue #307's users were pinned onto stale versions this way. A
- * best-effort npmjs.org check runs in parallel and surfaces as
- * `authoritative` when it knows a strictly newer release, so callers can
- * say "installing X now, official latest is Y" instead of silently
- * upgrading to yesterday's version.
- */
+/** Resolve personal updates exclusively from this fork's GitHub Releases. */
 export async function resolveTuiUpdateTarget(): Promise<TuiUpdateTarget> {
   const current = installedTuiVersion()
   const currentVersion = current === undefined ? null : valid(current)
   if (currentVersion === null) return { kind: 'unknown' }
-
-  if (isStandaloneRuntime()) {
-    const ghRelease = await fetchGithubLatestRelease()
-    const latest = ghRelease?.version ?? (await fetchLatestVersion(resolveRegistryBase()))
-    if (latest === undefined) return { kind: 'unknown' }
-    if (!gt(latest, currentVersion)) return { kind: 'latest', current: currentVersion, isStandalone: true }
-    const downloadUrl = ghRelease?.downloadUrl ?? `https://github.com/${GITHUB_REPO}/releases/download/v${latest}/${getStandaloneAssetName()}`
-    // Mirror fallback (GitHub API timed out, version came from a registry):
-    // the asset list — and with it the manifest URL — is lost, so probe the
-    // fixed-name SHA256SUMS on the same direct-download host. Found → the
-    // download verifies exactly like the primary path (a tampered asset is
-    // refused); 404/absent → the transition warning path stays for releases
-    // that predate the checksum workflow (every new release ships one —
-    // release-bundle.yml generates it alongside the assets).
-    const checksumUrl = ghRelease !== undefined
-      ? ghRelease.checksumUrl
-      : await probeChecksumManifestUrl(releaseChecksumUrl(latest))
-    return checksumUrl === undefined
-      ? { kind: 'update', current: currentVersion, latest, isStandalone: true, downloadUrl }
-      : { kind: 'update', current: currentVersion, latest, isStandalone: true, downloadUrl, checksumUrl }
+  const release = await fetchGithubLatestRelease()
+  if (release === undefined) return { kind: 'unknown' }
+  const isStandalone = isStandaloneRuntime()
+  if (!gt(release.version, currentVersion)) return { kind: 'latest', current: currentVersion, isStandalone }
+  return {
+    kind: 'update', current: currentVersion, latest: release.version, isStandalone,
+    downloadUrl: release.downloadUrl, checksumUrl: release.checksumUrl,
   }
-
-  const registryBase = resolveRegistryBase()
-  const [latest, official] = await Promise.all([
-    fetchLatestVersion(registryBase),
-    registryBase === DEFAULT_REGISTRY ? undefined : fetchLatestVersion(DEFAULT_REGISTRY),
-  ])
-  if (latest === undefined) return { kind: 'unknown' }
-  if (!gt(latest, currentVersion)) return { kind: 'latest', current: currentVersion }
-  const authoritative = official !== undefined && gt(official, latest) ? official : undefined
-  return { kind: 'update', current: currentVersion, latest, ...(authoritative === undefined ? {} : { authoritative }) }
 }
 
 /**
- * Check npm for a newer published TUI version. Network and registry errors
+ * Check this fork’s GitHub Releases for a newer TUI. Network and API errors
  * are intentionally treated as "no result" so an offline launch never delays
  * or blocks the interactive TUI.
  */
@@ -938,10 +880,8 @@ function runProcess(
 }
 
 /** Build the profile-manager command, preferring a preflight-pinned version. */
-export function tuiUpdatePluginArgs(profile: string, targetVersion?: string): string[] {
-  return targetVersion === undefined
-    ? ['plugin', '--profile', profile, 'update', '--latest', PACKAGE_NAME]
-    : ['plugin', '--profile', profile, 'update', `${PACKAGE_NAME}@${targetVersion}`]
+export function tuiUpdatePluginArgs(profile: string, targetVersion?: string, archive?: string): string[] {
+  return ['plugin', '--profile', profile, 'add', archive ?? releaseAssetUrl(targetVersion)]
 }
 
 /**
@@ -1458,7 +1398,15 @@ export function migrateGlobalLauncher(): boolean {
   // layouts collapse both onto the same real path — copying onto ourselves
   // would be a no-op at best).
   let dir = dirname(resolve(launcherBin))
-  const ownDir = dirname(dirname(fileURLToPath(import.meta.url)))
+  const here = dirname(fileURLToPath(import.meta.url))
+  const ownDir = ['../..', '..'].map(path => resolve(here, path)).find(candidate => {
+    try {
+      return JSON.parse(readFileSync(join(candidate, 'package.json'), 'utf8')).name === PACKAGE_NAME
+    } catch {
+      return false
+    }
+  })
+  if (ownDir === undefined) return false
   for (let depth = 0; depth < 4; depth++) {
     const manifest = join(dir, 'package.json')
     try {
@@ -1512,8 +1460,7 @@ export interface TuiUpdateOutcome {
  * restart on top, and the `dsh-tui update` CLI stops here.
  *
  * @param profile - The dsh profile to update.
- * @param targetVersion - Exact version from the preflight registry check, or
- *   undefined when that check failed and pnpm should resolve latest.
+ * @param targetVersion - Exact personal release version, or undefined to download the latest release.
  * @returns The update exit code plus the before/after versions.
  */
 export async function updateTui(
@@ -1551,8 +1498,15 @@ export async function updateTui(
     return { code: 0, updatedFrom, installed: latestVersion }
   }
 
+  let archive: string
+  try {
+    archive = await downloadReleasePackage(targetVersion)
+  } catch (error) {
+    process.stderr.write(`dsh-tui: ${error instanceof Error ? error.message : String(error)}\n`)
+    return { code: 1, updatedFrom }
+  }
   const dsh = process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
-  const updateArgs = tuiUpdatePluginArgs(profile, targetVersion)
+  const updateArgs = tuiUpdatePluginArgs(profile, targetVersion, archive)
   // pnpm ≥11 hard-fails installs whose dependency tree carries un-allowlisted
   // build scripts (ERR_PNPM_IGNORED_BUILDS). The dsh-auth chain pulls in
   // postinstall-only deps (@google/genai/protobufjs via pi-ai), so pre-seed
@@ -1629,7 +1583,7 @@ export async function updateTui(
     process.stderr.write(
       `dsh-tui: update landed on ${installedNow}, which can permanently deadlock boot under older launcher patches ` +
         `(#183/#307) — NOT restarting into it. Repair with:\n` +
-        `  dsh plugin --profile ${profile} add ${PACKAGE_NAME}@latest\n` +
+        `  dsh plugin --profile ${profile} add ${releaseAssetUrl()}\n` +
         `(if the mirror has not synced the latest release yet, retry later)\n`,
     )
     return { code: 1, updatedFrom, installed: installedNow }
@@ -1650,7 +1604,7 @@ export async function updateTui(
       process.stderr.write(
         `dsh-tui: update completed but the profile still runs ${installed ?? 'an unreadable version'} ` +
           `(expected ${targetVersion}) — the profile is half-updated. Repair manually with:\n` +
-          `  dsh plugin --profile ${profile} add ${PACKAGE_NAME}@${targetVersion}\n`,
+          `  dsh plugin --profile ${profile} add ${releaseAssetUrl(targetVersion)}\n`,
       )
       return { code: 1, updatedFrom, installed }
     }
@@ -1672,17 +1626,12 @@ export async function updateTui(
  * preserving the active session. The TUI must already be unmounted before
  * this is called so pnpm output cannot corrupt the rendered terminal frame.
  *
- * When the preflight registry check resolved an exact target, pass that
- * version to pnpm instead of resolving `latest` a second time. This avoids a
- * stale mirror/dist-tag response between the check and install. If preflight
- * failed, retain the `--latest` fallback: a plain `pnpm update` stays inside
- * the manifest range and can restart unchanged across minor releases.
+ * A preflight target pins the GitHub Release download; an offline API check
+ * uses the same repository's latest release asset. No npm channel fallback.
  *
  * @param sessionId - Session to resume in the replacement process.
- * @param profile - The dsh profile this TUI was launched with; updating any
- *   other profile would leave the running install untouched.
- * @param targetVersion - Exact version returned by the preflight registry
- *   check, or undefined when that check failed and pnpm should resolve latest.
+ * @param profile - The dsh profile this TUI was launched with.
+ * @param targetVersion - Exact personal release version, when known.
  * @returns Exit codes for the update run and the replacement process.
  */
 export async function updateTuiAndRestart(

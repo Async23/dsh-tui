@@ -1,5 +1,7 @@
 # 贡献指南
 
+> 本仓库是 Async23/dsh-tui。下述 PR 准入要求仅适用于向 ccch1mneyyy/dsh-TUI 贡献；个人定制、发版和同步上游遵循 [fork-maintenance.md](fork-maintenance.md)。
+
 [文档索引](README.md) · [English](contributing.en.md)
 
 感谢你考虑为 dsh-TUI 做贡献！本文档是 `@deepseek-harness-tui/dsh-tui` 的共享开发

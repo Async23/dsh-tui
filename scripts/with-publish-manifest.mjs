@@ -24,6 +24,8 @@ if (command === undefined) throw new Error('usage: node with-publish-manifest.mj
 
 const originalManifest = await readFile(manifestPath)
 const manifest = JSON.parse(originalManifest)
+// Release tarballs contain compiled files; lifecycle scripts require the source tree.
+delete manifest.scripts?.prepare
 manifest.optionalDependencies ??= {}
 for (const packageName of bundledPackages) {
   const name = `@dsh-std/${packageName}`
@@ -59,6 +61,9 @@ const stageBundledDshAuth = async () => {
   await mkdir(dshAuthInstalled, { recursive: true })
   const entries = new Set([
     'package.json',
+    'LICENSE',
+    'LICENSE.md',
+    'README.md',
     ...(Array.isArray(dshAuthManifest.files) ? dshAuthManifest.files : []),
   ])
   for (const entry of entries) {

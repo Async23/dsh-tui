@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { shellQuote } from '../lib/types/utils/shellQuote.js'
+import { releaseAssetUrl } from '../lib/types/release.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const bin = join(root, 'bin', 'dsh-tui.js')
@@ -122,7 +123,7 @@ setProfileVersion(undefined) // 目录在、package.json 不可读
 resetStubLog()
 let r = runBin([])
 check('bootstrap: broken profile triggers reinstall', stubCalls().some(c => c.includes('<plugin>') && c.includes('<add>')))
-check('bootstrap: pinned to the launcher version', stubCalls().some(c => c.includes(`<@deepseek-harness-tui/dsh-tui@${ownVersion}>`)))
+check('bootstrap: pinned to the launcher version', stubCalls().some(c => c.includes(`<${releaseAssetUrl(ownVersion)}>`)))
 check('bootstrap: launches after reinstall', stubCalls().at(-1) === '<--profile><dsh-tui>')
 check('bootstrap: exits 0', r.status === 0)
 
@@ -192,7 +193,7 @@ r = runBin([])
 check('forward skew: hint names both versions', r.stderr.includes(`v${newerProfile}`) && r.stderr.includes(`v${ownVersion}`))
 check(
   'forward skew: tells user to align the global launcher',
-  r.stderr.includes(`npm install -g --legacy-peer-deps ${PACKAGE}@${newerProfile}`),
+  r.stderr.includes(`npm install -g --legacy-peer-deps ${releaseAssetUrl(newerProfile)}`),
 )
 check(
   'forward skew: never tells user to update the profile again',
@@ -209,7 +210,7 @@ resetStubLog()
 r = runBin([])
 check('reverse skew: refuses to launch', r.status === 1 && !stubCalls().some(c => c.includes('<--profile>')))
 check('reverse skew: names both versions', r.stderr.includes('v0.0.0') && r.stderr.includes(`v${ownVersion}`))
-check('reverse skew: prints the align command', r.stderr.includes(`add @deepseek-harness-tui/dsh-tui@${ownVersion}`))
+check('reverse skew: prints the align command', r.stderr.includes(`add ${releaseAssetUrl(ownVersion)}`))
 r = runBin([], { DSH_TUI_LANG: 'en' })
 check('reverse skew: English message', r.stderr.includes('cannot start'))
 
@@ -232,7 +233,7 @@ check(
 )
 check(
   'patch skew: tells user to align the profile to the launcher',
-  !patchSkewOlderExists || r.stderr.includes(`dsh plugin --profile ${PROFILE} add ${PACKAGE}@${ownVersion}`),
+  !patchSkewOlderExists || r.stderr.includes(`dsh plugin --profile ${PROFILE} add ${releaseAssetUrl(ownVersion)}`),
 )
 check(
   'patch skew: does not tell user to update the global launcher',
@@ -281,7 +282,7 @@ check(
   r.status === 1 && !stubCalls().some(c => c.includes('<--profile>')),
 )
 check('shim reverse skew: names both versions', r.stderr.includes('v0.0.0') && r.stderr.includes(`v${ownVersion}`))
-check('shim reverse skew: prints the align command', r.stderr.includes(`add @deepseek-harness-tui/dsh-tui@${ownVersion}`))
+check('shim reverse skew: prints the align command', r.stderr.includes(`add ${releaseAssetUrl(ownVersion)}`))
 
 setProfileVersion(undefined)
 placeProfileBin() // add stub 只创建 package.json——bin 是预放好的“已安装”产物
@@ -300,7 +301,7 @@ rmSync(join(home, PKG_DIR, 'bin'), { recursive: true, force: true })
 resetStubLog()
 r = runBin([], { DSH_TUI_LANG: 'en' }, { delegating: true })
 check('shim: no bin fails loud with the reinstall hint', r.status === 1 && r.stderr.includes(`Reinstall the global launcher`))
-check('shim: reinstall hint names the npm command', r.stderr.includes(`npm install -g --legacy-peer-deps ${PACKAGE}`))
+check('shim: reinstall hint names the npm command', r.stderr.includes(`npm install -g --legacy-peer-deps ${releaseAssetUrl()}`))
 
 
 // --- 5. 消息双语：缺 dsh 时的报错（契约同 TUI：DSH_TUI_LANG 指定才生效，否则默认中文）

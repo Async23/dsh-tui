@@ -28,9 +28,10 @@
  * 菜单选项 5 与 `safe --rescue` 共用 createRescueProfile/runRescue，因此
  * 门禁与创建逻辑由本套件覆盖，未覆盖的只剩菜单外壳。
  *
- * 运行：node scripts/verify-safe-mode.mjs（不依赖 lib/ 构建产物）
+ * 运行：node scripts/verify-safe-mode.mjs（先编译个人 Release 路径辅助函数）
  */
 import { spawnSync } from 'node:child_process'
+import { releaseAssetUrl } from '../lib/types/release.js'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -411,7 +412,7 @@ const cleanManifest = {
   check('救援: 插件包落位（安装判定文件可读）', existsSync(rescuePkgOf(home)))
   check(
     '救援: 走官方 dsh plugin add 且钉本副本版本',
-    adds.length === 1 && adds[0].argv === `plugin --profile dsh-tui-safe add ${PACKAGE}@${ownVersion}`,
+    adds.length === 1 && adds[0].argv === `plugin --profile dsh-tui-safe add ${releaseAssetUrl(ownVersion)}`,
     adds[0]?.argv ?? 'no add call',
   )
   // 2) 再跑一次：已存在 → 复用，绝不覆盖重装。
