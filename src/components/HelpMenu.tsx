@@ -4,6 +4,7 @@ import type { LocalCommand } from '../commands.js'
 import { localizedDescription } from '../commands.js'
 import { t } from '../i18n.js'
 import { modLabel } from '../utils/modifiers.js'
+import { effectiveComboDisplay } from '../utils/keymap.js'
 
 /**
  * The `?` help menu with a three-column shortcut layout, trimmed to the keys
@@ -13,7 +14,8 @@ import { modLabel } from '../utils/modifiers.js'
  * Skill entries (user-invocable skills merged for `/` completion, issue
  * #86) are hidden — a skills directory can hold dozens of entries and the
  * menu is for chrome commands. Modifier labels follow the platform
- * convention: ⌘ on macOS, ctrl elsewhere.
+ * convention except the todo shortcut, which displays its effective binding:
+ * macOS terminals commonly reserve Cmd+Q for quitting the terminal.
  */
 export function HelpMenu({
   commands,
@@ -89,7 +91,7 @@ export function HelpMenu({
         <Text dimColor>{t('help-open-editor')}</Text>
       </Box>
       <Box>
-        <Text dimColor>{t('help-fold-todos', { mod: modLabel })}</Text>
+        <Text dimColor>{t('help-fold-todos', { combo: effectiveComboDisplay('todoFold') })}</Text>
       </Box>
     </Box>
   )

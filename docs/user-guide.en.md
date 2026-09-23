@@ -60,9 +60,9 @@ dsh-tui
 
 ## 2. Keymap quick reference
 
-> In the tables, `Ctrl` on macOS can usually be swapped for `⌘` (`⌘V` `⌘O` `⌘R` `⌘T` `⌘L` `⌘Enter`);
-> `Ctrl+C`/`Ctrl+D` stay `Ctrl`.
-> `⌘` needs the extended keyboard protocol (see §5.4). Terminal.app: use Ctrl.
+> Use the `Ctrl` bindings in these tables. A macOS `⌘` alias only works when the terminal forwards it through the extended keyboard protocol without intercepting it (see §5.4). Terminal.app: use Ctrl.
+> Todo folding defaults to **Control+Q (⌃Q)**. Ghostty reserves **Command+Q (⌘Q)** for quitting by default and does not forward it to dsh.
+> Remapping the todo shortcut in `/settings` updates both the panel hint and the `?` help menu.
 
 ### 2.1 Send and deliver (three behaviors while the model is working)
 
@@ -86,6 +86,7 @@ dsh-tui
 | `Ctrl+O` (⌘O) | expand/collapse details (full thinking, tool args and output) |
 | `Ctrl+E` | in input = cursor to line end; in transcript = expand/collapse hidden old messages |
 | `Ctrl+P` | toggle the loaded-context panel at startup (works when the panel is on screen) |
+| `Ctrl+Q` | fold/unfold the todo list, including while working; remap in `/settings` |
 | `?` | empty input = open shortcut/command help menu |
 
 ### 2.3 Search

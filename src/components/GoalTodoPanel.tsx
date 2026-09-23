@@ -3,7 +3,7 @@ import { Box, Text } from '../ui.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import type { ChannelGoal, TodoPanelItem } from '../dsh-adapter/channel.js'
 import { t } from '../i18n.js'
-import { modLabel } from '../utils/modifiers.js'
+import { effectiveComboDisplay } from '../utils/keymap.js'
 
 /** Maximum todo rows shown before the overflow line. */
 const MAX_TODOS = 8
@@ -104,7 +104,7 @@ function BranchPrefix({ last }: { last: boolean }): React.ReactNode {
  * summary), and `collapsed` folds the whole section to that single header
  * line any time — including mid-turn, where the line still previews the
  * in-progress task. `onToggle` is the click affordance for the header row;
- * the ctrl/cmd+q hotkey in Chat drives the same state.
+ * Chat's configurable todoFold shortcut (default Ctrl+Q) drives the same state.
  *
  * Goal elapsed time is the panel's own wall clock (started when the goal
  * id first appears, frozen on completion) — deliberately not derived from
@@ -249,7 +249,7 @@ export function GoalTodoPanel({
               )}
               {/* Fold affordance under the list — only while expanded; the
                   collapsed line already IS the folded state. */}
-              <Text dimColor>  {t('goal-todo-fold-hint', { mod: modLabel })}</Text>
+              <Text dimColor>  {t('goal-todo-fold-hint', { combo: effectiveComboDisplay('todoFold') })}</Text>
             </Box>
           )}
         </Box>
