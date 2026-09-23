@@ -463,7 +463,7 @@ await inst.unmount()
 // 转录视口压小 ≥2 行（提示行出现 + 分隔线上抬），否则「跟随」是空断言。
 {
   const HOVER_HINT = '点击展开查看/应用'
-  // 转录行底 = 总结行分隔线 - 2（AutoRecapRow 的 marginTop 空行 + 分隔线）。
+  // 紧凑 Recap 紧接转录区：转录行底 = 总结行分隔线 - 1（无 marginTop 空行）。
   // 直接读屏，不依赖 gutterRange 的 promptRow 近似（总结行插在二者之间后，
   // promptRow-2 不再等于轨道底）。
   const term2 = new XTerm({ cols: COLS, rows: ROWS, scrollback: 0, allowProposedApi: true })
@@ -557,7 +557,7 @@ await inst.unmount()
     const divider = recapDividerRow()
     return {
       last: th[th.length - 1] ?? -1, h: th.length,
-      divider, trackLast: divider - 2,
+      divider, trackLast: divider - 1,
       hint: recapHintVisible(),
       pill: recapLines().some(l => l.includes('回到底部') || l.includes('条新消息')),
     }
