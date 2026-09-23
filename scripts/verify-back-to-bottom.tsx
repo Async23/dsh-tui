@@ -1,5 +1,5 @@
 /**
- * verify-back-to-bottom — 一键回底：pill 常驻化 + End/Enter 键。
+ * verify-back-to-bottom — 可开关的回底按钮 + 既有回底操作。
  *
  * 断言（headless xterm 100×40，全屏 Chat，8 轮对话）：
  *   1. 钉底：无 pill；
@@ -9,8 +9,10 @@
  *   4. 再上滚：pill 出现；按 Enter：回底（pill 消失）；
  *   5. 再上滚：点击 pill：回底；
  *   6. 钉底按 End：无操作（末轮仍可见，不崩）。
+ *   7. 关闭按钮：历史可滚动、新消息不抢位置、回底后继续跟随；实时重开恢复计数。
  *
  * 运行：node --import tsx/esm scripts/verify-back-to-bottom.tsx
+ * 窄屏：DSH_TEST_COLUMNS=60 node --import tsx/esm scripts/verify-back-to-bottom.tsx
  */
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_THEME = 'dark'
@@ -27,12 +29,27 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render, Alternat
   import('./lib/term-test.mjs'),
 ])
 
-const COLS = 100, ROWS = 40
+const [{ Config }, { createInitialChannelView }, { createPreferences }] = await Promise.all([
+  import('../src/dsh-adapter/index.js'),
+  import('../src/dsh-adapter/channel/state.js'),
+  import('../src/dsh-adapter/channel/preferences.js'),
+])
+
+const COLS = Number(process.env.DSH_TEST_COLUMNS ?? 100), ROWS = 40
+const wheelColumn = Math.min(90, COLS - 10)
 let failed = 0
 function check(name: string, ok: boolean, extra = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${extra ? `  (${extra})` : ''}`)
   if (!ok) failed += 1
 }
+
+check('插件配置默认显示按钮', Config({}).showBackToBottom === true)
+check('插件配置保留显式关闭', Config({ showBackToBottom: false }).showBackToBottom === false)
+const launch = { model: 'probe', cwd: '/tmp', provider: 'test' }
+const identity = { agentId: 'probe', mode: { id: 'default' }, cwdDescription: '/tmp' }
+const defaults = createInitialChannelView(launch, identity)
+check('channel 默认显示按钮', defaults.showBackToBottom === true)
+check('channel 启动配置可关闭按钮', createInitialChannelView({ ...launch, showBackToBottom: false }, identity).showBackToBottom === false)
 
 const term = new XTerm({ cols: COLS, rows: ROWS, scrollback: 0, allowProposedApi: true })
 class FakeStdout extends Writable {
@@ -64,6 +81,7 @@ const channel: any = {
   pending: [], commandList: LOCAL_COMMANDS, notifications: [], mode: { plan: false, sandbox: undefined },
   activityFrames: 'moon8', agentPreset: undefined, subagents: [], lastUserText: '问题 8',
   scrollGutter: 'timeline',
+  showBackToBottom: defaults.showBackToBottom,
   subscribe(cb: () => void) { listeners.add(cb); return () => listeners.delete(cb) },
   submit: () => {}, cancel: () => {}, clear: () => {}, notify: () => {},
   listModels: () => Promise.resolve([]), listSessions: () => Promise.resolve([]),
@@ -72,6 +90,8 @@ const channel: any = {
   commandCompletions: (input: string) => completeCommands(input),
 }
 const emitChannel = () => { channel.version++; for (const l of listeners) l() }
+channel.emit = emitChannel
+Object.assign(channel, createPreferences(() => channel))
 
 const inst = await render(
   <AlternateScreen>
@@ -99,7 +119,7 @@ const lastTurnVisible = () => screenLines().some(l => l.includes('问题 8'))
 // 屏幕条件可轮询。
 const wheel = async (up: boolean, times: number) => {
   for (let i = 0; i < times; i++) {
-    stdin.write(`\x1b[<${up ? 64 : 65};90;30M`)
+    stdin.write(`\x1b[<${up ? 64 : 65};${wheelColumn};30M`)
     await sleep(150) // 固定窗:pacing 滚轮事件步间
   }
 }
@@ -122,10 +142,18 @@ check('上滚后 pill 出现（回到底部）', await settled(() => {
   const p = pillText()
   return p !== null && p.includes('回到底部')
 }), `pill=${JSON.stringify(pillText())}`)
+channel.setShowBackToBottom(false)
+check('关闭设置立即隐藏回底按钮', await settled(() => pillText() === null))
+const hiddenVersion = channel.version
+channel.setShowBackToBottom(false)
+check('重复关闭不触发多余更新', channel.version === hiddenVersion)
 // 追加一轮新消息（模拟流式落定）
 rows.push({ id: 17, kind: 'user', text: '问题 9' })
 rows.push({ id: 18, kind: 'assistant', text: '回复 9 第 1 行\n回复 9 第 2 行' })
 emitChannel()
+await settle(() => screenLines().some(l => l.includes('问题 8')))
+check('关闭时新消息不显示按钮、不抢到底部', pillText() === null && !screenLines().some(l => l.includes('回复 9 第 2 行')))
+channel.setShowBackToBottom(true)
 check('新消息后 pill 切计数', await settled(() => {
   const p = pillText()
   return p !== null && /2 条新消息/.test(p)
@@ -173,6 +201,28 @@ pressKey('end')
 await sleep(400) // 固定窗:探针 钉底再按 End 不得有任何变化
 check('钉底按 End 无操作', lastTurnVisible() && pillText() === null)
 
+// 关闭按钮后仍能滚动、回底和跟随；按钮不能成为滚动状态的开关。
+channel.setShowBackToBottom(false)
+await wheel(true, 10)
+check('隐藏按钮仍可上滚查看历史', await settled(() => !lastTurnVisible() && pillText() === null))
+rows.push({ id: 19, kind: 'user', text: '问题 10' })
+rows.push({ id: 20, kind: 'assistant', text: '隐藏按钮后的新回复 10' })
+emitChannel()
+await sleep(300) // 固定窗:探针 新内容不得使关闭的按钮重现或抢走历史阅读位置
+check('隐藏时收到消息仍停留在历史位置', !screenLines().some(l => l.includes('隐藏按钮后的新回复 10')) && pillText() === null)
+pressKey('enter')
+check('隐藏按钮时 Enter 仍能回底', await settled(() => screenLines().some(l => l.includes('隐藏按钮后的新回复 10')) && pillText() === null))
+await wheel(true, 10)
+pressKey('end')
+check('隐藏按钮时 End 仍能回底', await settled(() => screenLines().some(l => l.includes('隐藏按钮后的新回复 10')) && pillText() === null))
+rows.push({ id: 21, kind: 'user', text: '问题 11' })
+rows.push({ id: 22, kind: 'assistant', text: '回底后继续跟随的新回复 11' })
+emitChannel()
+check('隐藏按钮时回底后继续跟随输出', await settled(() => screenLines().some(l => l.includes('回底后继续跟随的新回复 11')) && pillText() === null))
+channel.setShowBackToBottom(true)
+await wheel(true, 6)
+check('重新开启后上滚显示回底按钮', await settled(() => pillText()?.includes('回到底部') === true))
+
 await inst.unmount()
 
 // ── 7. 远距跳底：20 轮重会话从中部 End 回底，不空白、末轮可见 ──
@@ -194,7 +244,7 @@ await inst.unmount()
   await settle(() => screenLines().some(l => l.includes('问题 20')))
   // 上滚 30 格 → 中部（跳底距离 ≈ 150 行 ≫ 视口）。
   for (let i = 0; i < 30; i++) {
-    stdin.write('\x1b[<64;90;30M')
+    stdin.write(`\x1b[<64;${wheelColumn};30M`)
     await sleep(60) // 固定窗:pacing 滚轮事件步间
   }
   // 固定窗:pacing 中部位置静置窗——随后的回底延迟采样以此为起点，无可轮询条件

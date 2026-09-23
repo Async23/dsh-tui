@@ -462,6 +462,8 @@ dsh-tui 自身区块写入 settings.yaml 用户层，多数设置实时生效；
 
 **scrollGutter**：scrollbar 轨道可直接拖；`Shift`/`Alt`/`Ctrl`+拖动仍是文字选择。
 
+**显示回到底部按钮**（`showBackToBottom`，个人版新增，默认开）：在 `/settings` 的 dsh-tui 区块切换，自动保存且立即生效。开启时，离开底部显示“回到底部”，有未读内容时显示新消息数量；关闭时两种提示都隐藏。滚动、既有回底操作和回底后的自动跟随保持不变，重启后保留选择。
+
 **pageMargin**：自定义 `NxM` = 左右 `N` 列、上下 `M` 行（上限 8x4）；只填 `N` 则上下 1 行。
 
 未声明 TUI 区块的命名空间以只读形式列出，需手工编辑 `~/.dsh/settings.yaml`。

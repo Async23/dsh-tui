@@ -63,6 +63,8 @@
     fullscreen: true
     # 在支持的终端预览图片；/settings 可关闭，重启生效。
     terminalImages: true
+    # 回到底部 / 新消息按钮；/settings 可实时开关，默认显示。
+    # showBackToBottom: true
     # 回复中的 ```mermaid 代码块画成字符图；false 保留源码。/settings 可实时改。
     # mermaidDiagrams: true
     # Reasoning effort applied to every request, validated against the live

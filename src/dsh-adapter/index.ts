@@ -97,6 +97,9 @@ export interface Config {
    *  `dsh-tui.scrollGutter`): `timeline` turn rail (default), `scrollbar`
    *  proportional thumb, or `hidden`. */
   scrollGutter?: ScrollGutterMode
+  /** Show the return-to-bottom / new-message button while scrolled up.
+   *  Defaults on; editable live from `/settings`. */
+  showBackToBottom?: boolean
   /** Root page inset (settings `dsh-tui.pageMargin`): a preset name
    *  (`none` / `slim` / `normal` (default) / `roomy`) or a custom `NxM`
    *  spec (columns per side × rows top/bottom) that insets the whole UI
@@ -165,6 +168,7 @@ export const Config: Schema<Config> = Schema.object({
   thinkingFold: Schema.union(['preview', 'full']).default('preview'),
   toolBackground: Schema.union(['none', 'subtle', 'strong']).default('none'),
   scrollGutter: Schema.union(['timeline', 'scrollbar', 'hidden']).default('timeline'),
+  showBackToBottom: Schema.boolean().default(true),
   // Preset names AND custom `NxM` specs must survive validation (a custom
   // spec is not a fixed union member); junk is normalized to `normal` by
   // the transform, so every parsed config carries a valid setting.

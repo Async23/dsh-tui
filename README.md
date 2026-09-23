@@ -7,6 +7,7 @@ A personal fork of [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 ## Customizations
 
 - **Compact Recap:** removes two extra blank rows above the recap divider and summary. The divider, full summary, natural wrapping, hover hint, expand and dismiss behavior remain available. With a one-line recap, the component occupies two terminal rows instead of four.
+- **Optional back-to-bottom button:** show or hide the return-to-bottom / new-message button in `/settings`, without changing scrolling. See the [settings guide](docs/user-guide.en.md#53-the-settings-editor).
 - **Personal release channel:** `dsh-tui update` and `/update` check this repository's GitHub Releases. Failed checks do not switch to the upstream npm release channel.
 - **Verified installation:** release installation and updates verify the plugin archive against `SHA256SUMS`. The installer installs both the `dsh-tui` profile and the global `dsh-tui` / `dst` launcher, using the existing DSH home.
 - **Traceable versions:** `x.y.z-async23.N` identifies the upstream base and personal revision. Release notes record changes and validation for each revision.

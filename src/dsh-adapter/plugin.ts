@@ -530,6 +530,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     thinkingFold: config.thinkingFold,
     toolBackground: config.toolBackground,
     scrollGutter: config.scrollGutter,
+    showBackToBottom: config.showBackToBottom,
     pageMargin: config.pageMargin,
     foldTerminalCommand: config.foldTerminalCommand,
     promptSessionLabel: config.promptSessionLabel,
@@ -625,6 +626,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         thinkingFold: Schema.union(['preview', 'full']).default('preview'),
         toolBackground: Schema.union(['none', 'subtle', 'strong']).default('none'),
         scrollGutter: Schema.union(['timeline', 'scrollbar', 'hidden']).default('timeline'),
+        // Leave unset so the settings user layer can fall back to cordis config.
+        showBackToBottom: Schema.boolean(),
         // Preset names AND custom `NxM` specs (the settings field's parse
         // gate keeps junk out of the user layer; the transform normalizes
         // whatever survives — cordis.yml junk included).
@@ -709,6 +712,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       effortDefault?: string
       toolBackground?: ToolBackground
       scrollGutter?: ScrollGutterMode
+      showBackToBottom?: boolean
       pageMargin?: PageMarginSetting
       foldTerminalCommand?: boolean
       promptSessionLabel?: boolean
@@ -759,6 +763,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       channel.setThinkingFold(value.thinkingFold ?? config.thinkingFold ?? 'preview')
       channel.setToolBackground(normalizeToolBackground(value.toolBackground ?? config.toolBackground))
       channel.setScrollGutter(normalizeScrollGutter(value.scrollGutter ?? config.scrollGutter))
+      channel.setShowBackToBottom(value.showBackToBottom ?? config.showBackToBottom ?? true)
       // Page margin: the channel carries the mode (tests observe it), the
       // module store drives the actual inset box above Chat — keep both in
       // lockstep so a live /settings edit re-lays out immediately.
@@ -1075,6 +1080,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
             { value: 'scrollbar', label: 'Scrollbar', descriptions: { zh: '滚动条' } },
             { value: 'hidden', label: 'Hidden', descriptions: { zh: '隐藏' } },
           ],
+        },
+        {
+          path: ['showBackToBottom'],
+          label: 'Show back-to-bottom button',
+          descriptions: { zh: '显示回到底部按钮' },
+          hint: 'Show the return-to-bottom and new-message button while scrolled up. Turning it off only hides the button. Saves automatically and applies immediately.',
+          hintDescriptions: { zh: '向上查看历史时显示“回到底部 / 新消息”按钮。关闭仅隐藏按钮，仍可正常滚动。自动保存，立即生效。' },
+          kind: 'boolean',
+          format(value: unknown): string {
+            return String(value ?? config.showBackToBottom ?? true)
+          },
         },
         {
           path: ['pageMargin'],

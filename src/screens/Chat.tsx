@@ -1052,8 +1052,8 @@ export function Chat({
 
   // "N new messages" pill: new rows whose top edge is still BELOW the
   // viewport bottom. The count decrements as the user scrolls down through
-  // them and hits 0 (pill hides) once every new row has been on screen —
-  // no need to wait for the exact-bottom sticky restore. Chat anchors the
+  // them and hits 0 (the button switches to "return to bottom") once every
+  // new row has been on screen. Chat anchors the
   // "seen up to" point by ROW ID (stable across loadOlder prepends, unlike
   // a rows.length index); MessageList owns the row offsets, so it computes
   // how many rows past that anchor lie below the viewport and reports it.
@@ -1069,10 +1069,9 @@ export function Chat({
         : -1
     }
   }, [isSticky, channel.rows])
-  // The pill shows whenever the view is off the bottom (one-click return
-  // home): with unseen rows it counts them, otherwise it is the plain
-  // "return to bottom" affordance (Enter/End/click all land it).
-  const showPill = !isSticky
+  // The preference only controls button visibility; keep scroll state and
+  // unseen tracking alive so re-enabling it restores the current count.
+  const showPill = channel.showBackToBottom !== false && !isSticky
 
     // Idle Ctrl+C: first press arms an exit, second press exits. Under
     // Windows ConPTY the key
@@ -4666,7 +4665,7 @@ function PinnedTurnHeader({
   )
 }
 
-/** The `↓ N new messages` pill shown while scrolled up with new content. */
+/** Return-to-bottom button, with a new-message count when rows are unseen. */
 function NewMessagesPill({
   count,
   onClick,

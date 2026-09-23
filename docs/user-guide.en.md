@@ -480,6 +480,8 @@ last `/effort` (effort.json) > model default.
 
 **scrollGutter**: the scrollbar track can be dragged directly; `Shift`/`Alt`/`Ctrl`+drag is still text selection.
 
+**Show back-to-bottom button** (`showBackToBottom`, personal fork, default on): toggle it in the dsh-tui section of `/settings`; changes save automatically and apply immediately. When enabled, the button shows a return-to-bottom label while scrolled up, or a count when messages are unseen. Turning it off hides both labels. Scrolling, existing return-to-bottom actions and following new output at the bottom remain available. The choice survives restarts.
+
 **pageMargin**: custom `NxM` = `N` columns left/right, `M` rows top/bottom (cap 8x4); only `N` means 1 row top/bottom.
 
 Namespaces not declared as TUI blocks are listed read-only, edit `~/.dsh/settings.yaml` by hand.

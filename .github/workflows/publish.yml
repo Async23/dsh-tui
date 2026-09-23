@@ -28,6 +28,8 @@ jobs:
       - run: pnpm build
       - run: pnpm verify:release
       - run: node --import tsx/esm scripts/verify-auto-recap.tsx
+      - run: node --import tsx/esm scripts/verify-back-to-bottom.tsx
+      - run: DSH_TEST_COLUMNS=60 node --import tsx/esm scripts/verify-back-to-bottom.tsx
       - run: pnpm release:pack
       - name: Publish assets from the tagged source
         env:

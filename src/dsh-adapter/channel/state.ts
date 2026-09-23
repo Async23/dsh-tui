@@ -16,6 +16,7 @@ export interface ChannelLaunchOptions {
   thinkingFold?: 'preview' | 'full'
   toolBackground?: ToolBackground
   scrollGutter?: ScrollGutterMode
+  showBackToBottom?: boolean
   pageMargin?: PageMarginSetting
   foldTerminalCommand?: boolean
   promptSessionLabel?: boolean
@@ -53,6 +54,7 @@ export function createInitialChannelView(
   'workingActivity' | 'activityFrames' | 'configuredProvider' | 'configuredModel' |
   'configuredPreset' | 'configuredActivityFrames' | 'configuredLang' | 'diffLayout' |
   'thinkingFold' | 'toolBackground' | 'scrollGutter' | 'pageMargin' |
+  'showBackToBottom' |
   'foldTerminalCommand' | 'promptSessionLabel' | 'expandEditor' | 'smoothStreaming' |
   'statusBar' | 'whale' | 'whaleIdle' | 'minimal' | 'activityEnabled' | 'contextBarEnabled' |
   'agentPreset' | 'goal' | 'todos' | 'loadedContext' | 'pending' | 'commandList' |
@@ -71,6 +73,7 @@ export function createInitialChannelView(
     configuredActivityFrames: options.configuredActivityFrames, configuredLang: options.configuredLang,
     diffLayout: options.diffLayout ?? 'auto', thinkingFold: options.thinkingFold ?? 'preview',
     toolBackground: normalizeToolBackground(options.toolBackground), scrollGutter: normalizeScrollGutter(options.scrollGutter),
+    showBackToBottom: options.showBackToBottom !== false,
     pageMargin: normalizePageMargin(options.pageMargin), foldTerminalCommand: options.foldTerminalCommand === true,
     promptSessionLabel: options.promptSessionLabel === true, expandEditor: options.expandEditor !== false,
     smoothStreaming: options.smoothStreaming !== false, statusBar: normalizeStatusBar(options.statusBar),

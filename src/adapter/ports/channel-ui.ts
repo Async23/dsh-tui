@@ -109,6 +109,8 @@ export interface ChannelUi {
    *  `dsh-tui.scrollGutter`: turn timeline / proportional scrollbar /
    *  nothing). */
   readonly scrollGutter: ScrollGutterMode
+  /** Show the return-to-bottom / new-message button; scrolling is independent. */
+  readonly showBackToBottom: boolean
   /** Root page inset (settings `dsh-tui.pageMargin`): a preset name
    *  (`none` / `slim` / `normal` (default) / `roomy`) or a custom `NxM`
    *  spec (columns per side × rows top/bottom) inset the whole UI from the
@@ -560,6 +562,7 @@ export interface ChannelUi {
   setThinkingFold(mode: 'preview' | 'full'): void
   setToolBackground(background: ToolBackground): void
   setScrollGutter(mode: ScrollGutterMode): void
+  setShowBackToBottom(visible: boolean): void
   setPageMargin(setting: PageMarginSetting): void
   setFoldTerminalCommand(enabled: boolean): void
   setPromptSessionLabel(enabled: boolean): void
