@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-harness-tui/dsh-tui",
-  "version": "0.10.2-async23.5",
+  "version": "0.10.2-async23.6",
   "description": "Async23’s personal dsh-TUI fork, with compact Recap spacing and GitHub Release updates.",
   "keywords": [
     "dsh",

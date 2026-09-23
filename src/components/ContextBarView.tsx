@@ -22,9 +22,8 @@ import {
  * already decorative, and they never fit the narrow segments anyway). The only
  * text left is the free segment's right-aligned usage readout.
  *
- * ONE hover target for the whole bar rather than one per segment. The colors
- * are named on the footer's supplemental row, shown by default while idle
- * and also available by hovering anywhere on the bar. A
+ * ONE hover target for the whole bar rather than one per segment. Hovering
+ * anywhere on the bar names its colors on the footer's supplemental row. A
  * per-segment target also made every crossing of the five fills an
  * enter+leave pair, hence a footer re-render per crossing.
  *
