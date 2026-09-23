@@ -15,8 +15,8 @@ import { stringWidth } from '../ink/stringWidth.js'
  *
  *  The bar draws NO text inside a used segment: the fill color is the whole
  *  signal (community feedback — the old `s`/`p`/`t` letters read as noise on
- *  a row that is already decorative). `labels` therefore belongs to the hover
- *  breakdown only: index 0 is the readable name, index 1 the short form the
+ *  a row that is already decorative). `labels` belongs to the supplemental
+ *  row's breakdown: index 0 is the readable name, index 1 the short form the
  *  supplemental row falls back to on a narrow terminal. Exported for the
  *  hoverable JSX bar (ContextBarView), which re-derives the same column split
  *  this module's ANSI path renders. */
@@ -32,7 +32,7 @@ export const USED_SEGMENTS = [
 export type ContextSegments = Record<(typeof USED_SEGMENTS)[number]['key'], number>
 
 /** Free-segment colors: light grey fill, dark grey readout. Exported so the
- *  JSX bar (ContextBarView) and the hover chip paint the same free color the
+ *  JSX bar (ContextBarView) and the legend chip paint the same free color the
  *  ANSI path does instead of re-declaring the hex. */
 export const FREE_SEGMENT_FILL = '#E8E8E8'
 export const FREE_SEGMENT_TEXT = '#4A4A4A'
@@ -142,7 +142,7 @@ function renderFreeSegment(
   return background(fill, style(rightAlignBarText(options, width)))
 }
 
-/** One entry of the context bar's hover breakdown: the fill color, the name
+/** One entry of the context bar's breakdown: the fill color, the name
  *  to put next to a swatch of it, and the token count already folded into
  *  `label` (`system 1.2k`). */
 export type ContextBarBreakdownEntry = {
@@ -150,7 +150,7 @@ export type ContextBarBreakdownEntry = {
   key: string
   /** The chip label, e.g. `thinking 5.0k`. */
   label: string
-  /** The segment's fill color — the hover chip paints with it, which is what
+  /** The segment's fill color — the legend chip paints with it, which is what
    *  ties each number back to a slice of the bar. */
   color: Color
 }
@@ -162,7 +162,7 @@ export type ContextBarBreakdown = {
 }
 
 /**
- * The context bar's hover breakdown — the legend the bar no longer carries
+ * The context bar's breakdown — the legend the bar no longer carries
  * itself. One entry per segment the bar actually paints (a zero-token content
  * type gets no columns, so it gets no entry either), in bar order, free last.
  *
@@ -283,7 +283,7 @@ export function allocateBarColumns(values: readonly number[], width: number): nu
  * The segmented context bar: used segments by content type, then the
  * remainder as a light free segment whose right edge carries the usage
  * readout (`13k/64k 19.5%`). No other text — the bar is read by color, and
- * the pointer supplies the names and numbers (contextBarBreakdown). The
+ * the supplemental row supplies the names and numbers (contextBarBreakdown). The
  * readout tints amber / red as the context fills (contextPressureStep).
  * @param segments - Used tokens per content type.
  * @param usedTokens - Total used tokens, driving the usage readout.

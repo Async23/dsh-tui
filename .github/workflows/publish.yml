@@ -27,6 +27,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm build
       - run: pnpm verify:release
+      - run: NODE_ENV=production node --import tsx/esm scripts/verify-hover-details.tsx
       - run: node --import tsx/esm scripts/verify-auto-recap.tsx
       - run: node --import tsx/esm scripts/verify-back-to-bottom.tsx
       - run: DSH_TEST_COLUMNS=60 node --import tsx/esm scripts/verify-back-to-bottom.tsx

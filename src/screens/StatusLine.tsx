@@ -43,10 +43,9 @@ import type { WaveBand } from '../dsh-adapter/types.js'
  *
  * Every metric field is hover-aware (fullscreen mouse): dwelling on a field
  * swaps the ctx readout for a mini pressure gauge and parks that field's
- * detailed breakdown on the supplemental row where the idle hint lives —
- * the footer stays one line tall, the detail is a peek, not a layout
- * change. The context bar answers the same way: it carries no labels of its
- * own, so hovering it is how its colors get their names and numbers.
+ * detailed breakdown on the supplemental row. Without a hover detail,
+ * operation hint or activity summary, that row shows the context bar's
+ * legend. Its height stays fixed while the content changes.
  */
 
 /**
@@ -460,14 +459,16 @@ const selectionBadge = formatSelectionBadge(channel.selection)
     usage !== undefined &&
     channel.contextWindow !== undefined
 
-  // The supplemental-row readout for the hovered field: replaces the idle
-  // hint (never the activity line) while the pointer dwells on a field.
+  // Hover details and operation hints take precedence over the default
+  // context legend. An activity summary keeps its space when enabled.
   const detail = buildHoverDetail(hover, channel, usage, contextUsed, columns, barColors)
   const trailer: React.ReactNode = detail !== null
     ? detail
     : hint !== ''
       ? <Text color="inactiveShimmer">{hint}</Text>
-      : null
+      : barVisible && !showActivity
+        ? buildHoverDetail('bar', channel, usage, contextUsed, columns, barColors)
+        : null
 
   const compactFields = [...leftFields, ...rightFields]
   const fullLeftFields = [
@@ -478,10 +479,9 @@ const selectionBadge = formatSelectionBadge(channel.selection)
   // The supplemental row is PERMANENTLY mounted (height pinned to 1)
   // whenever the footer carries hoverable chrome — mounting it from nothing
   // on hover is what made the footer grow mid-gesture and shoved the
-  // transcript up (user feedback). Idle it may sit blank: a stable footer
-  // outranks a reclaimable row, and hovering only ever swaps this line's
-  // content. Minimal mode keeps the old contract — no hover details, the
-  // row appears only for real content (which its defaults never produce).
+  // transcript up (user feedback). The default legend and temporary details
+  // share this line without changing its height. Minimal mode only shows
+  // this row when it has a hint or activity to display.
   const showSupplementalRow =
     (!channel.minimal && (hasStatusFields || barVisible)) ||
     showActivity ||
@@ -589,9 +589,9 @@ type UsageSnapshot = {
 }
 
 /**
- * The supplemental-row readout for a hovered footer field. Technical label
- * tokens (ctx, free, read, sys…) stay unlocalized like the footer fields
- * themselves; sentences go through t(). Returns null when nothing is
+ * The supplemental-row readout for a footer field, also used for the default
+ * context legend. Technical labels (ctx, free, read, sys…) stay unlocalized
+ * like the footer fields themselves; sentences go through t(). Returns null when nothing is
  * hovered (or the hover outlived its data, which the field gating makes
  * near-impossible).
  */

@@ -9,8 +9,8 @@
  *  H. 状态栏 model/git 字段：悬停 model 弹 provider + ctx 窗口明细；
  *     悬停 git 弹完整分支名（原地明细行契约，与 tps/cost 同款）。
  *  I. 上下文进度条：条上不再有任何文字（内容类型只由颜色表达，唯一的
- *     文本是最右占比）；整条一个悬停目标，悬停任意位置弹【全部内容类型
- *     + free】的色块+数字明细——条没有标签，这行就是它的 legend。
+ *     文本是最右占比）；空闲时默认显示【全部内容类型 + free】的图例。
+ *     悬停其他字段或出现操作提示时临时切换，结束后恢复，行高不变。
  *
  * Run: `node --import tsx/esm scripts/verify-hover-details.tsx`
  */
@@ -295,6 +295,8 @@ try {
   const barTerm = barRig.term
   const barStdin = barRig.stdin
   check('场景 I 就绪：进度条读数在屏', await settled(() => screenHas(barTerm, '19.5%')))
+  check('I 未悬停时默认显示上下文明细',
+    await settled(() => screenHas(barTerm, 'system 1.2k') && screenHas(barTerm, 'free 52k')))
   {
     // 条自身那一行：最右读数（总数 + 占比）是全部文字，没有任何类型名。
     const barRow = findText(barTerm, '19.5%')?.row ?? -1
@@ -338,7 +340,8 @@ try {
       await settled(() => screenHas(barTerm, 'tools 2.0k') && screenHas(barTerm, 'free 52k')))
   }
   hover(barStdin, 1, 1)
-  check('I 移开条即撤下明细', await settled(() => !screenHas(barTerm, 'thinking 5.0k')))
+  await sleep(100) // 固定窗:探针 移开后图例应保持显示，不能轮询已成立的条件
+  check('I 移开条仍保留默认明细', screenHas(barTerm, 'thinking 5.0k'))
 
   // 压力染色上屏：同一实例改用 84% 占用重渲染，读数文字应转成主题 warning。
   const { ThemeProvider } = ui
@@ -364,6 +367,77 @@ try {
   }
   barInstance.unmount()
   await sleep(100) // 固定窗:pacing unmount 收尾输出 flush，无可观测完成条件
+
+  // J：实际终端帧验证默认图例、临时内容和恢复；两种屏幕模式与宽度。
+  for (const fullscreen of [true, false]) {
+    for (const cols of [120, 80]) {
+      const rig = makeRig(cols, 12)
+      const label = `J ${fullscreen ? 'fullscreen' : 'inline'} ${cols}`
+      const draw = (props: Partial<React.ComponentProps<typeof StatusLine>> = {}) => {
+        const footer = <Box flexDirection="column">
+          <KeySink />
+          <StatusLine channel={barStub as never} {...props} />
+          <ui.Text>footer-end</ui.Text>
+        </Box>
+        return fullscreen ? <AlternateScreen>{footer}</AlternateScreen> : footer
+      }
+      const mounted = await render(draw(), {
+        stdout: rig.stdout, stdin: rig.stdin, exitOnCtrlC: false, patchConsole: false,
+      })
+      const hasLegend = () => screenHas(rig.term, 'free 52k')
+      check(`${label} 默认图例可见`, await settled(hasLegend))
+      const bottom = findText(rig.term, 'footer-end')?.row
+      const remainsSameHeight = () => findText(rig.term, 'footer-end')?.row === bottom
+
+      // 鼠标悬停由全屏模式启用；inline 保留终端原生鼠标行为。
+      if (fullscreen) {
+        hoverText(rig.stdin, rig.term, 'TM')
+        check(`${label} model 详情临时替换图例`,
+          await settled(() => screenHas(rig.term, 'provider test-provider') && !hasLegend()))
+        check(`${label} 悬停不增加行高`, remainsSameHeight())
+        hover(rig.stdin, 1, 1)
+        check(`${label} 移开后恢复图例`, await settled(hasLegend))
+      }
+
+      mounted.rerender(draw({ channel: { ...barStub, working: true } as never }))
+      check(`${label} 执行中操作提示优先`,
+        await settled(() => screenHas(rig.term, 'esc 中断') && !hasLegend()))
+      mounted.rerender(draw({ selectionActive: true }))
+      check(`${label} 文本选择提示优先`,
+        await settled(() => screenHas(rig.term, 'esc 返回输入') && !hasLegend()))
+      mounted.rerender(draw())
+      check(`${label} 操作结束恢复图例且高度不变`,
+        await settled(() => hasLegend() && remainsSameHeight()))
+
+      const withHints = { ...barStub, statusBar: { ...barStub.statusBar, shortcutHint: true } }
+      mounted.rerender(draw({ channel: withHints as never }))
+      check(`${label} 用户开启的空闲提示仍优先`,
+        await settled(() => screenHas(rig.term, '? 查看快捷键') && !hasLegend()))
+      mounted.rerender(draw({ channel: withHints as never, helpOpen: true }))
+      check(`${label} 快捷键提示隐藏后恢复图例`, await settled(hasLegend))
+
+      mounted.rerender(draw({ channel: {
+        ...barStub, statusBar: { ...barStub.statusBar, activity: true },
+        workingActivity: { phase: 'done', line: 'Finished fixture task' },
+      } as never }))
+      check(`${label} 活动摘要不被默认图例挤占`,
+        await settled(() => screenHas(rig.term, 'Finished fixture task') && !hasLegend()))
+      mounted.rerender(draw({ channel: { ...barStub, contextBarEnabled: false } as never }))
+      check(`${label} 关闭进度条后不残留默认图例`,
+        await settled(() => !hasLegend() && !screenHas(rig.term, 'Finished fixture task')))
+      mounted.rerender(draw())
+      check(`${label} 重新开启进度条恢复图例`, await settled(hasLegend))
+      mounted.rerender(draw({ channel: { ...barStub, lastUsage: undefined } as never }))
+      check(`${label} 新会话无用量时不显示虚构图例`, await settled(() => !hasLegend()))
+      mounted.rerender(draw())
+      check(`${label} 获取用量后恢复图例`, await settled(hasLegend))
+      mounted.rerender(draw({ channel: { ...barStub, minimal: true } as never }))
+      check(`${label} 极简模式不新增图例`, await settled(() => !hasLegend()))
+      mounted.unmount()
+      await sleep(100) // 固定窗:pacing 前一终端实例卸载完成后再创建下一实例
+      rig.term.dispose()
+    }
+  }
 
   console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILURES`)
   process.exit(failed === 0 ? 0 : 1)

@@ -23,8 +23,8 @@ import {
  * text left is the free segment's right-aligned usage readout.
  *
  * ONE hover target for the whole bar rather than one per segment. The colors
- * are named where there is room for words: hovering anywhere on the bar parks
- * the full per-content-type breakdown on the footer's supplemental row. A
+ * are named on the footer's supplemental row, shown by default while idle
+ * and also available by hovering anywhere on the bar. A
  * per-segment target also made every crossing of the five fills an
  * enter+leave pair, hence a footer re-render per crossing.
  *
