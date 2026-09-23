@@ -3186,11 +3186,8 @@ export function PromptInput({
   }
   const peekClipped = peekVisualLines.length >= PEEK_MAX_ROWS
 
-  const lastNotification =
-    channel.notifications[channel.notifications.length - 1]
-
   // Composer height shrink: clearing multi-line text (Enter/Esc/Ctrl+C/
-  // Backspace) or dismissing a notification collapses the input area, shifting the
+  // Backspace) collapses the input area within one commit, shifting the
   // status line up and the whole chrome with it. The renderer's
   // full-damage pass (didLayoutShift) repaints the shifted siblings, but
   // inline mode's virtual↔scrollback correspondence needs the stronger
@@ -3199,16 +3196,18 @@ export function PromptInput({
   // growth scrolls the terminal naturally and needs no recovery.
   const contentRows = value.length === 0 ? 1 : visibleLines.length
   noteAuxNumber('promptContentRows', contentRows)
-  const promptRows = contentRows + (lastNotification ? 1 : 0)
-  const prevPromptRowsRef = React.useRef(promptRows)
+  const prevContentRowsRef = React.useRef(contentRows)
   React.useLayoutEffect(() => {
-    if (promptRows < prevPromptRowsRef.current) {
+    if (contentRows < prevContentRowsRef.current) {
       const ink = instances.get(process.stdout) ?? instances.values().next().value
       ink?.invalidatePrevFrame()
       ink?.reanchorViewport()
     }
-    prevPromptRowsRef.current = promptRows
-  }, [promptRows])
+    prevContentRowsRef.current = contentRows
+  }, [contentRows])
+
+  const lastNotification =
+    channel.notifications[channel.notifications.length - 1]
 
   // Park the native terminal cursor at the input caret (via the renderer's
   // cursor-declaration mechanism). Terminal emulators render IME preedit
@@ -3620,7 +3619,7 @@ export function PromptInput({
   if (suspended) return null
 
   return (
-    <Box flexDirection="column" marginTop={lastNotification ? 1 : 0}>
+    <Box flexDirection="column" marginTop={1}>
       {/* 瞬态面板浮层（帮助/队列/补全）：零布局高度、向上覆盖转录尾部，
           帧高不随面板开关涨落——否则帧顶行会被滚进 scrollback 并在关闭
           重绘时二次写入（/model 切换多一份启动画的根因，见 OverlayAbove）。 */}
@@ -3737,9 +3736,9 @@ export function PromptInput({
       </OverlayAbove>
       )}
       {lastNotification && (
-        // Reserve the row above the border only while a notification is
-        // visible. The absolute layer uses that row without covering the
-        // working status; an empty prompt gap is never kept around.
+        // position=absolute takes zero layout height so the transcript never
+        // shifts when a notification appears/disappears; the layer floats one
+        // row above the prompt border, right-aligned.
         <Box
           position="absolute"
           marginTop={-1}

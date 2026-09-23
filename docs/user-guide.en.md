@@ -431,7 +431,7 @@ An empty session shows the whale logo area at the top (scrolls away with the con
 - Colored by content type (system / prompt / assistant / thinking / tools).
 - The only text on the bar is the right-edge reading `13k/64k 19.5%` (narrow screens show only `19.5%`).
 - The reading colors by usage: <80% gray-blue, **≥80% amber, ≥95% red**.
-- Hovering the whole bar shows its legend on the third row: color block + name + token count (narrow screens shorten the names).
+- The legend appears on the third row: color block + name + token count (narrow screens shorten the names); hovering the whole bar also reveals it.
 
 **Row 2 — status field row** (each field toggled separately, see `/settings`)
 - left group: model → TPS → thinking → mode → ctx → cache hit rate → tokens (`1.2k→340` input→output) →
@@ -443,9 +443,9 @@ An empty session shows the whale logo area at the top (scrolls away with the con
 - Default off: tokens, tps, gitBranch, sessionTitle, sessionId, mode, activity, trajectory.
 
 **Row 3 — context details / hints / working activity + mini trace bar**
-- With usage data and the context bar enabled, the row defaults to the `ctx` detail: percentage, used/total capacity, remaining capacity (`free`), and per-type token counts. Hovering the context bar or another status field temporarily shows its details; leaving restores the default detail. Content changes keep the same row height; minimal mode omits the default detail.
-- Operation hints take precedence: running shows `esc to interrupt`, selecting shows `esc to return to input`; idle shows `? for shortcuts` only when `statusBar.shortcutHint` is enabled and help is closed. The default detail returns when the hint ends.
-- When `statusBar.activity` is enabled and an activity summary is available, the default detail yields its space to that summary.
+- With usage data and the context bar enabled, the row defaults to per-type token counts and remaining capacity (`free`). Hovering another status field temporarily shows its details; leaving restores the legend. Content changes keep the same row height; minimal mode omits the default legend.
+- Operation hints take precedence: running shows `esc to interrupt`, selecting shows `esc to return to input`; idle shows `? for shortcuts` only when `statusBar.shortcutHint` is enabled and help is closed. The legend returns when the hint ends.
+- When `statusBar.activity` is enabled and an activity summary is available, the default legend yields its space to that summary.
 - Idle also shows the working-activity animation (`statusBar.activity` on), context ≥80% amber, ≥95% red.
 - Right-side **mini trace bar MiniWake** (`statusBar.trajectory`, default off): session projected as density glyphs, color per channel, failures red;
   degrades/hides on narrow screens.

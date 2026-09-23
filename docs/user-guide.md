@@ -414,7 +414,7 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 - 按内容类型分段着色（system / prompt / assistant / thinking / tools）。
 - 条上唯一文字是最右缘读数 `13k/64k 19.5%`（窄屏只显示 `19.5%`）。
 - 读数按占用率变色：<80% 灰蓝，**≥80% 琥珀、≥95% 红**。
-- 悬停整条时，第三行显示图例：色块 + 名称 + token 数（窄屏自动改用短名）。
+- 图例显示在第三行：色块 + 名称 + token 数（窄屏自动改用短名）；悬停整条也可查看。
 
 **Row 2 — 状态字段行**（每个字段独立开关，见 `/settings`）
 - 左组：模型 → TPS → thinking → mode → ctx → cache 缓存命中率 → tokens（`1.2k→340` 输入→输出）→
@@ -425,9 +425,9 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 - 默认关：tokens、tps、gitBranch、sessionTitle、sessionId、mode、activity、trajectory。
 
 **Row 3 — 上下文明细 / 提示 / 工作活动 + 迷你轨迹条**
-- 有上下文用量且进度条开启时，默认显示 `ctx` 详情：占比、已用/总容量、剩余容量 `free` 及各类 token 数。鼠标悬停彩色条或其他状态字段时临时显示对应详情，移开后恢复。切换内容不增加行高；极简模式不显示默认详情。
-- 操作提示优先于默认详情：运行中显示 `esc to interrupt`、选择中显示 `esc to return to input`；空闲的 `? for shortcuts` 仅在 `statusBar.shortcutHint` 开启且帮助未打开时显示。提示结束后恢复默认详情。
-- 开启 `statusBar.activity` 且有活动摘要时，保留摘要，不用默认详情挤占其空间。
+- 有上下文用量且进度条开启时，默认显示各类 token 数和剩余容量 `free`。鼠标悬停其他状态字段时临时显示对应详情，移开后恢复。切换内容不增加行高；极简模式不显示默认图例。
+- 操作提示优先于默认图例：运行中显示 `esc to interrupt`、选择中显示 `esc to return to input`；空闲的 `? for shortcuts` 仅在 `statusBar.shortcutHint` 开启且帮助未打开时显示。提示结束后恢复图例。
+- 开启 `statusBar.activity` 且有活动摘要时，保留摘要，不用默认图例挤占其空间。
 - 空闲还显示 working-activity 动画帧（`statusBar.activity` 开），上下文 ≥80% 琥珀、≥95% 红。
 - 右侧**迷你轨迹条 MiniWake**（`statusBar.trajectory`，默认关）：会话投影为密度字形，颜色区分通道，失败列染红；
   窄屏降格/隐藏。
