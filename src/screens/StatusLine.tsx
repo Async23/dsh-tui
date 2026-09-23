@@ -44,8 +44,8 @@ import type { WaveBand } from '../dsh-adapter/types.js'
  * Every metric field is hover-aware (fullscreen mouse): dwelling on a field
  * swaps the ctx readout for a mini pressure gauge and parks that field's
  * detailed breakdown on the supplemental row. Without a hover detail,
- * operation hint or activity summary, that row shows the context bar's
- * legend. Its height stays fixed while the content changes.
+ * operation hint or activity summary, that row shows the context usage
+ * detail. Its height stays fixed while the content changes.
  */
 
 /**
@@ -460,14 +460,14 @@ const selectionBadge = formatSelectionBadge(channel.selection)
     channel.contextWindow !== undefined
 
   // Hover details and operation hints take precedence over the default
-  // context legend. An activity summary keeps its space when enabled.
+  // context usage detail. An activity summary keeps its space when enabled.
   const detail = buildHoverDetail(hover, channel, usage, contextUsed, columns, barColors)
   const trailer: React.ReactNode = detail !== null
     ? detail
     : hint !== ''
       ? <Text color="inactiveShimmer">{hint}</Text>
       : barVisible && !showActivity
-        ? buildHoverDetail('bar', channel, usage, contextUsed, columns, barColors)
+        ? buildHoverDetail('ctx', channel, usage, contextUsed, columns, barColors)
         : null
 
   const compactFields = [...leftFields, ...rightFields]
@@ -479,7 +479,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
   // The supplemental row is PERMANENTLY mounted (height pinned to 1)
   // whenever the footer carries hoverable chrome — mounting it from nothing
   // on hover is what made the footer grow mid-gesture and shoved the
-  // transcript up (user feedback). The default legend and temporary details
+  // transcript up (user feedback). The default detail and temporary details
   // share this line without changing its height. Minimal mode only shows
   // this row when it has a hint or activity to display.
   const showSupplementalRow =
@@ -590,7 +590,7 @@ type UsageSnapshot = {
 
 /**
  * The supplemental-row readout for a footer field, also used for the default
- * context legend. Technical labels (ctx, free, read, sys…) stay unlocalized
+ * context usage detail. Technical labels (ctx, free, read, sys…) stay unlocalized
  * like the footer fields themselves; sentences go through t(). Returns null when nothing is
  * hovered (or the hover outlived its data, which the field gating makes
  * near-impossible).
@@ -636,7 +636,7 @@ function buildHoverDetail(
     case 'ctx': {
       if (contextUsed === undefined || window === undefined || window <= 0) return null
       const free = Math.max(0, window - contextUsed)
-      // The hover payoff for the ctx ask: percent + counts + free, then the
+      // The ctx detail: percent + counts + free, then the
       // segment breakdown as the truncate-able tail (no bar — the row's
       // in-place morph and the segment bar above already carry the gauge).
       const segments = USED_SEGMENTS.map(
