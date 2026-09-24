@@ -7,6 +7,7 @@ A personal fork of [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)
 ## Customizations
 
 - **Accurate todo shortcut hints:** the panel and help menu follow the configured binding. See the [keyboard guide](docs/user-guide.en.md#2-keymap-quick-reference).
+- **Compact input area:** the row above the input is reserved only while a notification is visible; it is reclaimed when the notification disappears.
 - **Compact Recap:** removes two extra blank rows above the recap divider and summary. The divider, full summary, natural wrapping, hover hint, expand and dismiss behavior remain available. With a one-line recap, the component occupies two terminal rows instead of four.
 - **Optional back-to-bottom button:** show or hide the return-to-bottom / new-message button in `/settings`, without changing scrolling. See the [settings guide](docs/user-guide.en.md#53-the-settings-editor).
 - **Context usage while idle:** the footer shows occupancy, used and free capacity, and per-type token counts whenever no hint or activity summary is displayed. Hover over the bar for its color legend. See the [status bar guide](docs/user-guide.en.md#52-bottom-status-bar-three-rows-under-the-input).

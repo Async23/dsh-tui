@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-harness-tui/dsh-tui",
-  "version": "0.10.2-async23.6",
+  "version": "0.10.2-async23.7",
   "description": "Async23’s personal dsh-TUI fork, with compact Recap spacing and GitHub Release updates.",
   "keywords": [
     "dsh",
@@ -220,7 +220,8 @@
     "verify:channel-composition": "node --import tsx/esm scripts/verify-channel-composition.ts",
     "verify:channel-trace-read": "node --import tsx/esm scripts/verify-channel-trace-read.ts",
     "release:pack": "node scripts/pack-release.mjs",
-    "verify:release": "node scripts/verify-fork-release.mjs"
+    "verify:release": "node scripts/verify-fork-release.mjs",
+    "verify:prompt-spacing": "node scripts/verify-prompt-spacing.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

@@ -334,6 +334,8 @@ const GROUPS = {
 // stdin 批量按键回归：同一读取内的文本、方向键、文本必须依次基于
 // 前一事件的输入状态执行，不能因 React 批处理读取旧闭包而丢字符。
     ["verify-batched-prompt-input", ['node', 'scripts/verify-batched-prompt-input.mjs']],
+// 输入框上方只在有通知时占一行；全屏/inline、窄屏和通知/多行输入收缩回归。
+    ["verify-prompt-spacing", ['node', 'scripts/verify-prompt-spacing.mjs']],
 // 快捷键 keymap 回归：共享组合语法、动作注册表与 /settings 改键
 // （Alt+V 粘贴别名、覆盖热更新、保留位集合、草稿冲突校验），以及
 // 真 Chat 里 Alt+V / 改键后的外部编辑器路径。
