@@ -108,7 +108,6 @@ import instances from '../ink/instances.js'
 import { useAnimationFrame } from '../ink/hooks/use-animation-frame.js'
 import { useExternalVersion } from '../hooks/useExternalVersion.js'
 import { TrajectoryScene } from './TrajectoryScene.js'
-import { resumeFailureText } from '../sessions/resumeFailure.js'
 import { markHomeSeen } from '../homePrefs.js'
 import { extendTrajectory, projectWave, type TrajBuild } from '../dsh-adapter/trajectory/index.js'
 import { miniWakeWidth } from '../components/trajectory/MiniWake.js'
@@ -3750,18 +3749,16 @@ export function Chat({
         approval={approvalSnapshot}
         onApprove={outcome => approvals.decide(outcome)}
         onOpenSession={async (sessionId) => {
+          // A refusal is reported by the screen itself (see `openSession`):
+          // the composer that draws channel notifications is not mounted here.
           const result = await channel.resumeTo(sessionId)
-          if (!result.ok) {
-            const text = resumeFailureText(result)
-            if (text !== undefined) channel.notify(text, { color: 'error', timeoutMs: 8000 })
-            return false
-          }
+          if (!result.ok) return result
           channel.notify(t('resume-resumed'))
           suppressLogoIntroRef.current = true
           setAgentViewReturnId(undefined)
           setSupervisorOpen(false)
           repaintTranscript()
-          return true
+          return result
         }}
         onNewSession={async (target) => {
           const ok = await channel.switchWorkspace(target)
