@@ -919,7 +919,7 @@ export default class Ink {
     if (this.altScreenActive) {
       selActive = hasSelection(this.selection);
       if (selActive) {
-        applySelectionOverlay(frame.screen, this.selection, this.stylePool);
+        applySelectionOverlay(frame.screen, this.selection, this.stylePool, frame.images);
       }
       // Commit-consistency guard: hash the rows under the highlight on the
       // frame the copy would actually read. An uncoordinated change since
