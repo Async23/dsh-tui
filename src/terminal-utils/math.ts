@@ -205,7 +205,16 @@ function tokenizeEnvironmentBlock(source: string, opener: RegExpExecArray): Math
   return { type: 'mathBlock', raw: source, text: source.trim(), display: true, standalone: true, delimiter: 'environment', pending: true }
 }
 
+/**
+ * The source the block tokenizer last saw. marked tries block extensions at
+ * each block position before cutting a paragraph, then calls `start` with
+ * that same source minus its first character; `start` needs the whole
+ * paragraph (its first character may open a code span).
+ */
+let lastBlockSource = ''
+
 function tokenizeBlockMath(source: string): MathToken | undefined {
+  lastBlockSource = source
   const environment = ENVIRONMENT_OPENER.exec(source)
   if (environment !== null) return tokenizeEnvironmentBlock(source, environment)
   const opener = BLOCK_OPENER.exec(source)
@@ -244,14 +253,43 @@ function tokenizeBlockMath(source: string): MathToken | undefined {
   }
 }
 
+/**
+ * Whether `prefix` (the paragraph text before a candidate block opener) ends
+ * inside a code span: complete backtick-delimited spans are skipped, and a
+ * backtick run left without its matching closer is still open.
+ */
+function insideOpenCodeSpan(prefix: string): boolean {
+  const paragraphStart = prefix.lastIndexOf('\n\n')
+  const text = paragraphStart < 0 ? prefix : prefix.slice(paragraphStart + 2)
+  const runs = text.match(/`+/g) ?? []
+  // CommonMark: a span closes at the next backtick run of exactly the same length.
+  for (let open = 0; open < runs.length; open++) {
+    let close = open + 1
+    while (close < runs.length && runs[close]!.length !== runs[open]!.length) close++
+    if (close === runs.length) return true
+    open = close
+  }
+  return false
+}
+
 /** Tokenizer extensions for `marked.use({ extensions })`. */
 export const MATH_MARKDOWN_EXTENSIONS: readonly TokenizerExtension[] = [
   {
     name: 'mathBlock',
     level: 'block',
     start(source) {
-      const match = /(?:^|\n) {0,3}(?:\$\$|\\\[|\\begin\{)/.exec(source)
-      return match ? match.index + (match[0].startsWith('\n') ? 1 : 0) : undefined
+      // Same block position: exactly one character longer (a full string
+      // comparison here would cost O(remaining text) per paragraph).
+      const paragraph = lastBlockSource.length === source.length + 1 ? lastBlockSource : source
+      const offset = paragraph.length - source.length
+      const opener = /(?:^|\n) {0,3}(?:\$\$|\\\[|\\begin\{)/g
+      for (let match = opener.exec(source); match !== null; match = opener.exec(source)) {
+        const index = match.index + (match[0].startsWith('\n') ? 1 : 0)
+        // A code span may run across lines; a block opener inside one is
+        // code, and cutting the paragraph there would split the span.
+        if (!insideOpenCodeSpan(paragraph.slice(0, index + offset))) return index
+      }
+      return undefined
     },
     tokenizer: tokenizeBlockMath,
   },

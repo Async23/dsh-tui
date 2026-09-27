@@ -218,8 +218,9 @@ export function normalizeMathRendering(value: unknown): MathRendering {
 
 /**
  * Resolve the effective mode across the settings user layer and cordis.yml.
- * `latexMath: false` predates `mathRendering` (unreleased main builds wrote
- * it) and still means `source` when no `mathRendering` is set at that layer.
+ * `latexMath` predates `mathRendering` (unreleased main builds wrote it): at a
+ * layer without `mathRendering`, `false` means `source` and `true` means
+ * `auto`, and either one overrides the layers below.
  */
 export function resolveMathRendering(
   user: { mathRendering?: unknown; latexMath?: unknown },
@@ -227,7 +228,9 @@ export function resolveMathRendering(
 ): MathRendering {
   for (const layer of [user, config]) {
     if (layer.mathRendering !== undefined) return normalizeMathRendering(layer.mathRendering)
-    if (layer.latexMath === false) return 'source'
+    // An explicit legacy switch overrides lower layers either way: a user who
+    // turned math back on over a cordis.yml `false` keeps it on.
+    if (typeof layer.latexMath === 'boolean') return layer.latexMath ? 'auto' : 'source'
   }
   return 'auto'
 }

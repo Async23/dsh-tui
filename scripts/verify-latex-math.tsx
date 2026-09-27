@@ -157,11 +157,22 @@ assert.deepEqual(mathTexts('$$x^2$$ trails prose\n\nnext'), ['math:x^2'], 'a $$ 
   assert.equal(pendingEnv?.pending, true, 'an environment without \\end yet is pending')
   assert.deepEqual(mathTexts('\\begin{itemize}\n\\item x\n\\end{itemize}'), [], 'non-math environments stay prose')
   assert.deepEqual(mathTexts('\\begin{align} x \\end{align} trailing'), [], 'an environment with text after its \\end is not a block')
+  // A code span may run across lines: an opener inside it is code, not math.
+  const spanned = 'Use `this syntax:\n\\begin{align}\nx &= y\n\\end{align}\n` here.'
+  assert.deepEqual(mathTexts(spanned), [], 'an environment inside a multi-line code span stays code')
+  assert.ok(JSON.stringify(marked.lexer(spanned)).includes('"type":"codespan"'), 'the code span survives')
+  assert.deepEqual(
+    mathTexts('`a` and ``b``\n\\begin{align}\nx\n\\end{align}'),
+    ['mathBlock:\\begin{align}\nx\n\\end{align}'],
+    'closed code spans before the opener do not block it',
+  )
+  assert.deepEqual(mathTexts('Run `echo\n$$\nx^2\n$$\n` now'), [], 'a $$ opener inside a multi-line code span stays code')
 }
 
 // Settings: `latexMath: false` from pre-mathRendering layers still means source.
 assert.equal(resolveMathRendering({}, {}), 'auto')
 assert.equal(resolveMathRendering({ latexMath: false }, { mathRendering: 'unicode' }), 'source', 'the user layer wins')
+assert.equal(resolveMathRendering({ latexMath: true }, { latexMath: false }), 'auto', 'a legacy user-layer true overrides a cordis.yml false')
 assert.equal(resolveMathRendering({ mathRendering: 'unicode', latexMath: false }, {}), 'unicode', 'mathRendering beats latexMath at one layer')
 assert.equal(resolveMathRendering({}, { latexMath: false }), 'source')
 assert.equal(resolveMathRendering({ mathRendering: 'bogus' }, {}), 'auto', 'invalid values normalize to auto')
