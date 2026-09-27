@@ -10,6 +10,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { MigrationAdapter, MigrationDiscovery, MigrationSession, MigrationTurn } from '../types.js'
+import { countEntries } from './scan.js'
 
 interface ContentBlock { readonly type?: unknown, readonly text?: unknown }
 
@@ -111,5 +112,8 @@ export const ompAdapter: MigrationAdapter = {
     }
     for (const root of roots) walk(root, 0)
     return { roots, sessions }
+  },
+  count(): number {
+    return countEntries(this.roots(), { maxDepth: 3, fileMatch: name => name.endsWith('.jsonl') })
   },
 }
