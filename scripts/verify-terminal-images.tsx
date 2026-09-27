@@ -257,7 +257,57 @@ assert.match(
   invalidated,
   new RegExp(`a=p,i=${replacementImageId},p=1,c=6,r=3,z=-2147483648,C=1`, 'u'),
 )
-assert.match(manager.reconcile([]), new RegExp(`a=d,d=I,i=${replacementImageId}`, 'u'))
+const unplaced = manager.reconcile([])
+assert.match(
+  unplaced,
+  new RegExp(`a=d,d=i,i=${replacementImageId},p=1`, 'u'),
+  'a node leaving the frame deletes only its placement',
+)
+assert.doesNotMatch(unplaced, /a=d,d=I/u, 'image data stays uploaded while dormant')
+const replacedAgain = manager.reconcile([replacementPlacement])
+assert.doesNotMatch(replacedAgain, /\x1b_Ga=[tT],/u, 'a dormant image comes back without a re-upload')
+assert.match(
+  replacedAgain,
+  new RegExp(`a=p,i=${replacementImageId},p=\\d+,c=6,r=3`, 'u'),
+  'a dormant image comes back with one placement command',
+)
+
+// Retention budget: dormant images beyond the count bound are evicted
+// least-recently-used, releasing their terminal-side data exactly once.
+const retentionManager = new KittyGraphicsManager({ firstImageId: 501 })
+const retentionNodes = Array.from({ length: 130 }, () => createNode('ink-image'))
+const retentionSources = retentionNodes.map((_, index) => {
+  const data = source.data.slice()
+  data[0] = index & 0xff
+  data[1] = index >> 8
+  return { ...source, data }
+})
+let scrolled = ''
+for (let index = 0; index < retentionNodes.length; index++) {
+  scrolled += retentionManager.reconcile([{ ...placement, node: retentionNodes[index]!, source: retentionSources[index]! }])
+}
+scrolled += retentionManager.reconcile([])
+assert.equal(
+  [...scrolled.matchAll(/a=d,d=I,i=(\d+)/gu)].map(match => Number(match[1])).join(','),
+  '501,502',
+  'only the two least-recently-used dormant images beyond 128 are released',
+)
+assert.doesNotMatch(
+  retentionManager.reconcile([{ ...placement, node: retentionNodes[129]!, source: retentionSources[129]! }]),
+  /\x1b_Ga=[tT],/u,
+  'a recently used dormant image is re-placed without re-upload',
+)
+assert.match(
+  retentionManager.reconcile([{ ...placement, node: retentionNodes[0]!, source: retentionSources[0]! }]),
+  /a=t,t=d,f=32/u,
+  'an evicted image uploads again when it returns',
+)
+retentionManager.setCellSize({ width: 10, height: 20 })
+assert.match(
+  retentionManager.reconcile([]),
+  /a=d,d=I,i=/u,
+  'variants fitted for a previous cell geometry are released, never kept dormant',
+)
 
 const sharedManager = new KittyGraphicsManager({ firstImageId: 201 })
 const sharedNodeA = createNode('ink-image')
@@ -325,10 +375,13 @@ const removeSharedPeer = sharedManager.reconcile([
 ])
 assert.match(removeSharedPeer, /a=d,d=i,i=\d+,p=\d+/u)
 assert.doesNotMatch(removeSharedPeer, /a=d,d=I/u)
+const removeLastPeer = sharedManager.reconcile([])
+assert.match(removeLastPeer, /a=d,d=i,i=\d+,p=\d+/u, 'the last placement is deleted')
+assert.doesNotMatch(removeLastPeer, /a=d,d=I/u, 'shared data stays uploaded while dormant')
 assert.equal(
-  [...sharedManager.reconcile([]).matchAll(/a=d,d=I,i=\d+/gu)].length,
+  [...sharedManager.deleteAll().matchAll(/a=d,d=I,i=\d+/gu)].length,
   1,
-  'the last placement must release shared terminal image data exactly once',
+  'deleteAll releases shared terminal image data exactly once',
 )
 
 const query = kittyGraphics(31)
@@ -943,15 +996,20 @@ assert.ok(
   await settled(
     () =>
       stdout.output.slice(beforeFallbackRestore).includes('▓▓▓▓') &&
-      stdout.output.slice(beforeFallbackRestore).includes('a=d,d=I,i='),
+      /a=d,d=i,i=\d+,p=\d+/u.test(stdout.output.slice(beforeFallbackRestore)),
   ),
-  'removing a source must restore fallback cells and delete its image',
+  'removing a source must restore fallback cells and delete its placement',
 )
 const beforeRestore = stdout.output.length
 instance.rerender(tree)
 assert.ok(
-  await settled(() => stdout.output.slice(beforeRestore).includes('a=t,t=d,f=32')),
-  'restoring a source must upload it again',
+  await settled(() => stdout.output.slice(beforeRestore).includes('a=p,i=')),
+  'restoring a source must place it again',
+)
+assert.doesNotMatch(
+  stdout.output.slice(beforeRestore),
+  /a=t,t=d,f=32/u,
+  'restoring a source reuses the uploaded image instead of re-sending it',
 )
 const beforeHandoff = stdout.output.length
 const queriesBeforeHandoff = cellSizeQueryCount()

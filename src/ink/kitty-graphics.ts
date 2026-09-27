@@ -18,6 +18,18 @@ const ID_MAX_EXCLUSIVE = 0x7fffffff
 const PLACEMENT_ID_MAX_EXCLUSIVE = 0x40000000
 // Keep raster content behind terminal text and explicit panel backgrounds.
 const IMAGE_Z_INDEX = -0x80000000
+/**
+ * Retention for uploaded images that no node places this frame. Leaving the
+ * viewport deletes only the placement (`d=i`), so scrolling back re-places
+ * the terminal-side data with one `a=p` instead of re-fitting, re-compressing
+ * and re-sending the whole raster — the protocol's intended use, and what
+ * mature terminal UIs do. Dormant images are evicted least-recently-used past
+ * either bound. The byte bound counts decoded RGBA (what the terminal keeps)
+ * and stays a small fraction of typical terminal image quotas, so the
+ * terminal should not evict behind our back (`q=2` would hide the ENOENT).
+ */
+const DORMANT_MAX_IMAGES = 128
+const RETAINED_MAX_BYTES = 64 * 1024 * 1024
 
 type PreparedKittyRgba = {
   readonly data: Uint8Array
@@ -28,7 +40,13 @@ type PreparedKittyRgba = {
 type ImageState = {
   readonly imageId: number
   readonly payload: PreparedKittyRgba
+  /** Decoded RGBA bytes the terminal stores for this image. */
+  readonly retainedBytes: number
+  /** Cell geometry the raster was fitted for; other geometries never reuse it. */
+  readonly cellSize: TerminalCellSize
   uploaded: boolean
+  /** Last reconcile pass that placed this image (LRU order for eviction). */
+  lastUsed: number
 }
 
 type PlacementState = {
@@ -54,7 +72,9 @@ export interface KittyGraphicsManagerOptions {
  *
  * Pixel content owns an image id while each DOM node owns a placement id.
  * Equal immutable RGBA content is uploaded once and can back several nodes;
- * geometry changes replace only that node's placement without flicker.
+ * geometry changes replace only that node's placement without flicker. An
+ * image no node places stays uploaded (dormant) within the retention budget,
+ * so content that scrolls back into view is re-placed, not re-sent.
  */
 export class KittyGraphicsManager {
   private readonly images = new Map<string, ImageState>()
@@ -63,6 +83,7 @@ export class KittyGraphicsManager {
   private nextImageId: number
   private nextPlacementId = 1
   private cellSize: TerminalCellSize
+  private pass = 0
 
   constructor(options: KittyGraphicsManagerOptions = {}) {
     this.nextImageId = normalizeFirstId(
@@ -87,6 +108,7 @@ export class KittyGraphicsManager {
   }
 
   reconcile(placements: readonly TerminalImagePlacement[]): string {
+    this.pass += 1
     const desiredNodes = new Set<DOMElement>()
     const desiredImages = new Set<ImageState>()
     const desired: Array<{
@@ -99,6 +121,7 @@ export class KittyGraphicsManager {
       if (desiredNodes.has(placement.node)) continue
       desiredNodes.add(placement.node)
       const image = this.imageFor(placement)
+      image.lastUsed = this.pass
       desiredImages.add(image)
       desired.push({ placement, image })
     }
@@ -173,8 +196,11 @@ export class KittyGraphicsManager {
       this.placements.delete(node)
     }
 
+    // Deleting an image's data also removes its placements, so an evicted
+    // image needs no separate placement delete.
+    const evicted = this.evictDormant(desiredImages)
     for (const obsolete of obsoletePlacements) {
-      if (!desiredImages.has(obsolete.image)) continue
+      if (evicted.has(obsolete.image)) continue
       output.push(
         deleteKittyPlacement(
           obsolete.image.imageId,
@@ -182,14 +208,48 @@ export class KittyGraphicsManager {
         ),
       )
     }
-
-    for (const [key, image] of this.images) {
-      if (desiredImages.has(image)) continue
-      output.push(deleteKittyImage(image.imageId))
-      this.images.delete(key)
-    }
+    for (const image of evicted) output.push(deleteKittyImage(image.imageId))
 
     return output.join('')
+  }
+
+  /**
+   * Forget images no node placed this pass once they are unusable (fitted for
+   * another cell geometry) or past the retention budget, oldest first.
+   */
+  private evictDormant(desiredImages: ReadonlySet<ImageState>): Set<ImageState> {
+    const evicted = new Set<ImageState>()
+    const dormant: Array<[string, ImageState]> = []
+    let retainedBytes = 0
+    for (const entry of this.images) {
+      const image = entry[1]
+      if (desiredImages.has(image)) {
+        retainedBytes += image.retainedBytes
+      } else if (
+        image.cellSize.width !== this.cellSize.width ||
+        image.cellSize.height !== this.cellSize.height
+      ) {
+        evicted.add(image)
+      } else {
+        retainedBytes += image.retainedBytes
+        dormant.push(entry)
+      }
+    }
+    dormant.sort((a, b) => a[1].lastUsed - b[1].lastUsed)
+    let index = 0
+    while (
+      index < dormant.length &&
+      (dormant.length - index > DORMANT_MAX_IMAGES || retainedBytes > RETAINED_MAX_BYTES)
+    ) {
+      const image = dormant[index]![1]
+      evicted.add(image)
+      retainedBytes -= image.retainedBytes
+      index += 1
+    }
+    for (const [key, image] of this.images) {
+      if (evicted.has(image)) this.images.delete(key)
+    }
+    return evicted
   }
 
   /** A clear/screen swap invalidated terminal-side data; resend next frame. */
@@ -235,7 +295,10 @@ export class KittyGraphicsManager {
     const image: ImageState = {
       imageId: this.allocateImageId(),
       payload: prepareKittyRgba(fitted),
+      retainedBytes: fitted.width * fitted.height * 4,
+      cellSize: this.cellSize,
       uploaded: false,
+      lastUsed: this.pass,
     }
     this.images.set(key, image)
     return image
