@@ -48,6 +48,7 @@ import { useCopyOnSelect } from '../ink/hooks/use-copy-on-select.js'
 import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
 import { LogoHeader, MessageList } from '../components/MessageList.js'
+import { splashFontIdOf } from '../components/splashFonts.js'
 import { StarPrompt, type StarAttempt } from '../components/StarPrompt.js'
 import { dueStarModal, markStarAsked, STAR_MILESTONES } from '../usageStats.js'
 import { TimelineRail } from '../components/TimelineRail.js'
@@ -4440,6 +4441,9 @@ export function Chat({
           model={channel.model}
           effort={channel.reasoningEffort}
           cwd={channel.displayCwd}
+          // 大字字面（设置项 `dsh-tui.splashFont`）：`daily` 交回按天轮换
+          // （`undefined`），其余 pin 住一款。
+          fontId={splashFontIdOf(channel.splashFont)}
           whale={channel.whale}
           whaleIdle={channel.whaleIdle && whaleArtVisible}
           whaleGirl={channel.whaleGirl}

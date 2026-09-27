@@ -534,6 +534,10 @@ const GROUPS = {
 // 选区消费（text 优先/磁盘回退/截断计数/replay 指示回扫）。
     ["verify-ide-channel", ['node', '--import', 'tsx/esm', 'scripts/verify-ide-channel.tsx']],
     ["verify-whale-toggle", ['node', '--import', 'tsx/esm', 'scripts/verify-whale-toggle.mjs']],
+// 开屏大字字体设置（splashFont）：每个 id 解析到自己那款、daily 交回按天轮换、
+// 非法值回落 daily、channel 往返、/settings 选项覆盖全部取值、Config 默认值，
+// 以及 fontId 缝真的换脸（经典款上屏/方板款不在场）。
+    ["verify-splash-font-setting", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-font-setting.mjs']],
 // 开屏鲸鱼三选一（classic 组合开场/heart/sleep）：帧表完整性（22 帧
 // 含 heart/sleep 新调色）、序列合法性（standard 起止/纯自家行为帧、
 // classic 仍捆绑眨眼+喷水+摆尾）、随机选取 API 覆盖/钳制/每次挂载

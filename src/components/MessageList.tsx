@@ -1729,6 +1729,7 @@ export function LogoHeader({
   model,
   effort,
   cwd,
+  fontId,
   whale = true,
   whaleIdle = true,
   whaleGirl = false,
@@ -1740,6 +1741,9 @@ export function LogoHeader({
   model: string
   effort?: string | undefined
   cwd: string
+  /** Big-text face pin (settings `dsh-tui.splashFont`; `undefined` leaves
+   *  `LogoV2` on its date rotation). Passed through to LogoV2. */
+  fontId?: string | undefined
   whale?: boolean
   /** Idle whale behaviors + working signal (passed through to LogoV2). */
   whaleIdle?: boolean
@@ -1759,7 +1763,7 @@ export function LogoHeader({
   if (isMinimalMode()) return null
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <LogoV2 model={model} effort={effort} cwd={cwd} whale={whale} whaleIdle={whaleIdle} whaleGirl={whaleGirl} starred={starred} onStarClick={onStarClick} working={working} skipIntro={skipIntro} />
+      <LogoV2 model={model} effort={effort} cwd={cwd} fontId={fontId} whale={whale} whaleIdle={whaleIdle} whaleGirl={whaleGirl} starred={starred} onStarClick={onStarClick} working={working} skipIntro={skipIntro} />
     </Box>
   )
 }

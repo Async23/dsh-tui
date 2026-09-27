@@ -18,6 +18,7 @@ import { createSettingsHosts } from '../src/dsh-adapter/channel/settings-host.ts
 import { SettingsForm } from '../src/dsh-adapter/settingsEditor.ts'
 import TuiSettingsSectionsRuntime, { getHostSettingsSections, getLocalSettingsSectionsHost } from '../src/dsh-adapter/settings-sections.ts'
 import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, isPageMarginMode, normalizePageMargin, parsePageMarginSpec } from '../src/tuiDisplayPrefs.ts'
+import { SPLASH_FONTS, SPLASH_FONT_OPTIONS, normalizeSplashFont } from '../src/components/splashFonts.ts'
 import { getLang, isLang } from '../src/i18n.ts'
 import { SHORTCUT_ACTIONS, setKeymapOverrides, resetKeymapOverrides, effectiveComboString, parseComboDraft, draftComboConflicts } from '../src/utils/keymap.ts'
 
@@ -196,7 +197,7 @@ if (modernSchema) for (const registry of ['service', 'local']) for (const entryI
     const unregister = registerSection({
       configOwner: owner, Config, resolveSettingsNamespace, settingsSections: sections,
       config: configValues(runtime), SHORTCUT_ACTIONS, effectiveComboString, parseComboDraft, draftComboConflicts,
-      getLang, DEFAULT_PAGE_MARGIN, isPageMarginMode, parsePageMarginSpec,
+      getLang, DEFAULT_PAGE_MARGIN, isPageMarginMode, parsePageMarginSpec, SPLASH_FONT_OPTIONS, normalizeSplashFont,
       bootedFullscreen: true, terminalImagesDisabledByEnv: false,
       readEffortPref: () => undefined, // Do not read the developer's persisted preferences.
     })
@@ -217,13 +218,27 @@ if (modernSchema) for (const registry of ['service', 'local']) for (const entryI
     const form = new SettingsForm(host, view, section.fields)
     assert.equal(form.available, true, 'real describe() supplies the editable TUI section')
     assert.equal(form.field(diffField).text, 'split', 'the settings page shows the effective value')
+    // 开屏大字字体（splashFont）：面板选项直接由字体注册表推，所以这里同时钉住
+    // 「选项覆盖全部合法取值」「未设置时显示生效值（daily）」与「每一位都能被选中
+    // 并真的存进 profile」——select 的 parse 只认 options 里的值，写不进别的。
+    const splashField = section.fields.find(field => field.path.length === 1 && field.path[0] === 'splashFont')
+    assert.ok(splashField, `${registry}: the production section exposes splashFont`)
+    assert.equal(splashField.kind, 'select')
+    assert.deepEqual(splashField.options.map(option => option.value), ['daily', ...SPLASH_FONTS.map(font => font.id)])
+    assert.equal(form.field(splashField).text, 'daily', 'unset splashFont shows the effective daily rotation')
+    for (const option of splashField.options) {
+      form.edit(splashField, option.value)
+      assert.equal(form.field(splashField).invalid, false, `${registry}: splashFont option ${option.value} is selectable`)
+    }
     const descriptor = root.settings.describe().find(view => view.ns === ns)
     assert.deepEqual(Object.keys(descriptor.schema.refs[descriptor.schema.uid].dict).sort(), Object.keys(Config.dict).filter(key => Config.dict[key].meta.volatile === true).sort())
     observed.length = 0
     form.edit(diffField, 'unified')
+    form.edit(splashField, 'classic')
     const saved = await form.save()
     assert.equal(saved, true, `form save uses the real settings mutation path: ${form.failureMessage}`)
     assert.equal(configValues(runtime).diffLayout, 'unified')
+    assert.equal(configValues(runtime).splashFont, 'classic', 'the panel persists the picked face')
     assert.equal(owner.fiber, ownerFiber, 'editing settings does not remount the agent owner')
     assert.equal(observed.length, 1)
     assert.equal(host.listNamespaces().find(view => view.ns === ns).value.diffLayout, 'unified')
