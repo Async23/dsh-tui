@@ -50,14 +50,22 @@ export function createSessionMetadataActions(ctx: Context, deps: {
   const withOwnerSignal = (signal?: AbortSignal): AbortSignal =>
     signal === undefined ? deps.owner.signal : AbortSignal.any([signal, deps.owner.signal])
 
-  const listSessions = async (): Promise<readonly SessionSummary[]> => {
+  let listingGeneration = 0
+  const listSessions = async (onEnriched?: (summary: SessionSummary) => void): Promise<readonly SessionSummary[]> => {
+    const generation = ++listingGeneration
     const capture = deps.binding.capture()
     const source = persistence()
     if (!source) {
       if (current(capture)) deps.setPersistedSessions([])
       return []
     }
-    const summaries = await listSummaries(source)
+    let summaries: readonly SessionSummary[] = []
+    summaries = await listSummaries(source, deps.owner.signal, enriched => {
+      if (!current(capture) || generation !== listingGeneration) return
+      summaries = summaries.map(row => row.id === enriched.id ? enriched : row)
+      deps.setPersistedSessions(summaries)
+      onEnriched?.(enriched)
+    })
     if (!current(capture)) return []
     deps.setPersistedSessions(summaries)
     return summaries
