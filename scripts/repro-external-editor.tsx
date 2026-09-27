@@ -20,6 +20,7 @@
  * Run: node --import tsx/esm scripts/repro-external-editor.tsx
  */
 process.env.FORCE_COLOR = '3'
+process.env.DSH_TUI_LANG = 'en' // rewind 英文标题的否定断言不能因中文 UI 而假绿。
 
 const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { writeFileSync, mkdtempSync, rmSync }, { tmpdir }, { join }, { render }, { Chat }, { QuestionStore }, termTest] = await Promise.all([
   import('node:stream'),

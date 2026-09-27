@@ -7,6 +7,7 @@
  * output is captured raw and ANSI-stripped (no xterm dependency).
  */
 process.env.FORCE_COLOR = '3'
+process.env.DSH_TUI_LANG = 'zh' // 中文文案断言必须在 i18n import 前固定语言。
 
 const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render }, { AskUserQuestionPanel }, { settle, settled, sleep, viewportLines }] = await Promise.all([
   import('node:stream'),

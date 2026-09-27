@@ -306,6 +306,22 @@ node --import tsx/esm scripts/verify-askpanel-layout.tsx
 node --import tsx/esm scripts/repro-toolcards.tsx
 ```
 
+CI test jobs set `DSH_TUI_LANG=zh` as a fallback, but standalone regressions
+must not depend on it. At import time, UI language resolves from
+`DSH_TUI_LANG` → `~/.dsh-tui/lang.json` → the OS locale. Scripts asserting or
+locating UI copy (including assertions that text is absent) must pin the
+matching language: set `process.env.DSH_TUI_LANG = 'zh'` / `'en'` before
+dynamic imports; Chinese-copy scripts with static imports should put
+`import './lib/default-lang-zh.mjs'` before all other imports. Do not use `??=`
+to preserve the host value or choose assertions based on the host language.
+Bilingual regressions already calling `setLang` per scenario and tests using
+Chinese only as input data (width, clipboard, etc.) need no redundant pin.
+`node scripts/verify-regression-language.mjs` (build first; included in the
+`channel-ui` CI group) covers an English locale, a saved en preference, and
+an explicit en environment override, each with a temporary HOME. Diagnostic
+probes are not run wholesale by this regression group; pass `DSH_TUI_LANG=zh`
+explicitly when their output needs to be Chinese.
+
 Run all three CI regressions for changes to shared rendering, `Chat`, prompt or
 question layout, tool cards, theme primitives, or the Ink core. For a narrow
 change, also run the closest focused script:

@@ -511,6 +511,8 @@ const GROUPS = {
     ['verify-message-compat', ['node', 'scripts/verify-message-compat.mjs']],
     ['verify-settings-compat', ['node', '--import', 'tsx/esm', 'scripts/verify-settings-compat.mjs']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
+// #1030：隔离 locale、持久化 /lang 与环境变量，不能靠 CI 的 zh 默认掩盖脚本依赖。
+    ['verify-regression-language', ['node', 'scripts/verify-regression-language.mjs']],
     ["verify-context-warning", ['node', '--import', 'tsx/esm', 'scripts/verify-context-warning.mjs']],
     ["verify-channel-goal-todo", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-goal-todo.mjs']],
 // IDE 选区通道回归（PR #562）：纯函数（env 直连/lock 扫描与 workspace

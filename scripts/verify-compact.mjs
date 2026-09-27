@@ -12,6 +12,7 @@
  *
  * Run with plain node against the compiled lib: `node scripts/verify-compact.mjs`
  */
+import './lib/default-lang-zh.mjs'
 import { createChannel } from '../lib/types/dsh-adapter/channel.js'
 import React from 'react'
 import { render } from '../lib/types/ui.js'

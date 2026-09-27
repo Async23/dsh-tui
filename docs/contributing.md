@@ -227,6 +227,17 @@ node --import tsx/esm scripts/verify-askpanel-layout.tsx
 node --import tsx/esm scripts/repro-toolcards.tsx
 ```
 
+CI 的测试 job 设置 `DSH_TUI_LANG=zh` 作为兜底，但独立执行的回归不能依赖它。
+UI 语言在 import 时按 `DSH_TUI_LANG` → `~/.dsh-tui/lang.json` → 系统 locale
+解析。断言或定位界面文案的脚本（包括「不出现某文案」的否定断言）必须自行固定
+与断言一致的语言：动态 import 前写 `process.env.DSH_TUI_LANG = 'zh'` / `'en'`；
+静态 import 的中文脚本把 `import './lib/default-lang-zh.mjs'` 放在其他 import 前。
+不要用 `??=` 保留宿主值，也不要按宿主语言选择不同断言。已逐场景调用 `setLang`
+的双语回归和仅用中文作输入数据的宽度/剪贴板等测试不需要重复设置。
+`node scripts/verify-regression-language.mjs`（先构建，已接入 `channel-ui` CI 组）
+在临时 HOME 下覆盖英文 locale、持久化 en 偏好和显式 en 环境变量三种启动条件。
+诊断探针不作为此回归组全量执行；需要固定中文输出时显式带上 `DSH_TUI_LANG=zh`。
+
 改动共享渲染、`Chat`、提示/问卷布局、工具卡、主题原语或 Ink core 时，三个
 CI 回归都要跑。窄改动还要跑最近的聚焦脚本：
 
