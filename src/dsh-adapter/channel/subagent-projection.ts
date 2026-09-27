@@ -23,7 +23,7 @@ import type { ChannelState, ChatRow, SubagentControl, SubagentRow } from './type
  * session's historical children appear in the dashboard without flooding the
  * replayed transcript with cards that the durable log never contained. */
 export function createSubagentProjection(
-  getState: () => Pick<ChannelState, 'rows' | 'subagents' | 'emit' | 'emitStream'>,
+  getState: () => Pick<ChannelState, 'rows' | 'subagents' | 'subagentCost' | 'emit' | 'emitStream'>,
   deps: {
     rowIds: { value: number }
     agent(): Agent
@@ -69,7 +69,11 @@ export function createSubagentProjection(
   const syncNow = (): void => {
     streamDirty = false
     const snapshot = store.snapshot()
-    getState().subagents = snapshot
+    const state = getState()
+    state.subagents = snapshot
+    // 费用快照随 dashboard 一起镜像：StatusLine/BalanceReportRow 从这里读
+    // 子代理按 (provider, model) 的 durable 用量桶。
+    state.subagentCost = store.costSnapshot().entries
     syncRows(snapshot)
   }
   const flush = (): boolean => {
@@ -264,6 +268,6 @@ export function createSubagentProjection(
     },
   }
   const dropRows = (): void => { streamDirty = false; rowsByAgentId.clear() }
-  const reset = (): void => { dropRows(); cardedIds.clear(); workflowMembers.clear(); pendingTaskDescriptions.length = 0; store.reset(); getState().subagents = [] }
+  const reset = (): void => { dropRows(); cardedIds.clear(); workflowMembers.clear(); pendingTaskDescriptions.length = 0; store.reset(); getState().subagents = []; getState().subagentCost = [] }
   return { store, control, pendingTaskDescriptions, onSessionEvent, onStreamFrame, onParentEvent, bootstrapFromLog, onStart, onEnd, syncNow, flush, dropRows, reset }
 }

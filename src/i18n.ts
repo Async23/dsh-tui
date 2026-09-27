@@ -466,6 +466,11 @@ const dict = {
   'cost-note': { zh: '注：DSH 不提供 API 费用计量，以上为 token 用量（按 provider 账单计费）', en: 'Note: DSH provides no API cost metering; the above is token usage (billed by your provider)' },
   'status-cost-label': { zh: '≈', en: '≈' },
   'status-cost-note': { zh: '估算（官方单价，非账单）', en: 'estimate (official rates, not a bill)' },
+  // 多模型/子代理费用拆解（状态栏 hover、/balance hover、/cost 共用）
+  'cost-session-estimate': { zh: '本会话估算 ≈¥{{cost}}', en: 'Session estimate ≈¥{{cost}}' },
+  'cost-split-main': { zh: '主会话 ¥{{cost}}', en: 'main ¥{{cost}}' },
+  'cost-split-subagent': { zh: '子代理 ¥{{cost}}', en: 'subagent ¥{{cost}}' },
+  'cost-unpriced': { zh: '未计价 {{tokens}} tok', en: 'unpriced {{tokens}} tok' },
   // 高峰/空闲时段名（用户玩梗命名：高峰=梁文峰，低谷=梁文谷）
   'cost-peak-name': { zh: '梁文峰', en: 'peak' },
   'cost-idle-name': { zh: '梁文谷', en: 'idle' },

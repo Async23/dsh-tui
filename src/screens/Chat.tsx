@@ -62,6 +62,7 @@ import { GoalTodoPanel } from '../components/GoalTodoPanel.js'
 import { AutoRecapRow } from '../components/AutoRecapRow.js'
 import { BalanceReportRow } from '../components/BalanceReportRow.js'
 import type { BalanceResult } from '../deepseekBalance.js'
+import { estimateSessionCostSnapshotCny } from '../deepseekPricing.js'
 import { LoadedContextPanel } from '../components/LoadedContextPanel.js'
 import { StatusLine } from './StatusLine.js'
 import { WorkingSpinner, useThinkingStatus } from '../components/WorkingSpinner.js'
@@ -2270,6 +2271,22 @@ export function Chat({
           const rate = total > 0 ? ((usage.cacheRead / total) * 100).toFixed(1) : '0.0'
           lines.push(t('cost-cache-hit-rate', { rate, read: formatTokens(usage.cacheRead), write: formatTokens(usage.cacheWrite) }))
         }
+        // 金额与拆解：主会话按模型分桶 + 子代理按各自 (provider, model) 分桶；
+        // 未计价用量只报 token（DESIGN D4/D6）。
+        const estimate = estimateSessionCostSnapshotCny({
+          provider: channel.provider,
+          main: channel.mainCost,
+          subagents: channel.subagentCost,
+          fallbackTokens: channel.tokens,
+          fallbackModel: channel.model,
+        })
+        if (estimate !== undefined) {
+          if (estimate.total > 0) lines.push(t('cost-session-estimate', { cost: estimate.total.toFixed(2) }))
+          lines.push(`${t('cost-split-main', { cost: estimate.main.toFixed(2) })} · ${t('cost-split-subagent', { cost: estimate.subagent.toFixed(2) })}`)
+          if (estimate.unpricedTokens > 0) {
+            lines.push(t('cost-unpriced', { tokens: formatTokens(estimate.unpricedTokens) }))
+          }
+        }
         lines.push(t('cost-note'))
         setHelpOpen(false)
         channel.pushLocal('/cost', lines)
@@ -4406,6 +4423,9 @@ export function Chat({
             refreshing={balance.refreshing}
             tokens={channel.tokens}
             model={channel.model}
+            provider={channel.provider}
+            mainCost={channel.mainCost}
+            subagentCost={channel.subagentCost}
             onRefresh={runBalance}
             onDismiss={() => setBalance(null)}
           />
