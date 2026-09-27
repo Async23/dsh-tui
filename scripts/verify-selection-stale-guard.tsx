@@ -452,5 +452,25 @@ function putRaw(s: Screen, col: number, row: number, charId: number, width: numb
     before === after && before === 'ARKER_ABC' && !tripped && !sel.stale)
 }
 
+// ── M. Highlight leaves painted terminal images visible ───────────────
+// Kitty draws images below cells with a non-default background, so a
+// highlighted cell over an image hides it: selecting across a formula
+// image used to turn it into a blank box.
+{
+  const { applySelectionOverlay } = await import('../src/ink/selection.js')
+  const { cellAtIndex } = await import('../src/ink/screen.js')
+  const screen = makeScreen(4, 10)
+  const pool = new StylePool()
+  const sel = makeSel()
+  startSelection(sel, 0, 0)
+  updateSelection(sel, 9, 3)
+  const image = { node: {} as never, x: 2, y: 1, columns: 4, rows: 2, source: { data: new Uint8Array(4), width: 1, height: 1 } }
+  applySelectionOverlay(screen, sel, pool, [image, { ...image, x: 7, y: 3, columns: 2, rows: 1, graphicsReady: false }])
+  const plain = (col: number, row: number) => cellAtIndex(screen, row * screen.width + col).styleId === 0
+  check('M1. cells under a painted image keep their style', plain(2, 1) && plain(5, 2))
+  check('M2. cells around the image are still highlighted', !plain(1, 1) && !plain(6, 2) && !plain(0, 0))
+  check('M3. an image still waiting on its raster does not exempt its fallback cells', !plain(7, 3) && !plain(8, 3))
+}
+
 console.log(failures === 0 ? 'selection stale-guard regression passed' : `${failures} failure(s)`)
 process.exit(failures === 0 ? 0 : 1)
