@@ -463,7 +463,11 @@ const dict = {
   'cost-context': { zh: '上下文 {{pct}}%', en: 'Context {{pct}}%' },
   'status-title': { zh: '标题   {{title}}', en: 'Title   {{title}}' },
   'cost-cache-hit-rate': { zh: '缓存命中率 {{rate}}% · 缓存 {{read}} 读 / {{write}} 写', en: 'Cache hit rate {{rate}}% · cache {{read}} read / {{write}} write' },
-  'cost-note': { zh: '注：DSH 不提供 API 费用计量，以上为 token 用量（按 provider 账单计费）', en: 'Note: DSH provides no API cost metering; the above is token usage (billed by your provider)' },
+  // /cost 末尾口径：有金额 → 本地估算（官方单价 × 用量）、非平台账单；
+  // 无金额（无用量 / 全部未计价）→ 只解释 token，不套用金额口径。
+  // 旧文案"DSH 不提供 API 费用计量"与 T01/T03 的新展示/文档矛盾（#1089）。
+  'cost-note': { zh: '注：以上为本地估算（官方单价 × 用量），非平台账单，以 DeepSeek 平台为准', en: 'Note: the above is a local estimate (official unit rates × usage), not a platform bill — the DeepSeek platform is authoritative' },
+  'cost-note-no-amount': { zh: '注：以上仅为 token 用量，暂无可估算金额（本会话暂无用量，或模型未收录/非官方）；估算仅供参考，以 DeepSeek 平台为准', en: 'Note: the above is token usage only; no amount can be estimated (no usage yet, or the model is unlisted/non-official). Estimates are for reference — the DeepSeek platform is authoritative' },
   'status-cost-label': { zh: '≈', en: '≈' },
   'status-cost-note': { zh: '估算（官方单价，非账单）', en: 'estimate (official rates, not a bill)' },
   // 多模型/子代理费用拆解（状态栏 hover、/balance hover、/cost 共用）

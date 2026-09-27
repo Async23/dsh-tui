@@ -2272,7 +2272,7 @@ export function Chat({
           lines.push(t('cost-cache-hit-rate', { rate, read: formatTokens(usage.cacheRead), write: formatTokens(usage.cacheWrite) }))
         }
         // 金额与拆解：主会话按模型分桶 + 子代理按各自 (provider, model) 分桶；
-        // 未计价用量只报 token（DESIGN D4/D6）。
+        // 全部未计价时只报 token 并标注未计价，不显示 ¥0.00 金额行（DESIGN D4/D6）。
         const estimate = estimateSessionCostSnapshotCny({
           provider: channel.provider,
           main: channel.mainCost,
@@ -2280,14 +2280,19 @@ export function Chat({
           fallbackTokens: channel.tokens,
           fallbackModel: channel.model,
         })
+        // 金额行与末尾口径共用同一判定：有已计价金额才显示金额行与"估算非账单"
+        // 文案；无金额（无用量 / 全部未计价）只解释 token（#1089）。
+        const hasAmount = estimate !== undefined && estimate.total > 0
         if (estimate !== undefined) {
-          if (estimate.total > 0) lines.push(t('cost-session-estimate', { cost: estimate.total.toFixed(2) }))
-          lines.push(`${t('cost-split-main', { cost: estimate.main.toFixed(2) })} · ${t('cost-split-subagent', { cost: estimate.subagent.toFixed(2) })}`)
+          if (hasAmount) {
+            lines.push(t('cost-session-estimate', { cost: estimate.total.toFixed(2) }))
+            lines.push(`${t('cost-split-main', { cost: estimate.main.toFixed(2) })} · ${t('cost-split-subagent', { cost: estimate.subagent.toFixed(2) })}`)
+          }
           if (estimate.unpricedTokens > 0) {
             lines.push(t('cost-unpriced', { tokens: formatTokens(estimate.unpricedTokens) }))
           }
         }
-        lines.push(t('cost-note'))
+        lines.push(t(hasAmount ? 'cost-note' : 'cost-note-no-amount'))
         setHelpOpen(false)
         channel.pushLocal('/cost', lines)
         return true

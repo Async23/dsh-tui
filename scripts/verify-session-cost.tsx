@@ -13,7 +13,8 @@
  *    channel 模型），换模型不把历史 token 重估到新模型；
  *  - AC-A6：非官方 provider / 未收录模型只计 token、不计金额（unpriced）；
  *  - 兼容：session-reset 清零、subagent-projection.syncNow 镜像、旧快照
- *    mainCost 缺失时 collectSessionCostEntries 回退 channel.tokens。
+ *    mainCost 缺失时 collectSessionCostEntries 回退 channel.tokens；
+ *  - T07：/cost 末尾文案与"估算非账单"口径一致（旧"不提供费用计量"防回归）。
  *
  * Run: node --import tsx/esm scripts/verify-session-cost.tsx
  */
@@ -34,6 +35,8 @@ const [
   { createChannelProjection },
   { createSubagentProjection },
   { SubagentActivityStore },
+  { i18nDict },
+  { readFileSync },
   { resetSessionProjection },
 ] = await Promise.all([
   import('node:assert'),
@@ -42,6 +45,8 @@ const [
   import('../src/dsh-adapter/channel/projection.js'),
   import('../src/dsh-adapter/channel/subagent-projection.js'),
   import('../src/dsh-adapter/subagents.js'),
+  import('../src/i18n.js'),
+  import('node:fs'),
   import('../src/dsh-adapter/channel/session-reset.js'),
 ])
 
@@ -336,6 +341,40 @@ function requestHeader(seq: number, time: number, model: string): unknown {
     && mirror[0]?.buckets.peak.input === 42 && mirror[0]?.buckets.peak.output === 7, JSON.stringify(mirror))
   projection.reset()
   check('subagent-projection.reset 清空镜像', (state.subagentCost as unknown[]).length === 0)
+}
+
+// ═════════════════════ T07：/cost 末尾文案与"估算非账单"口径一致 ═════════════════════
+// 旧 `cost-note` 声称"DSH 不提供 API 费用计量"，与同屏金额/拆解及 T03 同步的
+// 文档口径矛盾（issue #1089）。这里锁死词条语义与 /cost 的分支选择，防止回退。
+
+{
+  const legacyClaim = /不提供 API 费用计量|provides no API cost metering/i
+  const asText = (value: unknown): string => {
+    if (typeof value === 'string') return value
+    if (value !== null && typeof value === 'object') {
+      const forms = value as { one?: unknown; other?: unknown }
+      return [forms.one, forms.other].filter(part => typeof part === 'string').join(' · ')
+    }
+    return ''
+  }
+  const priceNoteZh = asText(i18nDict['cost-note']?.zh)
+  const priceNoteEn = asText(i18nDict['cost-note']?.en)
+  check('T07 cost-note 不再声称 DSH 不提供费用计量',
+    !legacyClaim.test(priceNoteZh) && !legacyClaim.test(priceNoteEn), `${priceNoteZh} | ${priceNoteEn}`)
+  check('T07 cost-note = 本地估算（官方单价 × 用量）、非平台账单',
+    /本地估算/.test(priceNoteZh) && /非平台账单/.test(priceNoteZh)
+    && /local estimate/.test(priceNoteEn) && /not a platform bill/.test(priceNoteEn),
+    `${priceNoteZh} | ${priceNoteEn}`)
+  const noAmountZh = asText(i18nDict['cost-note-no-amount']?.zh)
+  const noAmountEn = asText(i18nDict['cost-note-no-amount']?.en)
+  check('T07 无金额分支词条 zh/en 均存在', noAmountZh !== '' && noAmountEn !== '',
+    JSON.stringify(i18nDict['cost-note-no-amount']))
+  check('T07 无金额分支只解释 token、不套用金额口径也不说"不提供计量"',
+    /token/.test(noAmountZh) && !legacyClaim.test(noAmountZh) && !legacyClaim.test(noAmountEn),
+    `${noAmountZh} | ${noAmountEn}`)
+  const chatSource = readFileSync(new URL('../src/screens/Chat.tsx', import.meta.url), 'utf8')
+  check('T07 /cost 按有无金额选择末尾词条（不再无条件 cost-note）',
+    /\?\s*'cost-note'\s*:\s*'cost-note-no-amount'/.test(chatSource))
 }
 
 if (failures > 0) {
