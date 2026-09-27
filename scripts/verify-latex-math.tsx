@@ -401,6 +401,12 @@ for (const source of [
   ...MIXED_MATH_DOCUMENTS,
   ...LATE_INLINE_MATH.map(formula => `${LONG_PREFIX} ${formula}`),
   ...LATE_BLOCK_MATH.map(formula => `${LONG_PREFIX}\n\n${formula}`),
+  // An environment inside a multi-line code span: until the closing backtick
+  // arrives the opener lexes as a block formula, which must not be sealed.
+  'Use `this syntax:\n\\begin{align}\nx &= y\n\\end{align}\n` here.',
+  'Use `this syntax:\n$$\nx^2\n$$\n` here.',
+  // A backtick that never closes stays literal and the formula stays a block.
+  'Use `literal\n$$\nx^2\n$$\n\nAfter.',
 ]) {
   const stages = Array.from({ length: source.length }, (_, index) => source.slice(0, index + 1))
   assert.deepEqual(

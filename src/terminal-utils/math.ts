@@ -254,6 +254,22 @@ function tokenizeBlockMath(source: string): MathToken | undefined {
 }
 
 /**
+ * Lengths of the backtick runs in `text` that no later run of the same
+ * length closes (CommonMark: such a run is literal text, for now).
+ */
+function unmatchedBacktickRuns(text: string): number[] {
+  const runs = text.match(/`+/g) ?? []
+  const unmatched: number[] = []
+  for (let open = 0; open < runs.length; open++) {
+    let close = open + 1
+    while (close < runs.length && runs[close]!.length !== runs[open]!.length) close++
+    if (close < runs.length) open = close
+    else unmatched.push(runs[open]!.length)
+  }
+  return unmatched
+}
+
+/**
  * Whether position `at` of `text` (a candidate block opener) lies inside a
  * code span: a backtick run opens a span only when a run of exactly the same
  * length closes it later in the same paragraph (CommonMark); a run with no
@@ -262,20 +278,28 @@ function tokenizeBlockMath(source: string): MathToken | undefined {
 function insideOpenCodeSpan(text: string, at: number): boolean {
   const paragraphStart = text.lastIndexOf('\n\n', at)
   const before = text.slice(paragraphStart < 0 ? 0 : paragraphStart + 2, at)
+  const open = unmatchedBacktickRuns(before)
+  if (open.length === 0) return false
   const rest = text.slice(at)
   const paragraphEnd = rest.search(/\n[ \t]*\n/)
   const after = paragraphEnd < 0 ? rest : rest.slice(0, paragraphEnd)
-  const runs = before.match(/`+/g) ?? []
-  for (let open = 0; open < runs.length; open++) {
-    let close = open + 1
-    while (close < runs.length && runs[close]!.length !== runs[open]!.length) close++
-    if (close < runs.length) {
-      open = close
-      continue
-    }
-    if ((after.match(/`+/g) ?? []).some(run => run.length === runs[open]!.length)) return true
-  }
-  return false
+  const closers = new Set((after.match(/`+/g) ?? []).map(run => run.length))
+  return open.some(length => closers.has(length))
+}
+
+/**
+ * Whether a block formula lexed right after `paragraph` is still provisional
+ * in a streaming reply: the paragraph leaves a backtick run open, and no
+ * blank line in `following` (the source after the paragraph) has ended it
+ * yet, so a closer may still arrive and turn the paragraph, the formula and
+ * the text up to the closer into one code span. A streaming renderer must
+ * not seal the paragraph until this is false.
+ */
+export function mayBecomeCodeSpan(paragraph: string, following: string): boolean {
+  if (/\n[ \t]*\n\s*$/.test(paragraph)) return false
+  const paragraphStart = paragraph.lastIndexOf('\n\n')
+  if (unmatchedBacktickRuns(paragraphStart < 0 ? paragraph : paragraph.slice(paragraphStart + 2)).length === 0) return false
+  return !/\n[ \t]*\n/.test(following)
 }
 
 /** Tokenizer extensions for `marked.use({ extensions })`. */
