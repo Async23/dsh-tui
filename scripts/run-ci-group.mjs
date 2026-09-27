@@ -117,6 +117,10 @@ const GROUPS = {
 // 开屏头部契约：大字 5 行高且等宽（8×7 = 7×8）、bigTextWidth 与实际画出的列数
 // 一致；窄终端按「鲸鱼+大字 → 纯大字 → 纯鲸鱼 → 纯文字」逐档降级，档位无空档。
     ["verify-splash-layout", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-layout.ts']],
+// 开屏彩蛋契约：节日换词（每款字体都要有 HAPPINESS/MERRY/NEW YEAR 的全部字形，
+// 两行等宽 + 下排居中取最紧解）与 1/20 的求 star 标语（OSC 8 成对 + URL 正确、
+// 缩进按该行实际宽度重算、不支持超链接时退化成纯文本 URL），并挂真实 LogoV2 读屏。
+    ["verify-splash-eggs", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-eggs.tsx']],
 // settled 子代理卡片不得永久持有动画时钟（空闲帧归零回归）：
 // 曾以 120ms/卡片持续驱动 React commit，N 张相位错开合成 ~30ms
 // 均匀帧 cadence。
@@ -514,12 +518,6 @@ const GROUPS = {
     ['verify-message-compat', ['node', 'scripts/verify-message-compat.mjs']],
     ['verify-settings-compat', ['node', '--import', 'tsx/esm', 'scripts/verify-settings-compat.mjs']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
-// 压缩进行中的状态行（配对 verify-compact 的落地侧）：/compact 过去只发一条
-// 4 秒 toast，而实测压缩中位 ~25s、p90 ~70s（本机 800 份会话日志），其余时间
-// 屏幕与 idle 无异。这里钉住：可取消状态行（读取上下文 → 实时生成量）、
-// llm/stream 观测器只认 purpose=compaction 且本会话的调用（其余按同一
-// iterable 原样透传）、cancelCompact 报「已取消」而不是失败、compaction/start
-// |end 驱动自动压缩且宿主事件不降级手动行；外加组件渲染与窄屏降级顺序。
     ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],
     ["verify-context-warning", ['node', '--import', 'tsx/esm', 'scripts/verify-context-warning.mjs']],
     ["verify-channel-goal-todo", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-goal-todo.mjs']],
