@@ -1,4 +1,5 @@
 import { bigTextWidth } from './bigfont.js'
+import type { SplashFont } from './splashFonts.js'
 
 /**
  * 开屏头部的窄终端降级阶梯——越窄越先放弃「并排」这件事：
@@ -22,11 +23,6 @@ export const WHALE_BOX_WIDTH = 40
 /** 鲸鱼与文字列之间的间隔列数（头部那行 `Box` 的 `gap`）。 */
 export const COLUMN_GAP = 2
 
-/** 判定用的词：两个字里最宽的那个。 */
-const TITLE_PROBE = 'DEEPSEEK'
-/** 该词末尾那格字距（`taglineFor` 给基准款算出来的 topKerning）——它也会画出来。 */
-const TITLE_PROBE_KERNING = 1
-
 /** 一行开屏头部在该宽度下要渲染哪些部件。 */
 export interface SplashLayout {
   /** 渲染像素鲸鱼。 */
@@ -40,15 +36,20 @@ export interface SplashLayout {
 /**
  * 解析开屏头部的阶梯档位。
  * @param columns - 内容区列数（不是终端总宽）。
- * @param options - `whale` 对应 `dsh-tui.whale` 设置；关掉时整条鲸鱼档都跳过。
+ * @param options - `whale` 对应 `dsh-tui.whale` 设置；`font` 是当天那款字体
+ * （字身宽度不同，阈值也就不同）。
  * @returns 该宽度下要渲染的部件。
  */
-export function resolveSplashLayout(columns: number, options: { whale: boolean }): SplashLayout {
-  // 阈值按**画出来**的列数算：每行末尾还会画出一格字距（`TITLE_PROBE_KERNING`），
-  // 而 `bigTextWidth` 只算到最后一个字形。按 ink 宽判「放得下」，恰好卡阈值时渲染行
-  // 会比可用宽度多 1 列 → Ink 走 `truncate-end`，把最后一个字形换成 `…`。
-  // 末尾那格是空白，少画一格无损观感；字形被吃才是事故。
-  const titleWidth = bigTextWidth(TITLE_PROBE, TITLE_PROBE_KERNING) + TITLE_PROBE_KERNING
+export function resolveSplashLayout(
+  columns: number,
+  options: { whale: boolean; font: SplashFont },
+): SplashLayout {
+  const { font } = options
+  // 阈值按**画出来**的列数算：每行末尾还会画出一格字距，而 `bigTextWidth` 只算到
+  // 最后一个字形。按 ink 宽判「放得下」，会在恰好卡阈值时让 Ink 走 `truncate-end`
+  // ——最后一个字形被换成 `…`（可达边界：基准款 55 列即复现）。末尾那一格是空白，
+  // 少画一格不可惜，字形被吃掉才可惜。
+  const titleWidth = bigTextWidth(font, font.tagline.top, font.tagline.topKerning) + font.tagline.topKerning
   const fitsTitle = columns >= titleWidth
   const showWhale =
     options.whale &&
