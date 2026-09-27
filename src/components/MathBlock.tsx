@@ -1,9 +1,12 @@
 import React from 'react'
-import { Box, Text } from '../ui.js'
+import { Box, Image, Text, useTerminalImageCellSize, useTerminalImages } from '../ui.js'
 import { useTerminalSize } from '../ink/hooks/use-terminal-size.js'
 import { stringWidth } from '../ink/stringWidth.js'
+import { peekMathRaster, renderMathRaster, type MathRaster, type MathRenderRequest } from '../math/renderer.js'
+import { getTheme } from '../theme.js'
 import { renderDisplayMath, renderInlineMath, type MathToken } from '../terminal-utils/math.js'
 import { getMathRendering, subscribeMathRendering } from '../tuiDisplayPrefs.js'
+import { useTheme } from './design-system/ThemeProvider.js'
 
 /**
  * A `$$…$$` / `\[…\]` block rendered as display-mode Unicode: fractions and
@@ -16,12 +19,20 @@ import { getMathRendering, subscribeMathRendering } from '../tuiDisplayPrefs.js'
  * when there is none of that either, to the exact source. The source is also
  * what shows while the block is still streaming (no closer yet), when the
  * formula is unsupported, and when the setting is off.
+ *
+ * With `mathRendering: image`, a complete block is typeset by MathJax and
+ * shown as a terminal image in the theme's text color when the terminal
+ * supports graphics and reports its cell size. The Unicode rendering shows
+ * until the image is ready and stays whenever any step fails, so the image
+ * path can only upgrade a block, never lose it.
  */
 
 /** Same viewport slack MarkdownTable and MermaidDiagram keep. */
 const SAFETY_MARGIN = 4
 /** Left padding in columns, matching the code-block body indent. */
 const INDENT_WIDTH = 2
+/** Tallest image a block may take; taller formulas shrink to fit. */
+const IMAGE_MAX_ROWS = 16
 
 type Props = {
   token: MathToken
@@ -31,17 +42,38 @@ type Props = {
 }
 
 export function MathBlock({ token, dimColor, forceWidth }: Props): React.ReactNode {
-  const enabled = React.useSyncExternalStore(subscribeMathRendering, getMathRendering) !== 'source'
+  const mode = React.useSyncExternalStore(subscribeMathRendering, getMathRendering)
+  const enabled = mode !== 'source'
   const { columns } = useTerminalSize()
   const width = Math.max(0, forceWidth ?? columns)
   const renderable = enabled && token.pending !== true
+  const budget = width - INDENT_WIDTH - SAFETY_MARGIN
+
+  // Dimmed blocks (e.g. inside thinking) keep text: an image cannot dim.
+  const wantImage = mode === 'image' && renderable && !dimColor && budget > 0
+  const graphics = useTerminalImages(wantImage)
+  const cellSize = useTerminalImageCellSize()
+  const [themeName] = useTheme()
+  const color = hexColor(getTheme(themeName).text)
+  const request: MathRenderRequest | undefined = wantImage && graphics && cellSize !== undefined && color !== undefined
+    ? { tex: token.text, display: true, color, cellSize, maxColumns: budget, maxRows: IMAGE_MAX_ROWS }
+    : undefined
+  const raster = useMathRaster(request)
 
   // Layout is width-independent; a resize only re-checks the fit.
   const lines = React.useMemo(
     () => (renderable ? renderDisplayMath(token.text) : undefined),
     [renderable, token.text],
   )
-  const budget = width - INDENT_WIDTH - SAFETY_MARGIN
+  if (raster !== undefined) {
+    return (
+      <Box paddingLeft={INDENT_WIDTH}>
+        <Image presentation="transcript" source={raster.source} width={raster.columns} height={raster.rows} alt={token.text}>
+          <Text dimColor wrap="truncate">{renderInlineMath(token.text) ?? token.text}</Text>
+        </Image>
+      </Box>
+    )
+  }
   if (lines !== undefined && lines.every(line => stringWidth(line) <= budget)) {
     return (
       <Box paddingLeft={INDENT_WIDTH}>
@@ -59,4 +91,42 @@ export function MathBlock({ token, dimColor, forceWidth }: Props): React.ReactNo
     )
   }
   return <Text dimColor={dimColor}>{token.raw.trim()}</Text>
+}
+
+/**
+ * The typeset image for `request`, or undefined while it renders, when it
+ * failed, or when there is no request. A cached result is used on the first
+ * render, so a block scrolled back into view does not flash its fallback.
+ */
+function useMathRaster(request: MathRenderRequest | undefined): MathRaster | undefined {
+  const cached = request === undefined ? undefined : peekMathRaster(request)
+  const [settled, setSettled] = React.useState<{ readonly request: MathRenderRequest; readonly raster?: MathRaster }>()
+  const pending = request !== undefined && cached === undefined ? request : undefined
+  const key = pending === undefined ? undefined : requestKey(pending)
+  React.useEffect(() => {
+    if (pending === undefined) return
+    let live = true
+    void renderMathRaster(pending).then(result => {
+      if (live) setSettled({ request: pending, raster: result.ok ? result.raster : undefined })
+    })
+    return () => { live = false }
+    // `key` captures every field of the request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  if (cached !== undefined) return cached.ok ? cached.raster : undefined
+  return settled !== undefined && request !== undefined && requestKey(settled.request) === requestKey(request)
+    ? settled.raster
+    : undefined
+}
+
+function requestKey(request: MathRenderRequest): string {
+  return [request.tex, request.color, request.cellSize.width, request.cellSize.height, request.maxColumns, request.maxRows].join('\u0000')
+}
+
+/** A theme color as `#rrggbb`, or undefined for ANSI names the image cannot match. */
+function hexColor(color: string): string | undefined {
+  if (/^#[0-9a-f]{6}$/i.test(color)) return color
+  const match = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/.exec(color)
+  if (match === null) return undefined
+  return `#${match.slice(1, 4).map(channel => Math.min(255, Number(channel)).toString(16).padStart(2, '0')).join('')}`
 }

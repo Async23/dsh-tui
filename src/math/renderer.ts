@@ -246,15 +246,15 @@ async function rasterize(vector: Vector, request: MathRenderRequest, color: stri
   return { ok: false, failure: 'clipped-raster' }
 }
 
-/**
- * Typeset and rasterize one formula. Results (including failures) are cached
- * by formula, color and geometry; concurrent requests for the same key share
- * one render.
- */
-export function renderMathRaster(request: MathRenderRequest): Promise<MathRenderResult> {
+type PreparedRequest =
+  | { readonly key: string; readonly tex: string; readonly color: string }
+  | { readonly failure: MathFailureCode }
+
+/** Normalize a request and derive its cache key (formula, color, geometry). */
+function prepare(request: MathRenderRequest): PreparedRequest {
   const tex = request.tex.trim()
-  if (tex === '') return Promise.resolve({ ok: false, failure: 'empty' })
-  if (tex.length > MATH_SOURCE_LIMIT) return Promise.resolve({ ok: false, failure: 'input-too-long' })
+  if (tex === '') return { failure: 'empty' }
+  if (tex.length > MATH_SOURCE_LIMIT) return { failure: 'input-too-long' }
   const color = normalizeColor(request.color)
   const key = [
     request.display ? 'D' : 'T',
@@ -265,6 +265,29 @@ export function renderMathRaster(request: MathRenderRequest): Promise<MathRender
     request.maxRows,
     tex,
   ].join('\u0000')
+  return { key, tex, color }
+}
+
+/**
+ * The settled result for this request if one is cached, without rendering.
+ * Lets a remounted view (scrolled back into the viewport) paint its image on
+ * the first frame instead of flashing the Unicode fallback.
+ */
+export function peekMathRaster(request: MathRenderRequest): MathRenderResult | undefined {
+  const prepared = prepare(request)
+  if ('failure' in prepared) return { ok: false, failure: prepared.failure }
+  return rasters.get(prepared.key)
+}
+
+/**
+ * Typeset and rasterize one formula. Results (including failures) are cached
+ * by formula, color and geometry; concurrent requests for the same key share
+ * one render.
+ */
+export function renderMathRaster(request: MathRenderRequest): Promise<MathRenderResult> {
+  const prepared = prepare(request)
+  if ('failure' in prepared) return Promise.resolve({ ok: false, failure: prepared.failure })
+  const { key, tex, color } = prepared
   const cached = rasters.get(key)
   if (cached !== undefined) {
     mathRenderStats.rasterHits += 1
