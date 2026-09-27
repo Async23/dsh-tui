@@ -1,0 +1,58 @@
+import { bigTextWidth } from './bigfont.js'
+
+/**
+ * 开屏头部的窄终端降级阶梯——越窄越先放弃「并排」这件事：
+ *
+ *   ① 像素鲸鱼 + `DEEPSEEK`/`HARNESS` 大字 —— 两者都放得下
+ *   ② 只留大字 logo                        —— 先撤鲸鱼：大字被截断会毁掉品牌字形，
+ *                                            鲸鱼被撤只是少一个装饰
+ *   ③ 只留像素鲸鱼                          —— 大字放不下，鲸鱼顶上撑住开屏
+ *   ④ 一行纯文字                            —— 两者都放不下
+ *
+ * 列数一律按**内容区**算：`PageMargin` 已经把 `TerminalSizeContext` 收窄成
+ * 内容宽（`PageMargin.tsx`），所以这里不再减页边距。
+ */
+
+/**
+ * 鲸鱼 art 的固定盒宽：甩尾帧比标准姿势向右多出 4 列，钉死宽度才不让文字列
+ * 跟着左右跳。
+ */
+export const WHALE_BOX_WIDTH = 40
+
+/** 鲸鱼与文字列之间的间隔列数（头部那行 `Box` 的 `gap`）。 */
+export const COLUMN_GAP = 2
+
+/** 判定用的词：两个字里最宽的那个。 */
+const TITLE_PROBE = 'DEEPSEEK'
+/** 该词末尾那格字距（`taglineFor` 给基准款算出来的 topKerning）——它也会画出来。 */
+const TITLE_PROBE_KERNING = 1
+
+/** 一行开屏头部在该宽度下要渲染哪些部件。 */
+export interface SplashLayout {
+  /** 渲染像素鲸鱼。 */
+  readonly showWhale: boolean
+  /** 渲染 `DEEPSEEK`/`HARNESS` 大字。 */
+  readonly showBigTitle: boolean
+  /** 两者都放不下：退化成一行纯文字标题。 */
+  readonly showPlainTitle: boolean
+}
+
+/**
+ * 解析开屏头部的阶梯档位。
+ * @param columns - 内容区列数（不是终端总宽）。
+ * @param options - `whale` 对应 `dsh-tui.whale` 设置；关掉时整条鲸鱼档都跳过。
+ * @returns 该宽度下要渲染的部件。
+ */
+export function resolveSplashLayout(columns: number, options: { whale: boolean }): SplashLayout {
+  // 阈值按**画出来**的列数算：每行末尾还会画出一格字距（`TITLE_PROBE_KERNING`），
+  // 而 `bigTextWidth` 只算到最后一个字形。按 ink 宽判「放得下」，恰好卡阈值时渲染行
+  // 会比可用宽度多 1 列 → Ink 走 `truncate-end`，把最后一个字形换成 `…`。
+  // 末尾那格是空白，少画一格无损观感；字形被吃才是事故。
+  const titleWidth = bigTextWidth(TITLE_PROBE, TITLE_PROBE_KERNING) + TITLE_PROBE_KERNING
+  const fitsTitle = columns >= titleWidth
+  const showWhale =
+    options.whale &&
+    columns >= WHALE_BOX_WIDTH &&
+    (columns >= titleWidth + COLUMN_GAP + WHALE_BOX_WIDTH || !fitsTitle)
+  return { showWhale, showBigTitle: fitsTitle, showPlainTitle: !fitsTitle && !showWhale }
+}
