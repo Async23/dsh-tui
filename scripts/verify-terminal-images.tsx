@@ -357,6 +357,9 @@ assert.equal(lostManager.handleResponse(901, 'ENOENT:No image with id: 901 found
 const lostRestored = lostManager.reconcile([lostPlacement])
 assert.match(lostRestored, /a=t,t=d,f=32,[^;]*i=902,/u, 'the evicted image is uploaded again under a fresh id')
 assert.match(lostRestored, /a=p,i=902,/u, 'and placed again')
+assert.match(lostRestored, /a=d,d=I,i=901,/u, 'the old id is deleted: a stale ENOENT can arrive after the terminal was re-sent 901')
+assert.ok(lostRestored.indexOf('a=d,d=I,i=901') < lostRestored.indexOf('i=902'), 'before the new id is uploaded')
+assert.doesNotMatch(lostManager.reconcile([lostPlacement]), /d=I,i=901/u, 'and only once')
 assert.equal(lostManager.handleResponse(901, 'ENOENT'), false, 'late replies for the old id are ignored')
 lostManager.invalidateAll()
 assert.equal(lostManager.handleResponse(902, 'ENOENT'), false, 'an image already pending upload needs no second repaint')
@@ -384,6 +387,7 @@ assert.equal(evictedManager.handleResponse(961, 'ENOENT'), true)
 evictedManager.reconcile([evictedPlacement])
 clock += 30_000
 assert.equal(evictedManager.handleResponse(962, 'ENOENT'), true, 'an eviction long after a successful re-upload recovers again')
+assert.match(evictedManager.deleteAll(), /a=d,d=I,i=962,.*a=d,d=I,i=963,/su, 'exit deletes a retired id that no frame has deleted yet')
 
 // The querier forwards replies that answer no pending query.
 {

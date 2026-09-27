@@ -94,6 +94,12 @@ export interface KittyGraphicsManagerOptions {
 export class KittyGraphicsManager {
   private readonly images = new Map<string, ImageState>()
   private readonly placements = new Map<DOMElement, PlacementState>()
+  /**
+   * Ids given up by a re-upload. The ENOENT that triggered it may be stale
+   * (the id was re-sent in between), so the terminal can still hold data
+   * under the old id; it is deleted on the next frame (or at exit).
+   */
+  private readonly retiredImageIds: number[] = []
   private readonly contentHashes = new WeakMap<Uint8Array, string>()
   private nextImageId: number
   private nextPlacementId = 1
@@ -132,7 +138,7 @@ export class KittyGraphicsManager {
       readonly placement: TerminalImagePlacement
       readonly image: ImageState
     }> = []
-    const output: string[] = []
+    const output: string[] = this.retiredImageIds.splice(0).map(deleteKittyImage)
 
     for (const placement of placements) {
       if (desiredNodes.has(placement.node)) continue
@@ -294,6 +300,7 @@ export class KittyGraphicsManager {
       return false
     }
     image.reuploadedAt = now
+    this.retiredImageIds.push(image.imageId)
     image.imageId = this.allocateImageId()
     image.uploaded = false
     for (const state of this.placements.values()) {
@@ -312,8 +319,8 @@ export class KittyGraphicsManager {
 
   /** Delete every image owned by this renderer and forget their ids. */
   deleteAll(): string {
-    const output = [...this.images.values()]
-      .map(image => deleteKittyImage(image.imageId))
+    const output = [...this.retiredImageIds.splice(0), ...[...this.images.values()].map(image => image.imageId)]
+      .map(deleteKittyImage)
       .join('')
     this.images.clear()
     this.placements.clear()
