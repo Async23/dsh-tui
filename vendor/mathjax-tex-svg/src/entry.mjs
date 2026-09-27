@@ -14,14 +14,19 @@ import { RegisterHTMLHandler } from 'mathjax-full/js/handlers/html.js'
 import { AllPackages } from 'mathjax-full/js/input/tex/AllPackages.js'
 
 const EXCLUDED_PACKAGES = new Set(['noerrors', 'noundefined', 'html'])
+const PACKAGES = AllPackages.filter(name => !EXCLUDED_PACKAGES.has(name))
 
-/** Create one converter; MathJax setup is costly, so callers keep it. */
+/** Create one converter; loading MathJax is costly, so callers keep it. */
 export function createTexToSvg() {
   const adaptor = liteAdaptor()
   RegisterHTMLHandler(adaptor)
-  const document = mathjax.document('', {
+  // A MathJax document keeps TeX state between conversions: \newcommand,
+  // \def, \DeclareMathOperator and \label all outlive the formula that
+  // made them. Each formula here stands alone (callers cache by its source),
+  // so each one gets a fresh input jax and document — a few hundred µs.
+  const freshDocument = () => mathjax.document('', {
     InputJax: new TeX({
-      packages: AllPackages.filter(name => !EXCLUDED_PACKAGES.has(name)),
+      packages: PACKAGES,
       // By default MathJax typesets a TeX error as a red message; throw instead.
       formatError: (_jax, error) => { throw error },
     }),
@@ -30,7 +35,7 @@ export function createTexToSvg() {
   return {
     /** @returns the standalone `<svg>` and its size in ex; throws on bad TeX. */
     convert(tex, display) {
-      const container = document.convert(tex, { display })
+      const container = freshDocument().convert(tex, { display })
       const svg = adaptor.firstChild(container)
       if (svg === null || adaptor.kind(svg) !== 'svg') throw new Error('MathJax produced no <svg>')
       const width = parseEx(adaptor.getAttribute(svg, 'width'))

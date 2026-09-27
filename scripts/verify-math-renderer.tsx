@@ -2,7 +2,7 @@
  * cell layout (base scale, shrink-only, whole-cell canvas, limits), real
  * rasters (transparent canvas, ink clear of every edge, ink color, cell box),
  * typed failures (bad TeX, excluded `html` commands, empty, too long, too
- * narrow), the vector/raster caches, and the lazy-load contract: MathJax is
+ * narrow), per-formula TeX isolation (macros, labels), the vector/raster caches, and the lazy-load contract: MathJax is
  * reachable only through a dynamic import inside src/math. Run with:
  * node --import tsx/esm scripts/verify-math-renderer.tsx
  */
@@ -105,6 +105,12 @@ assert.equal(await failure(request(String.raw`x + \unknown{y}`)), 'tex-error', '
 assert.equal(await failure(request(String.raw`\frac{1}{`)), 'tex-error', 'malformed TeX fails')
 assert.equal(await failure(request(String.raw`\href{https://example.com}{x}`)), 'tex-error', 'the html extension is not loaded')
 assert.equal(await failure(request(String.raw`\style{color:red}{x}`)), 'tex-error')
+// Each formula stands alone: TeX state (macros, labels) never leaks into the
+// next one, so a cached result never depends on what was rendered before it.
+assert.equal(await failure(request(String.raw`\newcommand{\foo}{x}\foo`)), 'ok')
+assert.equal(await failure(request(String.raw`\foo`)), 'tex-error', 'a macro defined by one formula is gone in the next')
+assert.equal(await failure(request(String.raw`\begin{equation}a\label{eq:t}\end{equation}`)), 'ok')
+assert.equal(await failure(request(String.raw`\begin{equation}b\label{eq:t}\end{equation}`)), 'ok', 'labels do not collide across formulas')
 assert.equal(await failure(request('   ')), 'empty')
 assert.equal(await failure(request(`x+${'y'.repeat(5000)}`)), 'input-too-long')
 assert.equal(

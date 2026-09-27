@@ -167,6 +167,7 @@ jobs:
             vendor/dsh-std/packages/command/lib/
             vendor/dsh-std/packages/storage/lib/
             vendor/dsh-std/packages/messages/lib/
+            vendor/mathjax-tex-svg/lib/
 
   # 构建门禁：verify:build 聚合链（边界/契约/patch surface/plugin 系列等
   # 40 余项）+ 包内容与入口 smoke。与测试组并行，复用 build 的产物；此前

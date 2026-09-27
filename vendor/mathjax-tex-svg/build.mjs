@@ -2,11 +2,12 @@
 // sources are kept in a separate file next to the bundle (see NOTICE).
 import { build } from 'esbuild'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 mkdirSync(new URL('./lib/', import.meta.url), { recursive: true })
 const result = await build({
-  entryPoints: [new URL('./src/entry.mjs', import.meta.url).pathname],
-  outfile: new URL('./lib/index.mjs', import.meta.url).pathname,
+  entryPoints: [fileURLToPath(new URL('./src/entry.mjs', import.meta.url))],
+  outfile: fileURLToPath(new URL('./lib/index.mjs', import.meta.url)),
   bundle: true,
   minify: true,
   format: 'esm',
