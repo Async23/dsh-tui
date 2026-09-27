@@ -32,6 +32,12 @@ const IMAGE_Z_INDEX = -0x80000000
  */
 const DORMANT_MAX_IMAGES = 128
 const RETAINED_MAX_BYTES = 64 * 1024 * 1024
+/**
+ * An ENOENT this soon after re-uploading the same image means the terminal
+ * cannot keep it at all (e.g. the image exceeds its whole quota and the
+ * upload was refused): stop re-uploading instead of looping.
+ */
+const REUPLOAD_FAILURE_WINDOW_MS = 5000
 
 type PreparedKittyRgba = {
   readonly data: Uint8Array
@@ -49,6 +55,10 @@ type ImageState = {
   uploaded: boolean
   /** Last reconcile pass that placed this image (LRU order for eviction). */
   lastUsed: number
+  /** When an ENOENT last triggered a re-upload (0 = never). */
+  reuploadedAt: number
+  /** The terminal refused this image right after a re-upload; stop retrying. */
+  abandoned: boolean
 }
 
 type PlacementState = {
@@ -67,6 +77,8 @@ export interface KittyGraphicsManagerOptions {
   readonly firstImageId?: number
   /** Physical pixels per cell; defaults to a conventional 8×16 cell. */
   readonly cellSize?: TerminalCellSize
+  /** Clock for the re-upload failure window; protocol tests pin it. */
+  readonly now?: () => number
 }
 
 /**
@@ -86,6 +98,7 @@ export class KittyGraphicsManager {
   private nextPlacementId = 1
   private cellSize: TerminalCellSize
   private pass = 0
+  private readonly now: () => number
 
   constructor(options: KittyGraphicsManagerOptions = {}) {
     this.nextImageId = normalizeFirstId(
@@ -94,6 +107,7 @@ export class KittyGraphicsManager {
     this.cellSize = normalizeTerminalCellSize(
       options.cellSize ?? DEFAULT_TERMINAL_CELL_SIZE,
     )
+    this.now = options.now ?? Date.now
   }
 
   /** Update the physical cell ratio used by future image variants. */
@@ -258,7 +272,11 @@ export class KittyGraphicsManager {
    * Handle a Kitty graphics reply the renderer did not ask for. ENOENT for
    * one of our images means the terminal evicted its data (its own quota is
    * smaller than our retention budget): upload it again and re-place every
-   * node showing it on the next frame. Returns whether a repaint is needed.
+   * node showing it on the next frame. A second ENOENT within
+   * REUPLOAD_FAILURE_WINDOW_MS of that re-upload means the terminal refuses
+   * the image outright, so it is left as is (never an upload loop); a new
+   * content or size variant is a new image and tries again. Returns whether a
+   * repaint is needed.
    */
   handleResponse(imageId: number, status: string): boolean {
     if (!status.startsWith('ENOENT')) return false
@@ -266,7 +284,13 @@ export class KittyGraphicsManager {
     for (const candidate of this.images.values()) {
       if (candidate.imageId === imageId) image = candidate
     }
-    if (image === undefined || !image.uploaded) return false
+    if (image === undefined || !image.uploaded || image.abandoned) return false
+    const now = this.now()
+    if (image.reuploadedAt !== 0 && now - image.reuploadedAt < REUPLOAD_FAILURE_WINDOW_MS) {
+      image.abandoned = true
+      return false
+    }
+    image.reuploadedAt = now
     image.uploaded = false
     for (const state of this.placements.values()) {
       if (state.image === image) state.placed = false
@@ -321,6 +345,8 @@ export class KittyGraphicsManager {
       cellSize: this.cellSize,
       uploaded: false,
       lastUsed: this.pass,
+      reuploadedAt: 0,
+      abandoned: false,
     }
     this.images.set(key, image)
     return image

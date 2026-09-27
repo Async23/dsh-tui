@@ -357,9 +357,30 @@ assert.equal(lostManager.handleResponse(901, 'ENOENT:No image with id: 901 found
 const lostRestored = lostManager.reconcile([lostPlacement])
 assert.match(lostRestored, /a=t,t=d,f=32,[^;]*i=901,/u, 'the evicted image is uploaded again under its id')
 assert.match(lostRestored, /a=p,i=901,/u, 'and placed again')
-assert.equal(lostManager.handleResponse(901, 'ENOENT'), true)
 lostManager.invalidateAll()
 assert.equal(lostManager.handleResponse(901, 'ENOENT'), false, 'an image already pending upload needs no second repaint')
+
+// A terminal that refuses an image outright (bigger than its whole quota)
+// answers every placement with ENOENT: one re-upload, then no loop.
+let clock = 10_000
+const refusedManager = new KittyGraphicsManager({ firstImageId: 951, now: () => clock })
+const refusedPlacement = { ...placement, node: createNode('ink-image') }
+refusedManager.reconcile([refusedPlacement])
+assert.equal(refusedManager.handleResponse(951, 'ENOENT'), true, 'the first ENOENT re-uploads')
+assert.match(refusedManager.reconcile([refusedPlacement]), /a=t,t=d,f=32,[^;]*i=951,/u)
+clock += 200
+assert.equal(refusedManager.handleResponse(951, 'ENOENT'), false, 'ENOENT right after the re-upload stops retrying')
+assert.equal(refusedManager.reconcile([refusedPlacement]), '', 'no further uploads or placements')
+clock += 60_000
+assert.equal(refusedManager.handleResponse(951, 'ENOENT'), false, 'an abandoned image stays abandoned')
+// A later, ordinary eviction of a healthy image still recovers.
+const evictedManager = new KittyGraphicsManager({ firstImageId: 961, now: () => clock })
+const evictedPlacement = { ...placement, node: createNode('ink-image') }
+evictedManager.reconcile([evictedPlacement])
+assert.equal(evictedManager.handleResponse(961, 'ENOENT'), true)
+evictedManager.reconcile([evictedPlacement])
+clock += 30_000
+assert.equal(evictedManager.handleResponse(961, 'ENOENT'), true, 'an eviction long after a successful re-upload recovers again')
 
 // The querier forwards replies that answer no pending query.
 {
