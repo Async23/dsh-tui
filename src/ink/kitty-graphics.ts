@@ -46,7 +46,8 @@ type PreparedKittyRgba = {
 }
 
 type ImageState = {
-  readonly imageId: number
+  /** Replaced on every re-upload, so replies to older placements miss it. */
+  imageId: number
   readonly payload: PreparedKittyRgba
   /** Decoded RGBA bytes the terminal stores for this image. */
   readonly retainedBytes: number
@@ -275,8 +276,10 @@ export class KittyGraphicsManager {
    * node showing it on the next frame. A second ENOENT within
    * REUPLOAD_FAILURE_WINDOW_MS of that re-upload means the terminal refuses
    * the image outright, so it is left as is (never an upload loop); a new
-   * content or size variant is a new image and tries again. Returns whether a
-   * repaint is needed.
+   * content or size variant is a new image and tries again. The re-upload
+   * takes a fresh image id: every placement of the old id may still answer
+   * ENOENT, and those late replies must not count as the re-upload failing.
+   * Returns whether a repaint is needed.
    */
   handleResponse(imageId: number, status: string): boolean {
     if (!status.startsWith('ENOENT')) return false
@@ -291,6 +294,7 @@ export class KittyGraphicsManager {
       return false
     }
     image.reuploadedAt = now
+    image.imageId = this.allocateImageId()
     image.uploaded = false
     for (const state of this.placements.values()) {
       if (state.image === image) state.placed = false
