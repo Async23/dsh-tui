@@ -15,6 +15,7 @@ import { isPlainReturnInput, modLabel } from '../utils/modifiers.js'
 import { actionMatches } from '../utils/keymap.js'
 import { formatTokens } from '../terminal-utils/format.js'
 import { homeDir } from '../utils/paths.js'
+import { execFileNoThrow } from '../utils/execFileNoThrow.js'
 import type { LlmModelInfo, LlmProviderInfo } from '../adapter/ports/channel-view.js'
 import { cleanRenderText, cleanScalarText } from '../dsh-adapter/sanitize.js'
 import {
@@ -70,6 +71,10 @@ import { PluginSceneBoundary } from '../components/PluginSceneBoundary.js'
 import { PluginStatusViewBoundary } from '../components/PluginStatusViewBoundary.js'
 import { ImagePreviewOverlay } from '../components/ImagePreviewOverlay.js'
 import { SkillsPicker, SkillsPickerLoading } from '../components/SkillsPicker.js'
+import { MigrateConfirm, MigratePicker } from '../components/MigratePicker.js'
+import { collectMigratePickerRows, MIGRATE_SCAN_SPECS, parseImportSummary, resolveMigrateCommand, type MigratePickerRow } from '../dsh-adapter/migrate/picker.js'
+import { collectActivitySamples, recentAgentsFrom, type ActivitySample } from '../dsh-adapter/migrate/recent-agents.js'
+import { MIGRATION_ADAPTERS } from '../dsh-adapter/migrate/index.js'
 import { SessionSupervisor } from './SessionSupervisor.js'
 import { SessionTree } from './SessionTree.js'
 import { Settings } from './Settings.js'
@@ -166,6 +171,11 @@ const STATUS_VIEW_UI = Object.freeze({
 const NO_EVENTS: readonly SessionEvent[] = []
 
 const COMMAND_RESULT_CELLS = 200
+
+/** Ceiling for one `dsh-tui migrate` child run. Discovery parses every source
+ *  file, but a healthy import of thousands of conversations finishes well
+ *  inside this; without a cap a wedged child would hang the loop forever. */
+const MIGRATE_CHILD_TIMEOUT_MS = 30 * 60 * 1000
 
 function cleanCommandError(error: unknown): string {
   try {
@@ -472,6 +482,17 @@ export function Chat({
    * list while the fresh one loads, exactly as the boolean era did.
    */
   const [overlay, dispatchOverlay] = React.useReducer(chatOverlayReducer, NO_OVERLAY)
+  // `/migrate` picker rows (null = collecting in the background; the picker
+  // shows its empty state until the sub-second scan lands).
+  const [migrateRows, setMigrateRows] = React.useState<MigratePickerRow[] | null>(null)
+  // Multi-select state (PRD): checked agent ids + the confirmation layer's
+  // frozen snapshot of the checked rows.
+  const [migrateChecked, setMigrateChecked] = React.useState<ReadonlySet<string>>(new Set())
+  const [migratePending, setMigratePending] = React.useState<readonly MigratePickerRow[]>([])
+  // Smart-hint arming: while the migration hint notification is up, a bare
+  // Enter (empty prompt, no overlay) jumps straight into the picker with
+  // that source pre-checked (PRD #4). Any other key disarms.
+  const [migrateHintAgent, setMigrateHintAgent] = React.useState<string | null>(null)
   // Chat and PromptInput both receive one parsed stdin batch. Keep the
   // permission focus synchronous so arrow+Enter in the same batch uses the
   // post-arrow row rather than the previous render's index.
@@ -1286,6 +1307,37 @@ export function Chat({
   // fullscreen (<AlternateScreen> supplies mouse tracking); a no-op
   // subscription in inline mode, where selection belongs to the terminal.
   // The copy clears the highlight and posts a transient notification.
+  // Smart migration hint (product ask): ~12s after mount, one background
+  // pass over the foreign-agent stores; when a source was active inside the
+  // 20-minute window, surface the user's own wording once per session. The
+  // file-level mtime scan is the counter's walk shape (sub-second) and runs
+  // off the render path; failures read as "no data" and stay silent.
+  const migrateHintShownRef = React.useRef(false)
+  React.useEffect(() => {
+    if (migrateHintShownRef.current) return
+    const timer = setTimeout(() => {
+      migrateHintShownRef.current = true
+      void (async () => {
+        const newest = await new Promise<readonly ActivitySample[]>(resolve => {
+          setImmediate(() => resolve(collectActivitySamples(
+            MIGRATION_ADAPTERS,
+            adapter => MIGRATE_SCAN_SPECS[adapter.id],
+          )))
+        })
+        const top = recentAgentsFrom(newest, Date.now())[0]
+        if (top !== undefined) {
+          channel.notify(t('migrate-hint-notify', { agent: top.label }), { timeoutMs: 10000 })
+          // PRD #4: while the hint is up, a bare Enter (empty prompt, no
+          // overlay) jumps into the picker with this source pre-checked;
+          // the global key layer below consumes it, anything else disarms.
+          setMigrateHintAgent(top.agentId)
+          setTimeout(() => setMigrateHintAgent(current => current === top.agentId ? null : current), 10_000)
+        }
+      })()
+    }, 12_000)
+    return () => clearTimeout(timer)
+  }, [channel])
+
   useCopyOnSelect(
     text => channel.notify(t('copied-chars', { n: text.length }), { timeoutMs: 1500 }),
     // Stale-selection refusal: the highlighted rows were replaced in place
@@ -1529,6 +1581,93 @@ export function Chat({
       case 'model': return t('reload-kind-model')
       case 'activity': return t('reload-kind-activity')
     }
+  }
+
+  /** Collect picker rows off the current turn: the scan is synchronous FS
+   *  work (name-only walk + per-file stat), so it is deferred by one macrotask
+   *  to let the overlay paint its loading state first. */
+  const collectMigrateRows = (): Promise<MigratePickerRow[]> => new Promise(resolve => {
+    setImmediate(() => resolve(collectMigratePickerRows(Date.now())))
+  })
+
+  /** Run `dsh-tui migrate <args>` in a child process through the package
+   *  bin; resolves with the exit code and the combined output. Uses the
+   *  shared no-throw runner (bounded capture, timeout, windowsHide): a wedged
+   *  child would otherwise hang the sequential per-source loop forever. */
+  const runMigrateChild = async (parts: readonly string[]): Promise<{ code: number | null, out: string }> => {
+    const { dirname } = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+    const { resolveOwnBin } = await import('../dsh-adapter/migrate/bin-path.js')
+    // This file sits at a different depth per layout (src/screens vs
+    // lib/types/screens), so the bin resolves by upward probe — see
+    // bin-path.ts; a fixed dirname count fails on real installs.
+    const bin = resolveOwnBin(dirname(fileURLToPath(import.meta.url)))
+    if (bin === undefined) {
+      channel.notify(t('migrate-spawn-failed'), { color: 'error', timeoutMs: 8000 })
+      return { code: -1, out: '' }
+    }
+    const result = await execFileNoThrow(process.execPath, [bin, 'migrate', ...parts], {
+      timeout: MIGRATE_CHILD_TIMEOUT_MS,
+    })
+    // A killed child reports `code: null` and whatever it managed to print; put
+    // the reason on the record so the transcript does not read as a silent
+    // failure. Nothing at all (no code, no output) means it never really ran.
+    if (result.code === null) {
+      return {
+        code: null,
+        out: `${result.stdout}${result.stderr}${t('migrate-child-timeout', { minutes: MIGRATE_CHILD_TIMEOUT_MS / 60_000 })}\n`,
+      }
+    }
+    if (result.code === 1 && result.stdout === '' && result.stderr === '') {
+      channel.notify(t('migrate-spawn-failed'), { color: 'error', timeoutMs: 8000 })
+    }
+    // stdout carries the per-source report, stderr the usage/error lines;
+    // both belong in the /migrate transcript row.
+    return { code: result.code, out: `${result.stdout}${result.stderr}` }
+  }
+
+  /** Orchestrate the confirmation layer's confirmed rows (PRD #3): one child
+   *  per source, sequential; per-source progress notifications (throttled by
+   *  the source boundary — no intra-source spam), real per-source counters
+   *  parsed from each child's report, and a final summary that NEVER claims
+   *  success for a source that did not run (the P2 fix). */
+  const spawnMigrateSources = (rows: readonly MigratePickerRow[], dryRun: boolean): void => {
+    const allOut: string[] = []
+    let failures = 0
+    void (async () => {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]!
+        channel.notify(
+          t(dryRun ? 'migrate-previewing-source' : 'migrate-importing-source', { label: row.label, i: i + 1, n: rows.length }),
+          { timeoutMs: 4000 },
+        )
+        const { code, out } = await runMigrateChild(dryRun ? [row.agentId, '--dry-run'] : [row.agentId])
+        allOut.push(...out.split('\n').map(line => cleanRenderText(line, 400)).filter(Boolean))
+        if (code !== 0) failures += 1
+        // Per-source real counters straight from the child's report line.
+        const summary = parseImportSummary(out).find(entry => entry.agentId === row.agentId)
+        if (!dryRun && summary !== undefined) {
+          channel.notify(
+            t('migrate-source-done', { label: row.label, imported: summary.imported, existing: summary.existing }),
+            { timeoutMs: 6000 },
+          )
+        }
+      }
+      // The transcript row is this run's record. When a source failed AND no
+      // child output was captured at all (killed by the timeout, or never
+      // spawned), the success wording would contradict the notification right
+      // above it — report the failure here too.
+      const fallbackLine = failures > 0
+        ? t('migrate-failed', { n: failures })
+        : t(dryRun ? 'migrate-all-previewed' : 'migrate-all-done', { n: rows.length })
+      channel.pushLocal('/migrate', allOut.length > 0 ? allOut : [fallbackLine])
+      channel.notify(
+        failures === 0
+          ? t(dryRun ? 'migrate-all-previewed' : 'migrate-all-done', { n: rows.length })
+          : t('migrate-failed', { n: failures }),
+        failures === 0 ? { timeoutMs: 6000 } : { color: 'error', timeoutMs: 10000 },
+      )
+    })()
   }
 
   const runCommand = (
@@ -2169,6 +2308,60 @@ export function Chat({
         setHelpOpen(false)
         channel.pushLocal('/doctor', channel.doctorInfo())
         return true
+      case 'migrate': {
+        // Double entry points with the CLI. BARE `/migrate` opens the
+        // multi-select picker; `/migrate <agent>` opens the CONFIRMATION
+        // layer for that single source (PRD #2 — a bulk import is never one
+        // keystroke away). Validity is decided against the adapter REGISTRY,
+        // never the picker's row cache: on a fresh mount that cache is empty,
+        // and deriving the answer from it made every `/migrate <agent>` report
+        // an unknown source until the picker had been opened once.
+        setHelpOpen(false)
+        const command = resolveMigrateCommand(rawInput, MIGRATION_ADAPTERS.map(adapter => adapter.id))
+        if (command.kind === 'unknown') {
+          channel.notify(t('migrate-unknown-agent', { agent: command.agentId }), { color: 'error', timeoutMs: 8000 })
+          return true
+        }
+        if (command.kind === 'usage') {
+          channel.notify(t('migrate-usage'), { color: 'error', timeoutMs: 8000 })
+          return true
+        }
+        if (command.kind === 'dry-run-needs-source') {
+          channel.notify(t('migrate-dry-run-needs-source'), { color: 'error', timeoutMs: 8000 })
+          return true
+        }
+        if (command.kind === 'import') {
+          void (async () => {
+            // Rows carry the scannable count the confirmation line shows; a
+            // warm cache from an earlier picker visit is reused as is.
+            const rows = migrateRows ?? await collectMigrateRows()
+            const row = rows.find(candidate => candidate.agentId === command.agentId)
+            if (row === undefined) {
+              channel.notify(t('migrate-unknown-agent', { agent: command.agentId }), { color: 'error', timeoutMs: 8000 })
+              return
+            }
+            if (command.dryRun) {
+              spawnMigrateSources([row], true)
+              return
+            }
+            setMigratePending([row])
+            // Pin the checked set to the source this confirmation is about:
+            // Esc returns to the picker, and a stale set from an earlier visit
+            // would there contradict what the confirmation just showed.
+            setMigrateChecked(new Set([row.agentId]))
+            dispatchOverlay({ type: 'open', overlay: { kind: 'migrate-confirm' } })
+          })()
+          return true
+        }
+        // Bare `/migrate` starts a NEW flow: drop the previous run's checks
+        // (only Esc-out-of-confirm keeps them) and let the picker show its
+        // scanning state until the rows land.
+        setMigrateRows(null)
+        setMigrateChecked(new Set())
+        dispatchOverlay({ type: 'open', overlay: { kind: 'migrate', index: 0 } })
+        void collectMigrateRows().then(setMigrateRows)
+        return true
+      }
       case 'plugins':
         // Plugin diagnostics (C-070): trust banner first, then descriptor /
         // grant matrix / ledger tail — or validate+negotiate for
@@ -3217,6 +3410,74 @@ export function Chat({
         if (skill?.userInvocable) setHistoryFill(`/${skill.name} `)
       } else if (key.escape) {
         dispatchOverlay({ type: 'close' })
+      }
+      return
+    }
+    // Armed migration hint (PRD #4): bare Enter while the hint notification
+    // is up — no overlay and an EMPTY prompt — jumps into the picker with the
+    // hinted source pre-checked; every other key disarms silently. The empty
+    // check is explicit because the composer owns that state: an Enter that
+    // submitted a written message must not also open the picker, and this
+    // listener runs before PromptInput's, so the event is consumed here too.
+    if (migrateHintAgent !== null && overlay.kind === 'none') {
+      if (plainReturn && !(promptControllerRef.current?.hasText() ?? false)) {
+        const agent = migrateHintAgent
+        event.stopImmediatePropagation()
+        setMigrateHintAgent(null)
+        setMigrateRows(null)
+        setMigrateChecked(new Set([agent]))
+        dispatchOverlay({ type: 'open', overlay: { kind: 'migrate', index: 0 } })
+        void collectMigrateRows().then(setMigrateRows)
+        return
+      }
+      setMigrateHintAgent(null)
+    }
+    if (overlay.kind === 'migrate') {
+      const rows = migrateRows ?? []
+      if (key.upArrow || key.downArrow) {
+        dispatchOverlay({ type: 'move', delta: key.upArrow ? -1 : 1, count: rows.length })
+      } else if (key.escape) {
+        dispatchOverlay({ type: 'close' })
+      } else if (rows.length > 0) {
+        const row = rows[overlay.index]
+        if (input === ' ' && row !== undefined) {
+          setMigrateChecked(current => {
+            const next = new Set(current)
+            if (next.has(row.agentId)) next.delete(row.agentId)
+            else next.add(row.agentId)
+            return next
+          })
+        } else if (input === 'a' && !key.ctrl && !key.meta) {
+          // All/none toggle: a checked-everything state collapses to none.
+          setMigrateChecked(current =>
+            current.size >= rows.length ? new Set() : new Set(rows.map(candidate => candidate.agentId)))
+        } else if (plainReturn) {
+          // Checked set wins; the focused row acts as a single selection
+          // when nothing is checked (PRD #1).
+          const chosen = migrateChecked.size > 0
+            ? rows.filter(candidate => migrateChecked.has(candidate.agentId))
+            : row !== undefined ? [row] : []
+          if (chosen.length > 0) {
+            setMigratePending(chosen)
+            dispatchOverlay({ type: 'close' })
+            dispatchOverlay({ type: 'open', overlay: { kind: 'migrate-confirm' } })
+          }
+        }
+      }
+      return
+    }
+    if (overlay.kind === 'migrate-confirm') {
+      if (key.escape) {
+        // Back to the picker with the checked set preserved (PRD #2's
+        // "cancel" reads cheapest as "let me change the selection").
+        dispatchOverlay({ type: 'close' })
+        dispatchOverlay({ type: 'open', overlay: { kind: 'migrate', index: 0 } })
+      } else if (plainReturn) {
+        dispatchOverlay({ type: 'close' })
+        spawnMigrateSources(migratePending, false)
+      } else if (input === 'd' && !key.ctrl && !key.meta) {
+        dispatchOverlay({ type: 'close' })
+        spawnMigrateSources(migratePending, true)
       }
       return
     }
@@ -4410,6 +4671,31 @@ export function Chat({
                   }}
                 />
               )}
+            </Box>
+          )}
+          {overlay.kind === 'migrate' && (
+            <Box flexDirection="column" marginTop={1}>
+              <MigratePicker
+                rows={migrateRows ?? []}
+                focusIndex={overlay.index}
+                checked={migrateChecked}
+                loading={migrateRows === null}
+                onPick={(index) => {
+                  const row = (migrateRows ?? [])[index]
+                  if (!row) return
+                  setMigrateChecked(current => {
+                    const next = new Set(current)
+                    if (next.has(row.agentId)) next.delete(row.agentId)
+                    else next.add(row.agentId)
+                    return next
+                  })
+                }}
+              />
+            </Box>
+          )}
+          {overlay.kind === 'migrate-confirm' && (
+            <Box flexDirection="column" marginTop={1}>
+              <MigrateConfirm rows={migratePending} />
             </Box>
           )}
           {overlay.kind === 'skills' && (

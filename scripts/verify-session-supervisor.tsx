@@ -229,6 +229,7 @@ interface StubChannel {
   /** Listings that finished, resolved or rejected: the deterministic "the
    *  held-back answer really landed" signal, instead of a fixed sleep. */
   landed: number
+  enrich?: (row: never) => void
 }
 
 /** Build one stub channel over the shared fixtures. */
@@ -246,7 +247,8 @@ function makeChannel(config: StubChannelConfig): StubChannel {
         return config.registry
       },
     }),
-    listSessions: async () => {
+    listSessions: async (onEnriched?: (row: never) => void) => {
+      stub.enrich = onEnriched
       // Read per call, not per channel: a case swaps the plan between mounts.
       const plan = stub.plan
       if (plan.reject === true) {
@@ -968,6 +970,16 @@ console.log('a registry that FAILS does not take the history with it')
     absent.lines().join('\n'),
   )
   absent.close()
+  app.close()
+}
+
+console.log('background title recovery updates the existing row')
+{
+  const target = makeChannel({ registry, cwd: alphaDir })
+  const app = await mountSupervisor(target)
+  check('the foreground row is visible', await settled(() => app.lines().join('\n').includes('free session')))
+  target.enrich?.(session({ id: 'free-one', title: { text: 'recovered title', source: 'auto' }, updatedAt: now - 1_000 }))
+  check('background metadata repaints the row', await settled(() => app.lines().join('\n').includes('recovered title')))
   app.close()
 }
 console.log(failures === 0 ? '\nAll session-supervisor checks passed.' : `\n${failures} check(s) failed.`)

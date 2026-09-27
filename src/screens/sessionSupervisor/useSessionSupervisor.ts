@@ -324,7 +324,11 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
     await Promise.all([
       (async (): Promise<void> => {
         try {
-          const fresh = await channel.listSessions()
+          const fresh = await channel.listSessions(enriched => {
+            if (slot.requestGeneration !== generation) return
+            slot.rows = slot.rows?.map(row => row.id === enriched.id ? enriched : row)
+            setSessions(current => current.map(row => row.id === enriched.id ? enriched : row))
+          })
           // Recorded only after success: a failed listing keeps the previous
           // snapshot, and only the newest reload may write it.
           if (slot.requestGeneration !== generation) return
@@ -357,6 +361,10 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
   React.useEffect(() => {
     void reload()
   }, [reload])
+
+  React.useEffect(() => () => {
+    snapshotSlot(channel).requestGeneration++
+  }, [channel])
 
   // Selection follows the terminal's own directory, then the ledger: the rail
   // must open on the workspace this terminal is IN, not on whichever record
