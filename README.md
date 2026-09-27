@@ -168,6 +168,8 @@ While the model is working: `Enter` steers, `Tab` queues a follow-up, `Ctrl+Ente
 
 On native Windows, fragmented Win32 input records are reassembled across short input delays instead of appearing as numeric protocol text. Incomplete records have a bounded recovery window (1 second); standalone `Esc` keeps its normal response time.
 
+Unrecognized complete CSI sequences are not inserted as text. After a damaged CSI prefix, a bare ASCII letter can be consumed as its terminator; normal Win32 key records and bracketed-paste text retain their own boundaries.
+
 Mouse (fullscreen): drag to select and copy, double/triple click to select a word or line, click tool cards, timeline ticks and `[Image #N]` previews.
 
 **Pasting**: native and bracketed paste keeps ordinary text and newlines, and never submits itself on arrival. On Windows terminals that deliver a paste as win32-input-mode key records, the residue is stripped at the entry point (a multi-line paste no longer leaves stray `_`) and pasted CRLF collapses to a single newline; genuine underscores and bracketed-paste text are untouched.
