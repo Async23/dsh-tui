@@ -66,10 +66,20 @@ export function MathBlock({ token, dimColor, forceWidth }: Props): React.ReactNo
     [renderable, token.text],
   )
   if (raster !== undefined) {
+    // What the box shows when the renderer does not place the image (e.g. a
+    // Kitty image partly scrolled out before cropping is available): the
+    // stacked Unicode layout when it fits the box, else the one-line form
+    // wrapped across it, so every visible row of the box carries the formula.
+    const stackedFits = lines !== undefined && lines.length <= raster.rows &&
+      lines.every(line => stringWidth(line) <= raster.columns)
     return (
       <Box paddingLeft={INDENT_WIDTH}>
         <Image presentation="transcript" source={raster.source} width={raster.columns} height={raster.rows} alt={token.text}>
-          <Text dimColor wrap="truncate">{renderInlineMath(token.text) ?? token.text}</Text>
+          <Box width={raster.columns} height={raster.rows} overflow="hidden">
+            <Text dimColor wrap={stackedFits ? 'truncate' : 'wrap'}>
+              {stackedFits ? lines.join('\n') : renderInlineMath(token.text) ?? token.text}
+            </Text>
+          </Box>
         </Image>
       </Box>
     )

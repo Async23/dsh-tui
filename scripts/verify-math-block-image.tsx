@@ -73,14 +73,34 @@ applyMathRendering('image')
 const quadratic = await renderMathRaster(request(QUADRATIC))
 assert.ok(quadratic.ok, `the quadratic formula rasterizes (got ${quadratic.ok ? '' : quadratic.failure})`)
 
-// Image: a box of exactly the raster's cells, whose text fallback (what a
-// cell grid shows) is the one-line form rather than the stacked layout.
+// Image: a box of exactly the raster's cells. What a cell grid shows is the
+// box's fallback — the stacked Unicode when it fits (so a partly visible box
+// still shows the formula), drawn dim, unlike the plain Unicode path.
 {
   const lines = screenLines(block(QUADRATIC))
   assert.equal(lines.length, quadratic.raster.rows, 'the block takes the raster rows')
-  const shown = lines[0]!.replace(/…$/u, '')
-  assert.ok(shown.length > 4 && `  ${linear}`.startsWith(shown), 'the image box holds the one-line fallback, truncated to its width')
-  assert.notDeepEqual(lines, stacked, 'not the stacked Unicode layout')
+  assert.deepEqual(lines, stacked, 'the fallback is the full stacked formula when it fits the box')
+}
+{
+  // TeX the Unicode renderer cannot lay out: the Unicode path keeps the
+  // source, the image path shows the formula as an image box.
+  const arrow = String.raw`a \xrightarrow{f} b`
+  const result = await renderMathRaster(request(arrow))
+  assert.ok(result.ok, 'MathJax typesets what the Unicode renderer rejects')
+  assert.deepEqual(screenLines(block(arrow), images(false, CELL)), ['$$', arrow, '$$'], 'without graphics: the source')
+  const lines = screenLines(block(arrow))
+  assert.equal(lines.length, result.raster.rows, 'with graphics: an image box of the raster rows')
+  assert.ok(!lines.includes('$$'), 'not the source fallback')
+}
+{
+  // A box too narrow for the stacked layout wraps the one-line form across
+  // its rows instead of leaving rows blank.
+  const narrow = { ...request(QUADRATIC), maxColumns: 12 }
+  const result = await renderMathRaster(narrow)
+  if (result.ok && result.raster.rows > 1) {
+    const lines = screenLines(<MathBlock token={blockToken(QUADRATIC)} dimColor={false} forceWidth={12 + 2 + 4} />)
+    assert.ok(lines.slice(0, result.raster.rows).every(line => line.trim() !== ''), 'every row of a narrow image box carries part of the formula')
+  }
 }
 
 // Every other case keeps the Unicode rendering.
