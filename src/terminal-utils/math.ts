@@ -14,7 +14,8 @@
  * content, so only rendering reads it.
  *
  * Delimiters: `$…$`, `\(…\)` inline; `$$…$$`, `\[…\]` as a block when the
- * opener starts a line and the closer ends one, inline otherwise. The `$`
+ * opener starts a line and the closer ends one, inline otherwise; a line
+ * opening a display environment (`\begin{align}` …) is a block too. The `$`
  * rules follow Pi's markdown tokenizer and Codex's TUI math scanner so that
  * prices, shell variables and PIDs stay prose.
  */
@@ -22,12 +23,21 @@
 import type { TokenizerExtension, Tokens } from 'marked'
 import { renderLatex } from './latex.js'
 
-/** A recognized formula. `text` is the TeX between the delimiters, `raw` the
- *  full source span including them. */
+/** Which delimiter introduced a formula. */
+export type MathDelimiter = 'dollar' | 'double-dollar' | 'paren' | 'bracket' | 'environment'
+
+/** A recognized formula. `text` is the TeX between the delimiters (for an
+ *  environment, the whole `\begin…\end`), `raw` the full source span. */
 export interface MathToken extends Tokens.Generic {
   type: 'math' | 'mathBlock'
   raw: string
   text: string
+  /** TeX display style (`$$`, `\[…\]`, environments) — how it typesets. */
+  display: boolean
+  /** Owns its Markdown lines (a `mathBlock`) — how it lays out. `foo $$x$$
+   *  bar` is display but not standalone. */
+  standalone: boolean
+  delimiter: MathDelimiter
   /** Block only: the closer has not arrived yet (streaming, or an unclosed
    *  block at the end of a reply). Always shown as source. */
   pending?: boolean
@@ -116,11 +126,11 @@ function isDollarProse(body: string, after: string): boolean {
   return /^[A-Z_][A-Z0-9_]*[^A-Za-z0-9_\s]?$/.test(body) && /^[A-Za-z_]/.test(after)
 }
 
-const INLINE_DELIMITERS: ReadonlyArray<readonly [string, string]> = [
-  ['$$', '$$'],
-  ['\\(', '\\)'],
-  ['\\[', '\\]'],
-  ['$', '$'],
+const INLINE_DELIMITERS: ReadonlyArray<readonly [string, string, MathDelimiter]> = [
+  ['$$', '$$', 'double-dollar'],
+  ['\\(', '\\)', 'paren'],
+  ['\\[', '\\]', 'bracket'],
+  ['$', '$', 'dollar'],
 ]
 
 /**
@@ -133,7 +143,7 @@ const INLINE_DELIMITERS: ReadonlyArray<readonly [string, string]> = [
 function tokenizeInlineMath(source: string): MathToken | undefined {
   const delimiter = INLINE_DELIMITERS.find(([opening]) => source.startsWith(opening))
   if (delimiter === undefined) return undefined
-  const [opening, closing] = delimiter
+  const [opening, closing, kind] = delimiter
   const closingIndex = findClosingDelimiter(source, closing, opening.length)
   if (closingIndex < 0) return undefined
   const text = source.slice(opening.length, closingIndex)
@@ -141,7 +151,14 @@ function tokenizeInlineMath(source: string): MathToken | undefined {
   if (opening.startsWith('$') && isDollarProse(text, source.slice(closingIndex + closing.length))) {
     return undefined
   }
-  return { type: 'math', raw: source.slice(0, closingIndex + closing.length), text }
+  return {
+    type: 'math',
+    raw: source.slice(0, closingIndex + closing.length),
+    text,
+    display: kind === 'double-dollar' || kind === 'bracket',
+    standalone: false,
+    delimiter: kind,
+  }
 }
 
 /**
@@ -152,7 +169,45 @@ function tokenizeInlineMath(source: string): MathToken | undefined {
  */
 const BLOCK_OPENER = /^ {0,3}(\$\$|\\\[)/
 
+/**
+ * Display environments models write without `$$` around them. Their bodies
+ * carry `\\` row breaks and `&` alignment that Markdown would otherwise
+ * mangle into prose, so a line opening one starts a block like `$$` does.
+ */
+const ENVIRONMENT_OPENER =
+  /^ {0,3}\\begin\{((?:equation|align|alignat|gather|multline|flalign|eqnarray|displaymath|aligned|gathered)\*?)\}/
+
+function tokenizeEnvironmentBlock(source: string, opener: RegExpExecArray): MathToken | undefined {
+  const name = opener[1]!
+  const begin = `\\begin{${name}}`
+  const end = `\\end{${name}}`
+  let depth = 0
+  let index = opener[0].length - begin.length
+  while (index < source.length) {
+    const nextBegin = source.indexOf(begin, index)
+    const nextEnd = source.indexOf(end, index)
+    if (nextEnd < 0) break
+    if (nextBegin >= 0 && nextBegin < nextEnd) {
+      depth += 1
+      index = nextBegin + begin.length
+      continue
+    }
+    depth -= 1
+    index = nextEnd + end.length
+    if (depth > 0) continue
+    const trailing = /^[ \t]*(?:\n|$)/.exec(source.slice(index))
+    // Prose after the closing \end on the same line: not a block of its own.
+    if (trailing === null) return undefined
+    const raw = source.slice(0, index + trailing[0].length)
+    return { type: 'mathBlock', raw, text: raw.trim(), display: true, standalone: true, delimiter: 'environment' }
+  }
+  // No closing \end yet: a formula in progress (or never closed) stays source.
+  return { type: 'mathBlock', raw: source, text: source.trim(), display: true, standalone: true, delimiter: 'environment', pending: true }
+}
+
 function tokenizeBlockMath(source: string): MathToken | undefined {
+  const environment = ENVIRONMENT_OPENER.exec(source)
+  if (environment !== null) return tokenizeEnvironmentBlock(source, environment)
   const opener = BLOCK_OPENER.exec(source)
   if (opener === null) return undefined
   const dollar = opener[1] === '$$'
@@ -165,13 +220,28 @@ function tokenizeBlockMath(source: string): MathToken | undefined {
     // The first closer decides the boundary. Looking for a later line-ending
     // closer would swallow intervening prose and the next formula.
     if (trailing === null || text === '') return undefined
-    return { type: 'mathBlock', raw: source.slice(0, end + trailing[0].length), text }
+    return {
+      type: 'mathBlock',
+      raw: source.slice(0, end + trailing[0].length),
+      text,
+      display: true,
+      standalone: true,
+      delimiter: dollar ? 'double-dollar' : 'bracket',
+    }
   }
   const body = source.slice(opener[0].length).replace(/^[ \t]*\n?/, '')
   // An opener with nothing after it yet is held too, so a streaming block
   // does not flip from prose to a block node when its first command arrives.
   if (dollar && body.trim() !== '' && !looksLikeMath(body)) return undefined
-  return { type: 'mathBlock', raw: source, text: body, pending: true }
+  return {
+    type: 'mathBlock',
+    raw: source,
+    text: body,
+    display: true,
+    standalone: true,
+    delimiter: dollar ? 'double-dollar' : 'bracket',
+    pending: true,
+  }
 }
 
 /** Tokenizer extensions for `marked.use({ extensions })`. */
@@ -180,7 +250,7 @@ export const MATH_MARKDOWN_EXTENSIONS: readonly TokenizerExtension[] = [
     name: 'mathBlock',
     level: 'block',
     start(source) {
-      const match = /(?:^|\n) {0,3}(?:\$\$|\\\[)/.exec(source)
+      const match = /(?:^|\n) {0,3}(?:\$\$|\\\[|\\begin\{)/.exec(source)
       return match ? match.index + (match[0].startsWith('\n') ? 1 : 0) : undefined
     },
     tokenizer: tokenizeBlockMath,

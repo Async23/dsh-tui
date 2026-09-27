@@ -201,10 +201,39 @@ export const subscribeMermaidDiagrams = mermaidDiagramsStore.subscribe
 export const getMermaidDiagrams = mermaidDiagramsStore.get
 export const applyMermaidDiagrams = mermaidDiagramsStore.apply
 
-/** Whether LaTeX math in replies renders as Unicode (settings
- *  `dsh-tui.latexMath`, default on). Only an explicit `false` keeps the TeX
- *  source. Read at render time, so settled transcript blocks re-render. */
-const latexMathStore = createLiveSetting<boolean>(true, value => value !== false)
-export const subscribeLatexMath = latexMathStore.subscribe
-export const getLatexMath = latexMathStore.get
-export const applyLatexMath = latexMathStore.apply
+/**
+ * How LaTeX math in replies renders (settings `dsh-tui.mathRendering`):
+ * `auto` picks the best available backend (today the Unicode renderer; a
+ * typeset-image backend will take over where the terminal supports it),
+ * `unicode` pins the Unicode renderer, `source` always shows the TeX.
+ */
+export type MathRendering = 'auto' | 'unicode' | 'source'
+const MATH_RENDERING_MODES = new Set<MathRendering>(['auto', 'unicode', 'source'])
+
+export function normalizeMathRendering(value: unknown): MathRendering {
+  return typeof value === 'string' && MATH_RENDERING_MODES.has(value as MathRendering)
+    ? value as MathRendering
+    : 'auto'
+}
+
+/**
+ * Resolve the effective mode across the settings user layer and cordis.yml.
+ * `latexMath: false` predates `mathRendering` (unreleased main builds wrote
+ * it) and still means `source` when no `mathRendering` is set at that layer.
+ */
+export function resolveMathRendering(
+  user: { mathRendering?: unknown; latexMath?: unknown },
+  config: { mathRendering?: unknown; latexMath?: unknown },
+): MathRendering {
+  for (const layer of [user, config]) {
+    if (layer.mathRendering !== undefined) return normalizeMathRendering(layer.mathRendering)
+    if (layer.latexMath === false) return 'source'
+  }
+  return 'auto'
+}
+
+/** Read at render time, so settled transcript blocks re-render on change. */
+const mathRenderingStore = createLiveSetting<MathRendering>('auto', normalizeMathRendering)
+export const subscribeMathRendering = mathRenderingStore.subscribe
+export const getMathRendering = mathRenderingStore.get
+export const applyMathRendering = mathRenderingStore.apply

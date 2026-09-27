@@ -39,7 +39,7 @@ import { readHomePrefs } from '../homePrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
-import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, applyLatexMath, applyMermaidDiagrams, applyPageMargin, isPageMarginMode, normalizePageMargin, normalizeScrollGutter, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, applyMathRendering, applyMermaidDiagrams, type MathRendering, applyPageMargin, isPageMarginMode, normalizePageMargin, normalizeScrollGutter, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
   draftComboConflicts,
   effectiveComboString,
@@ -593,7 +593,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // memoized by content, so no prop reaches the diagram/formula nodes).
   applyPageMargin(config.pageMargin)
   applyMermaidDiagrams(config.mermaidDiagrams)
-  applyLatexMath(config.latexMath)
+  applyMathRendering(resolveMathRendering({}, config))
   // Plugin toasts ride the channel's own notification surface: the runtime
   // already sanitized/rate-limited the delivery, the sink only forwards.
   // Without the extensions row (tuiToast absent) plugin toasts are dropped
@@ -665,7 +665,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         smoothStreaming: Schema.boolean(),
         // Same no-default rule: applyDisplay resolves `?? config.mermaidDiagrams ?? true`.
         mermaidDiagrams: Schema.boolean(),
-        // Same no-default rule: applyDisplay resolves `?? config.latexMath ?? true`.
+        // Same no-default rule: resolveMathRendering falls back to cordis.yml.
+        mathRendering: Schema.union(['auto', 'unicode', 'source']),
+        // Pre-`mathRendering` user layers; `false` still resolves to `source`.
         latexMath: Schema.boolean(),
         // No default on purpose: unset keeps the boot chain decisive
         // (applyEffortDefault hands `undefined` to channel.setDefaultEffort,
@@ -742,6 +744,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       expandEditor?: boolean
       smoothStreaming?: boolean
       mermaidDiagrams?: boolean
+      mathRendering?: MathRendering
       latexMath?: boolean
       statusBar?: Partial<StatusBarConfig>
       shortcuts?: Partial<Record<ShortcutActionId, string>>
@@ -802,7 +805,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       channel.setExpandEditor(value.expandEditor ?? config.expandEditor ?? true)
       channel.setSmoothStreaming(value.smoothStreaming ?? config.smoothStreaming ?? true)
       applyMermaidDiagrams(value.mermaidDiagrams ?? config.mermaidDiagrams)
-      applyLatexMath(value.latexMath ?? config.latexMath)
+      applyMathRendering(resolveMathRendering(value, config))
       channel.setStatusBar(normalizeStatusBar(value.statusBar ?? config.statusBar))
     }
     // Legacy user scopes layer over cordis.yml. Modern Config is already
@@ -1202,16 +1205,17 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           },
         },
         {
-          path: ['latexMath'],
+          path: ['mathRendering'],
           label: 'LaTeX math',
           descriptions: { zh: 'LaTeX 公式' },
-          hint: 'Render LaTeX math in replies ($…$, \\(…\\), $$…$$, \\[…\\]) as Unicode text: symbols, sub/superscripts, stacked fractions and limits, matrices, cases. Unsupported, still-streaming, or too-wide formulas keep their source. Applies immediately. On by default.',
-          hintDescriptions: { zh: '把回复中的 LaTeX 公式（$…$、\\(…\\)、$$…$$、\\[…\\]）转成 Unicode 文本：符号、上下标、竖排的分数与上下限、矩阵、分段函数。不支持、仍在流式输出或比终端宽的公式保留源码。立即生效。默认开启。' },
-          kind: 'boolean',
-          format(value: unknown): string {
-            // Unset in settings.yaml: the effective default is on.
-            return String(typeof value === 'boolean' ? value : config.latexMath !== false)
-          },
+          hint: 'How LaTeX math in replies ($…$, \\(…\\), $$…$$, \\[…\\]) renders. Auto: the best available renderer — today Unicode text with symbols, sub/superscripts, stacked fractions and limits, matrices, cases. Unicode: always that. Source: keep the TeX as written. Unsupported, still-streaming, or too-wide formulas keep their source. Applies immediately.',
+          hintDescriptions: { zh: '回复中的 LaTeX 公式（$…$、\\(…\\)、$$…$$、\\[…\\]）怎么显示。自动：用当前最好的渲染方式——目前是 Unicode 文本（符号、上下标、竖排的分数与上下限、矩阵、分段函数）。Unicode：固定用它。源码：保留原始 TeX。不支持、仍在流式输出或比终端宽的公式保留源码。立即生效。' },
+          kind: 'select',
+          options: [
+            { value: 'auto', label: 'Auto', descriptions: { zh: '自动' } },
+            { value: 'unicode', label: 'Unicode', descriptions: { zh: 'Unicode' } },
+            { value: 'source', label: 'Source', descriptions: { zh: '源码' } },
+          ],
         },
         {
           path: ['recapOnOpen'],

@@ -27,7 +27,7 @@ const [
   { renderLatex },
   { renderDisplayMath, renderInlineMath },
   { configureMarked },
-  { applyLatexMath },
+  { applyMathRendering, resolveMathRendering },
 ] = await Promise.all([
   import('node:assert/strict'),
   import('node:stream'),
@@ -123,6 +123,49 @@ assert.deepEqual(mathTexts('$a*b*c$ and $x_1 + y_1$'), ['math:a*b*c', 'math:x_1 
 assert.deepEqual(mathTexts('text\n$$\n\\frac{a}{b}\n$$\nmore'), ['mathBlock:\\frac{a}{b}'], 'a $$ block interrupts a paragraph')
 assert.deepEqual(mathTexts('\\[\nx^2\n\\]'), ['mathBlock:x^2'], '\\[ \\] is a block delimiter')
 assert.deepEqual(mathTexts('$$x^2$$ trails prose\n\nnext'), ['math:x^2'], 'a $$ pair with trailing text is inline')
+
+// Token metadata: TeX display style vs Markdown layout.
+{
+  const meta = (source: string) => {
+    const found: Array<[string, boolean, boolean, string]> = []
+    marked.walkTokens(marked.lexer(source), token => {
+      if (token.type === 'math' || token.type === 'mathBlock') {
+        const math = token as unknown as { display: boolean; standalone: boolean; delimiter: string }
+        found.push([token.type, math.display, math.standalone, math.delimiter])
+      }
+    })
+    return found
+  }
+  assert.deepEqual(meta('a $x$ b \\(y\\)'), [['math', false, false, 'dollar'], ['math', false, false, 'paren']])
+  assert.deepEqual(meta('foo $$x+y$$ bar'), [['math', true, false, 'double-dollar']], 'inline $$ is display but not standalone')
+  assert.deepEqual(meta('$$\nx\n$$'), [['mathBlock', true, true, 'double-dollar']])
+  assert.deepEqual(meta('\\[\nx\n\\]'), [['mathBlock', true, true, 'bracket']])
+  assert.deepEqual(meta('\\begin{align}\na &= b\n\\end{align}'), [['mathBlock', true, true, 'environment']])
+}
+
+// Bare display environments: a line opening one is a block, and Markdown no
+// longer eats its \\ row breaks.
+{
+  const ALIGN = '\\begin{align}\na &= b + c \\\\\nd &= e\n\\end{align}'
+  assert.deepEqual(mathTexts(`lead\n${ALIGN}\ntail`), [`mathBlock:${ALIGN}`], 'an environment block interrupts a paragraph')
+  assert.deepEqual(
+    mathTexts('\\begin{align*}\n\\begin{align*}x\\end{align*}\n\\end{align*}'),
+    ['mathBlock:\\begin{align*}\n\\begin{align*}x\\end{align*}\n\\end{align*}'],
+    'nested same-name environments close at the matching \\end',
+  )
+  const pendingEnv = marked.lexer('\\begin{aligned}\nx &= 1 \\\\').find(token => token.type === 'mathBlock') as { pending?: boolean } | undefined
+  assert.equal(pendingEnv?.pending, true, 'an environment without \\end yet is pending')
+  assert.deepEqual(mathTexts('\\begin{itemize}\n\\item x\n\\end{itemize}'), [], 'non-math environments stay prose')
+  assert.deepEqual(mathTexts('\\begin{align} x \\end{align} trailing'), [], 'an environment with text after its \\end is not a block')
+}
+
+// Settings: `latexMath: false` from pre-mathRendering layers still means source.
+assert.equal(resolveMathRendering({}, {}), 'auto')
+assert.equal(resolveMathRendering({ latexMath: false }, { mathRendering: 'unicode' }), 'source', 'the user layer wins')
+assert.equal(resolveMathRendering({ mathRendering: 'unicode', latexMath: false }, {}), 'unicode', 'mathRendering beats latexMath at one layer')
+assert.equal(resolveMathRendering({}, { latexMath: false }), 'source')
+assert.equal(resolveMathRendering({ mathRendering: 'bogus' }, {}), 'auto', 'invalid values normalize to auto')
+
 const MIXED_MATH_DOCUMENTS = [
   '$$x^2$$ trails prose\n\n**Important**\n\n$$y^2$$',
   '\\[x^2\\] trails prose\n\n**Important**\n\n\\[y^2\\]',
@@ -267,12 +310,12 @@ assert.ok(doc.some(line => line.includes('α') && line.includes('x²')), 'inline
 assert.ok(docText.includes('Price $5 and $10, shell $HOME.'), 'prices and shell variables stay verbatim')
 assert.ok(!docText.includes('\\frac') && !docText.includes('\\mathbb'), 'no TeX source leaks when rendering is on')
 
-applyLatexMath(false)
+applyMathRendering('source')
 const off = screenLines(<Markdown>{DOCUMENT}</Markdown>, 80).join('\n')
 assert.ok(off.includes(String.raw`$E = mc^2$`) && off.includes(String.raw`$\mathbb{R}^n$`), 'off: inline source verbatim')
 assert.ok(off.includes(QUADRATIC), 'off: block source verbatim, backslashes intact')
 assert.ok(!off.includes('x = ─'), 'off: no stacked layout')
-applyLatexMath(undefined)
+applyMathRendering(undefined)
 assert.ok(screenLines(<Markdown>{DOCUMENT}</Markdown>, 80).join('\n').includes('E = mc²'), 'unset re-enables the default')
 
 // ── Streaming parity ───────────────────────────────────────────────────

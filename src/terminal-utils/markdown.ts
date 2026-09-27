@@ -24,7 +24,7 @@ import type { CliHighlight } from './cliHighlight.js'
 import { logForDebugging } from '../utils/debug.js'
 import { createHyperlink } from './hyperlink.js'
 import { fileLinkUrl, linkifyFilePaths, looksLikeFilePath } from '../utils/fileTarget.js'
-import { getLatexMath } from '../tuiDisplayPrefs.js'
+import { getMathRendering } from '../tuiDisplayPrefs.js'
 import {
   isMathBlockToken,
   isMathToken,
@@ -261,7 +261,7 @@ function dispatch(token: Token, state: RenderState): string {
 /** Inline math as single-line Unicode; the exact source when it has none
  *  or rendering is switched off. */
 function renderInlineMathToken(token: MathToken): string {
-  return (getLatexMath() ? renderInlineMath(token.text) : undefined) ?? token.raw
+  return (getMathRendering() !== 'source' ? renderInlineMath(token.text) : undefined) ?? token.raw
 }
 
 /**
@@ -270,7 +270,7 @@ function renderInlineMathToken(token: MathToken): string {
  * so it gets the single-line form, else its source.
  */
 function renderNestedMathBlock(token: MathToken): string {
-  const rendered = getLatexMath() && !token.pending ? renderInlineMath(token.text) : undefined
+  const rendered = getMathRendering() !== 'source' && !token.pending ? renderInlineMath(token.text) : undefined
   return (rendered ?? token.raw.trim()) + EOL
 }
 

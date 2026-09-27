@@ -9,7 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { SessionModeSpec } from '../sessionModes.js'
-import { DEFAULT_STATUS_BAR, normalizePageMargin, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { DEFAULT_STATUS_BAR, normalizePageMargin, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SHORTCUT_ACTIONS, type ShortcutActionId } from '../utils/keymap.js'
 import { editableConfig, type RuntimeConfig } from './compat/settings.js'
 
@@ -138,12 +138,14 @@ export interface Config {
    *  than the viewport or of an unsupported type keeps the fenced source.
    *  On by default; off always shows the source. */
   mermaidDiagrams?: boolean
-  /** LaTeX math (settings `dsh-tui.latexMath`): `$…$` / `\(…\)` inline and
-   *  `$$…$$` / `\[…\]` blocks in replies render as Unicode text — Greek and
-   *  operator symbols, scripts, fractions and operator limits stacked in
-   *  display blocks, matrices, cases. No TeX install or image protocol.
-   *  Unsupported, still-streaming, or too-wide formulas keep their source.
-   *  On by default; off always shows the source. */
+  /** LaTeX math (settings `dsh-tui.mathRendering`): `$…$` / `\(…\)` inline
+   *  and `$$…$$` / `\[…\]` blocks in replies. `auto` (default) uses the best
+   *  available renderer — today Unicode text: Greek and operator symbols,
+   *  scripts, fractions and operator limits stacked in display blocks,
+   *  matrices, cases; `unicode` pins it; `source` always shows the TeX.
+   *  Unsupported, still-streaming, or too-wide formulas keep their source. */
+  mathRendering?: MathRendering
+  /** @deprecated Use `mathRendering`; `false` still means `source`. */
   latexMath?: boolean
   /** Status-footer field visibility and compact presentation preferences. */
   statusBar?: Partial<StatusBarConfig>
@@ -199,7 +201,8 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
   expandEditor: Schema.boolean().default(true),
   smoothStreaming: Schema.boolean().default(true),
   mermaidDiagrams: Schema.boolean().default(true),
-  latexMath: Schema.boolean().default(true),
+  mathRendering: Schema.union(['auto', 'unicode', 'source']),
+  latexMath: Schema.boolean(),
   statusBar: Schema.object({
     compact: Schema.boolean().default(DEFAULT_STATUS_BAR.compact),
     model: Schema.boolean().default(DEFAULT_STATUS_BAR.model),
@@ -237,7 +240,7 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
 }), [
   'diffLayout', 'thinkingFold', 'toolBackground', 'scrollGutter', 'pageMargin',
   'foldTerminalCommand', 'promptSessionLabel', 'expandEditor', 'smoothStreaming',
-  'mermaidDiagrams', 'latexMath', 'effortDefault', 'statusBar', 'whale', 'whaleIdle', 'whaleGirl', 'minimal',
+  'mermaidDiagrams', 'mathRendering', 'latexMath', 'effortDefault', 'statusBar', 'whale', 'whaleIdle', 'whaleGirl', 'minimal',
   'lang', 'fullscreen', 'terminalImages', 'shortcuts',
 ])
 
