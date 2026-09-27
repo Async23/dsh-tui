@@ -773,7 +773,10 @@ export default class Output {
       return false
     }
     const presentation = node.attributes.imagePresentation
-    const canCrop = this.imageReady !== undefined && (presentation === 'preview' || presentation === 'transcript')
+    // Both protocols crop a partially visible content image to its visible
+    // cells (Sixel re-encodes the slice, Kitty places a source rectangle), so
+    // scrolling past a viewport edge never flips it to its text fallback.
+    const canCrop = this.terminalImagesEnabled && (presentation === 'preview' || presentation === 'transcript')
     if (!canCrop && (
       left < 0 ||
       top < 0 ||
@@ -830,8 +833,9 @@ export default class Output {
    */
   reuseImages(node: DOMElement): boolean {
     // A scrollable image's current clip is only known inside its ScrollBox.
-    // Descend first rather than admitting stale placements from an ancestor blit.
-    if (this.imageReady && this.previousImages.some(p => isNodeInSubtree(p.node, node))) return false
+    // Descend first rather than admitting stale placements from an ancestor
+    // blit: a crop computed without that clip would spill past the viewport.
+    if (this.terminalImagesEnabled && this.previousImages.some(p => isNodeInSubtree(p.node, node))) return false
     let reusedAll = true
     for (const placement of this.previousImages) {
       if (!isNodeInSubtree(placement.node, node)) continue

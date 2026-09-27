@@ -71,6 +71,16 @@ type PlacementState = {
   y: number
   columns: number
   rows: number
+  /** Serialized source rectangle of the last placement ('' = whole image). */
+  crop: string
+}
+
+/** Pixel rectangle of the uploaded raster to show (Kitty `x,y,w,h`). */
+export type KittySourceRect = {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
 }
 
 export interface KittyGraphicsManagerOptions {
@@ -167,6 +177,7 @@ export class KittyGraphicsManager {
           y: -1,
           columns: 0,
           rows: 0,
+          crop: '',
         }
         this.placements.set(placement.node, state)
       }
@@ -185,27 +196,34 @@ export class KittyGraphicsManager {
         image.uploaded = true
       }
 
+      const visible = visiblePlacement(placement, image.payload)
+      const crop = visible.source === undefined
+        ? ''
+        : `${visible.source.x},${visible.source.y},${visible.source.width},${visible.source.height}`
       const moved =
-        state.x !== placement.x ||
-        state.y !== placement.y ||
-        state.columns !== placement.columns ||
-        state.rows !== placement.rows
+        state.x !== visible.x ||
+        state.y !== visible.y ||
+        state.columns !== visible.columns ||
+        state.rows !== visible.rows ||
+        state.crop !== crop
       if (!state.placed || moved) {
         output.push(
           kittyPlacement(
             image.imageId,
             state.placementId,
-            placement.x,
-            placement.y,
-            placement.columns,
-            placement.rows,
+            visible.x,
+            visible.y,
+            visible.columns,
+            visible.rows,
             state.zIndex,
+            visible.source,
           ),
         )
-        state.x = placement.x
-        state.y = placement.y
-        state.columns = placement.columns
-        state.rows = placement.rows
+        state.x = visible.x
+        state.y = visible.y
+        state.columns = visible.columns
+        state.rows = visible.rows
+        state.crop = crop
         state.placed = true
       }
     }
@@ -388,6 +406,45 @@ export class KittyGraphicsManager {
   }
 }
 
+/**
+ * The cells a placement actually occupies and, when it is clipped, the part
+ * of the uploaded raster behind them. The raster has the full cell box's
+ * exact physical aspect (see fitTerminalImageSource), so a cell edge maps to
+ * a pixel edge proportionally; the start rounds down and the end up, so a
+ * partially covered pixel row is shown rather than dropped.
+ */
+function visiblePlacement(
+  placement: TerminalImagePlacement,
+  payload: PreparedKittyRgba,
+): { x: number; y: number; columns: number; rows: number; source?: KittySourceRect } {
+  const clip = placement.clip
+  if (
+    clip === undefined ||
+    (clip.x === placement.x && clip.y === placement.y &&
+      clip.columns === placement.columns && clip.rows === placement.rows)
+  ) {
+    return { x: placement.x, y: placement.y, columns: placement.columns, rows: placement.rows }
+  }
+  const left = clip.x - placement.x
+  const top = clip.y - placement.y
+  const sourceX = Math.floor((payload.width * left) / placement.columns)
+  const sourceY = Math.floor((payload.height * top) / placement.rows)
+  const sourceRight = Math.min(payload.width, Math.ceil((payload.width * (left + clip.columns)) / placement.columns))
+  const sourceBottom = Math.min(payload.height, Math.ceil((payload.height * (top + clip.rows)) / placement.rows))
+  return {
+    x: clip.x,
+    y: clip.y,
+    columns: clip.columns,
+    rows: clip.rows,
+    source: {
+      x: sourceX,
+      y: sourceY,
+      width: Math.max(1, sourceRight - sourceX),
+      height: Math.max(1, sourceBottom - sourceY),
+    },
+  }
+}
+
 /** Zlib-compressed direct RGBA split into protocol-compliant base64 chunks. */
 export function transmitKittyRgba(
   imageId: number,
@@ -438,11 +495,15 @@ export function kittyPlacement(
   columns: number,
   rows: number,
   zIndex = IMAGE_Z_INDEX,
+  source?: KittySourceRect,
 ): string {
+  const crop = source === undefined
+    ? ''
+    : `,x=${source.x},y=${source.y},w=${source.width},h=${source.height}`
   return (
     `\u001b[${y + 1};${x + 1}H` +
     kittyCommand(
-      `a=p,i=${imageId},p=${placementId},c=${columns},r=${rows},z=${zIndex},C=1,q=1`,
+      `a=p,i=${imageId},p=${placementId},c=${columns},r=${rows}${crop},z=${zIndex},C=1,q=1`,
     )
   )
 }
