@@ -986,9 +986,11 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
           state.reasoningEffort = effort
         }
         // 模型归属真源：该请求的 usage 按这里的 model 计价（replay 时逐请求
-        // 还原；live 时与 state.model 同步更新，AC-A4）。
+        // 还原；live 时与 state.model 同步更新，AC-A4）。header 缺/空 model
+        // 必须清掉上一条 header 的值——否则后续 usage 会沿用旧模型进错桶；
+        // 归属时再回退 state.model（旧日志没有 header 的既有语义）。
         const headerModel = (event.data.header.config as { model?: unknown } | undefined)?.model
-        if (typeof headerModel === 'string' && headerModel !== '') eventModel = headerModel
+        eventModel = typeof headerModel === 'string' && headerModel !== '' ? headerModel : undefined
         const legacySystem = (event.data.header as { system?: unknown }).system
         if (typeof legacySystem === 'string') {
           state.contextSegments.system = estimateTokens(legacySystem)

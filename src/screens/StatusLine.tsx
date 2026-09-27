@@ -355,12 +355,14 @@ const selectionBadge = formatSelectionBadge(channel.selection)
           ),
         }]
       : []),
-    // Estimated session spend (≈¥): only for official DeepSeek providers
-    // whose model has a known price, and only once the estimate is non-zero
-    // (a fresh session showing ¥0.00 is noise). The estimate merges the main
+    // Estimated session spend (≈¥): only for official DeepSeek providers.
+    // Visible once there is a priced amount or at least one unpriced token (a
+    // fresh, fully priced zero session keeps hiding ¥0.00 as noise; unpriced
+    // usage still needs the 未计价 marker). The estimate merges the main
     // session (by model) with the subagents' own durable usage, so delegating
     // work no longer silently undercounts. The trailing 峰/谷 marker shows
-    // the current billing window. Hover shows the breakdown.
+    // the current billing window; the total>0 shape is unchanged. Hover shows
+    // the breakdown.
     ...(statusBar.cost && isDeepSeekOfficialProvider(channel.provider)
       ? (() => {
         const estimate = estimateSessionCostSnapshotCny({
@@ -370,17 +372,20 @@ const selectionBadge = formatSelectionBadge(channel.selection)
           fallbackTokens: channel.tokens,
           fallbackModel: channel.model,
         })
-        return estimate === undefined || estimate.total <= 0
-          ? []
-          : [{
+        return estimate !== undefined && (estimate.total > 0 || estimate.unpricedTokens > 0)
+          ? [{
               key: 'cost',
               id: 'cost' as const,
               node: (
                 <Text color="inactiveShimmer">
-                  {t('status-cost-label')}¥{estimate.total.toFixed(2)} {t(isPeakHour() ? 'cost-now-peak' : 'cost-now-idle')}
+                  {t('status-cost-label')}
+                  {estimate.total > 0
+                    ? <>¥{estimate.total.toFixed(2)} {t(isPeakHour() ? 'cost-now-peak' : 'cost-now-idle')}</>
+                    : <> {t('cost-unpriced', { tokens: formatTokens(estimate.unpricedTokens) })}</>}
                 </Text>
               ),
             }]
+          : []
       })()
       : []),
   ]
@@ -702,7 +707,10 @@ function buildHoverDetail(
         fallbackTokens: channel.tokens,
         fallbackModel: channel.model,
       })
-      if (estimate === undefined || estimate.total <= 0) return null
+      // Same visibility contract as the field: a priced amount or unpriced
+      // tokens (with the 未计价 row) both warrant the breakdown; the old
+      // total>0 gate hid the only explanation for an all-unpriced session.
+      if (estimate === undefined || (estimate.total <= 0 && estimate.unpricedTokens <= 0)) return null
       const { input, output, cacheRead } = channel.tokens
       return (
         <Text wrap="truncate">

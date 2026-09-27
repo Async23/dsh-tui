@@ -9,15 +9,20 @@
  *    (provider, model) 累计并进入 estimateCostFromBucketsCny；
  *  - AC-A2：峰谷分桶 + cacheRead 命中价（与主会话同口径）；
  *  - AC-A3：live assistant/chunk.usage 不计费（只认 durable）；不污染 channel.tokens；
- *  - AC-A4：主会话按 event-time 模型分桶（request/header 驱动；无 header 回退
- *    channel 模型），换模型不把历史 token 重估到新模型；
+ *  - AC-A4：主会话按 event-time 模型分桶（request/header 驱动；无 header 或
+ *    header 缺/空 model 回退 channel 模型），换模型不把历史 token 重估到新模型；
  *  - AC-A6：非官方 provider / 未收录模型只计 token、不计金额（unpriced）；
+ *  - AC-A7：零金额 + 未计价 token 时状态栏与 hover 都露出"未计价"（渲染探针）；
  *  - 兼容：session-reset 清零、subagent-projection.syncNow 镜像、旧快照
  *    mainCost 缺失时 collectSessionCostEntries 回退 channel.tokens；
  *  - T07：/cost 末尾文案与"估算非账单"口径一致（旧"不提供费用计量"防回归）。
  *
  * Run: node --import tsx/esm scripts/verify-session-cost.tsx
  */
+
+// 渲染探针要断言 zh 词条（"未计价"）；在动态 import i18n 前钉死语言，
+// 避免机器上的 ~/.dsh-tui/lang.json 把探针输出切成英文。
+process.env.DSH_TUI_LANG = 'zh'
 
 const [
   { strict: assert },
@@ -82,6 +87,31 @@ function requestHeader(seq: number, time: number, model: string): unknown {
     time,
     data: { header: { config: { provider: 'deepseek', model } }, reason: 'change' },
   }
+}
+
+/** request/header 的形状探针：config 可缺 model，也可带空串（AC-A4）。 */
+function requestHeaderConfig(seq: number, time: number, config: Record<string, unknown>): unknown {
+  return {
+    type: 'request/header',
+    seq,
+    time,
+    data: { header: { config }, reason: 'change' },
+  }
+}
+
+/** 与既有 AC-A4 用例相同的 projector 依赖桩。 */
+function makeProjector(state: Record<string, unknown>): { renderEvent: (event: unknown) => void } {
+  return createChannelProjection(state as never, {
+    agent: () => ({}) as never,
+    rowIds: { value: 0 },
+    resetContextWarning: noop,
+    pendingTaskDescriptions: [],
+    jobs: { onOutputSeen: noop, onStarted: noop },
+    inputConvergence: { cancelInFlight: false },
+    checkContextWarning: noop,
+    notify: noop,
+    attachments: noop,
+  }) as { renderEvent: (event: unknown) => void }
 }
 
 // ═════════════════════ AC-A5：价目表按 #857 更新 ═════════════════════
@@ -260,6 +290,31 @@ function requestHeader(seq: number, time: number, model: string): unknown {
   check('AC-A4 零 usage 不建桶', Object.keys(state.mainCost).length === 1)
 }
 
+{
+  // header 缺 model / model 为空串：不得沿用上一条 header 的旧值，必须清成
+  // undefined 并在 usage 归属时回退 state.model，否则后续用量继续进旧模型桶。
+  const state = {
+    ...createInitialChannelView({ model: 'deepseek-v4-flash', provider: 'deepseek', cwd: '/tmp' }, {
+      agentId: 'agent', sessionId: 'session', mode: { id: 'default', name: 'Default' } as never, cwdDescription: '/tmp',
+    }),
+    emit: noop,
+  }
+  const projector = makeProjector(state)
+  projector.renderEvent(requestHeader(1, PEAK, 'deepseek-flash'))
+  projector.renderEvent(durableMessage(2, PEAK, { inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }))
+  // config 整体缺 model
+  projector.renderEvent(requestHeaderConfig(3, PEAK, { provider: 'deepseek' }))
+  projector.renderEvent(durableMessage(4, PEAK, { inputTokens: 200, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }))
+  // config.model 为空串
+  projector.renderEvent(requestHeaderConfig(5, PEAK, { provider: 'deepseek', model: '' }))
+  projector.renderEvent(durableMessage(6, PEAK, { inputTokens: 300, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }))
+  check('AC-A4 header 缺/空 model 清旧值并回退 state.model',
+    state.mainCost['deepseek-flash']?.peak.input === 100
+    && state.mainCost['deepseek-v4-flash']?.peak.input === 500
+    && Object.keys(state.mainCost).length === 2,
+    JSON.stringify(state.mainCost))
+}
+
 // ═════════════════════ AC-A6：非官方 / 未收录 = unpriced ═════════════════════
 
 {
@@ -341,6 +396,104 @@ function requestHeader(seq: number, time: number, model: string): unknown {
     && mirror[0]?.buckets.peak.input === 42 && mirror[0]?.buckets.peak.output === 7, JSON.stringify(mirror))
   projection.reset()
   check('subagent-projection.reset 清空镜像', (state.subagentCost as unknown[]).length === 0)
+}
+
+// ═════════════════════ AC-A7：零金额 + 未计价 token 的状态栏/hover 可见性 ═════════════════════
+// 仅未计价用量（total=0、unpricedTokens>0）不得被"有金额才显示"的旧门禁吃掉，
+// 否则用户看到 token 在涨却没有任何"未计价"说明。渲染探针走真实 Ink 树 +
+// xterm 鼠标悬停（与 verify-hover-details 同款 SGR 1003 注入）。
+
+{
+  const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, termTest, { StatusLine }] = await Promise.all([
+    import('node:stream'),
+    import('react'),
+    import('@xterm/headless'),
+    import('../src/ui.js'),
+    import('./lib/term-test.mjs'),
+    import('../src/screens/StatusLine.js'),
+  ])
+  const { settled, screenHas, findText, viewportLines } = termTest
+  const { render, AlternateScreen, Box, useInput } = ui
+
+  const COLS = 100
+  const ROWS = 8
+  const term = new XTerm({ cols: COLS, rows: ROWS, scrollback: 0, allowProposedApi: true })
+  class FakeStdout extends Writable {
+    columns = COLS
+    rows = ROWS
+    isTTY = true
+    _write(chunk: unknown, _encoding: unknown, callback: () => void): void {
+      term.write(String(chunk), callback)
+    }
+  }
+  class FakeStdin extends PassThrough {
+    isTTY = true
+    setRawMode(): this { return this }
+    ref(): this { return this }
+    unref(): this { return this }
+  }
+  const stdout = new FakeStdout()
+  const stdin = new FakeStdin()
+  const screenText = (): string => viewportLines(term).join('\n')
+
+  function KeySink(): unknown {
+    useInput(() => {})
+    return null
+  }
+
+  // 官方 provider + 未收录模型：token 有，金额恒为 0，unpricedTokens=150。
+  const UNPRICED_MODEL = 'gpt-4o-unpriced-probe'
+  const channel = {
+    minimal: false,
+    statusBar: { cost: true },
+    provider: 'deepseek',
+    model: 'unpriced-probe-model',
+    mainCost: {
+      [UNPRICED_MODEL]: {
+        peak: { input: 150, output: 0, cacheRead: 0, cacheWrite: 0 },
+        idle: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+    },
+    subagentCost: [],
+    tokens: { input: 150, output: 0, cacheRead: 0, cacheWrite: 0 },
+    lastUsage: undefined,
+    contextWindow: undefined,
+    contextBarEnabled: false,
+    contextSegments: {},
+    mode: { plan: false },
+    modeIndex: 0,
+    cwd: 'C:/work/unpriced-probe',
+    displayCwd: 'C:/work/unpriced-probe',
+    tpsSamples: [],
+    reasoningEffort: undefined,
+    working: false,
+    activityFrames: [],
+    goal: undefined,
+    sessionTitle: undefined,
+    agentId: 'unpriced-probe',
+    gitBranch: undefined,
+    tps: undefined,
+  }
+  const instance = await render(
+    <AlternateScreen>
+      <Box flexDirection="column">
+        <KeySink />
+        <StatusLine channel={channel as never} />
+      </Box>
+    </AlternateScreen>,
+    { stdout, stderr: stdout, stdin, exitOnCtrlC: false, patchConsole: false },
+  )
+  check('AC-A7 仅未计价：状态栏显示未计价标注',
+    await settled(() => screenHas(term, '未计价')), screenText())
+
+  // 悬停费用字段：明细行应同时给金额拆解与未计价 token（`peak ` 是 hover 独有）。
+  const at = findText(term, '未计价')
+  if (at !== null) stdin.write(`\x1b[<35;${at.col + 1};${at.row + 1}M`)
+  check('AC-A7 仅未计价：hover 明细同口径显示未计价',
+    await settled(() => screenHas(term, 'peak ') && screenHas(term, '未计价')), screenText())
+
+  await instance.unmount()
+  term.dispose()
 }
 
 // ═════════════════════ T07：/cost 末尾文案与"估算非账单"口径一致 ═════════════════════
