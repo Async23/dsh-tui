@@ -34,7 +34,7 @@ const baselines = [{
   webPath: installedWebPath,
 }]
 
-const sourceRoot = process.env.DSH_HARNESS_SOURCE_ROOT === undefined
+const sourceRoot = !process.env.DSH_HARNESS_SOURCE_ROOT
   ? undefined
   : resolve(process.env.DSH_HARNESS_SOURCE_ROOT)
 const sourceWebPath = sourceRoot === undefined ? '' : join(sourceRoot, 'packages/bundle/web-app/cordis.patch.yml')

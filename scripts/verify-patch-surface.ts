@@ -153,7 +153,7 @@ if (installedManifest !== undefined) {
   ))
 }
 
-const sourceRoot = process.env.DSH_HARNESS_SOURCE_ROOT === undefined
+const sourceRoot = !process.env.DSH_HARNESS_SOURCE_ROOT
   ? undefined
   : resolve(process.env.DSH_HARNESS_SOURCE_ROOT)
 const sourceManifest = sourceRoot === undefined ? '' : join(sourceRoot, 'packages/bundle/web-app/package.json')
