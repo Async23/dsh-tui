@@ -167,6 +167,16 @@ assert.deepEqual(mathTexts('$$x^2$$ trails prose\n\nnext'), ['math:x^2'], 'a $$ 
     'closed code spans before the opener do not block it',
   )
   assert.deepEqual(mathTexts('Run `echo\n$$\nx^2\n$$\n` now'), [], 'a $$ opener inside a multi-line code span stays code')
+  assert.deepEqual(
+    mathTexts('Use `literal\n$$\nx^2\n$$'),
+    ['mathBlock:x^2'],
+    'an unmatched backtick is literal text and opens no code span',
+  )
+  assert.deepEqual(
+    mathTexts('Use ``a` b\n$$\nx^2\n$$'),
+    ['mathBlock:x^2'],
+    'a run closes only on a run of the same length',
+  )
 }
 
 // Settings: `latexMath: false` from pre-mathRendering layers still means source.

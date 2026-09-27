@@ -254,20 +254,26 @@ function tokenizeBlockMath(source: string): MathToken | undefined {
 }
 
 /**
- * Whether `prefix` (the paragraph text before a candidate block opener) ends
- * inside a code span: complete backtick-delimited spans are skipped, and a
- * backtick run left without its matching closer is still open.
+ * Whether position `at` of `text` (a candidate block opener) lies inside a
+ * code span: a backtick run opens a span only when a run of exactly the same
+ * length closes it later in the same paragraph (CommonMark); a run with no
+ * closer is literal text and opens nothing.
  */
-function insideOpenCodeSpan(prefix: string): boolean {
-  const paragraphStart = prefix.lastIndexOf('\n\n')
-  const text = paragraphStart < 0 ? prefix : prefix.slice(paragraphStart + 2)
-  const runs = text.match(/`+/g) ?? []
-  // CommonMark: a span closes at the next backtick run of exactly the same length.
+function insideOpenCodeSpan(text: string, at: number): boolean {
+  const paragraphStart = text.lastIndexOf('\n\n', at)
+  const before = text.slice(paragraphStart < 0 ? 0 : paragraphStart + 2, at)
+  const rest = text.slice(at)
+  const paragraphEnd = rest.search(/\n[ \t]*\n/)
+  const after = paragraphEnd < 0 ? rest : rest.slice(0, paragraphEnd)
+  const runs = before.match(/`+/g) ?? []
   for (let open = 0; open < runs.length; open++) {
     let close = open + 1
     while (close < runs.length && runs[close]!.length !== runs[open]!.length) close++
-    if (close === runs.length) return true
-    open = close
+    if (close < runs.length) {
+      open = close
+      continue
+    }
+    if ((after.match(/`+/g) ?? []).some(run => run.length === runs[open]!.length)) return true
   }
   return false
 }
@@ -287,7 +293,7 @@ export const MATH_MARKDOWN_EXTENSIONS: readonly TokenizerExtension[] = [
         const index = match.index + (match[0].startsWith('\n') ? 1 : 0)
         // A code span may run across lines; a block opener inside one is
         // code, and cutting the paragraph there would split the span.
-        if (!insideOpenCodeSpan(paragraph.slice(0, index + offset))) return index
+        if (!insideOpenCodeSpan(paragraph, index + offset)) return index
       }
       return undefined
     },
