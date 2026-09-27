@@ -99,6 +99,7 @@
   "files": [
     "bin",
     "lib",
+    "assets",
     "cordis.patch.yml",
     "cordis.yml",
     "dsh-ecosystem-spec/registry",

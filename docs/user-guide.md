@@ -121,6 +121,7 @@ dsh-tui
 | `Shift+Tab` | 循环会话模式（默认 → plan 计划 → full 完全访问）；挂载了第三方权限预设时，它们按 registry 顺序排在循环末尾 |
 | `Shift+↑` | 消息选择模式（`↑/↓` 移动，`Enter` 展开单条，`Esc` 退出） |
 | `Ctrl+T`（⌘T） | 打开轨迹场景（同 `/trace`） |
+| `Alt+S` | 一键 star（同 `/star`；开屏那句求 star 标语整行也可点）。键位可在 `/settings` 改；成功后会演一小段「鲸鱼娘接住星星」的庆祝。想随时看这段庆祝：`DSH_TUI_STAR_MODAL=1 dsh-tui`；想随时看开屏那句求 star 标语：`DSH_TUI_STAR_LINE=1 dsh-tui`（都是预览用环境变量，不动账本） |
 
 ### 2.6 鼠标（fullscreen 全屏模式；拖拽/双击/三击即选即复制）
 
@@ -394,6 +395,7 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 
 - **开场动画**（约 3.4 秒，每次启动三选一，`/deepseek` 彩蛋重掷）：经典 / 爱心 / 睡觉。
 - **欢迎期闲置动画**（`whaleIdle`，默认开）：摆鱼鳍、眨眼、拍尾巴，空闲 10 秒入睡冒 Z；**点击冒爱心唤醒**。
+- **女仆娘立绘**（`whaleGirl`，默认关）：把标题的像素鲸鱼换成作者绘制的女仆娘——**最优先**走终端图像协议（Kitty/Sixel）的真图渲染；终端不支持（如内联模式）时回落到字符画版女仆娘。**点她一下**会换成「高兴鲸娘」几秒再自动回安静版；开始第一个任务后定格、不再响应点击。
 - 开始第一个 agent 任务后定格为静态帧（`/new` 重新进入欢迎期）。
 - 鲸鱼右侧文字列：`✦ dsh-TUI v版本号` → 块体大字 `DEEPSEEK / HARNESS`（加粗字形，两行等宽、中间空一行）→
   当前模型 + effort → 工作目录 → 启动提示行。
@@ -451,13 +453,13 @@ dsh-tui 自身区块在 0.1.7 写入当前 profile 的 `cordis.patch.yml`，旧�
 | terminalImages | 终端图片预览（默认开，需终端支持）；保存后用 `/restart` 生效。关闭后只显示文字信息并跳过预览解码，不影响向模型发送图片 |
 | whale | 开屏头部像素鲸鱼娘（默认开）；每次启动随机三选一开场动画（经典/爱心/睡觉），`/deepseek` 彩蛋重掷 |
 | whaleIdle | 鲸鱼娘欢迎期闲置动画（默认开）：定格后摆鱼鳍/拍尾巴/眨眼，空闲 10 秒入睡冒 Z；点击冒爱心。开始第一个任务后定格 |
+| whaleGirl | 女仆娘立绘（默认关）：标题像素鲸鱼换成作者绘制的女仆娘**真图**（Kitty/Sixel 图像协议）；不支持时回落像素鲸鱼 |
 | diffLayout | Edit/Write diff 布局：auto（≥110 列双栏）/ split / unified |
 | thinkingFold | 思考块：preview（流式 2-3 行预览 + 落定折叠）/ full（展开到轮末） |
 | effortDefault | 默认推理强度：auto / off / low / high / max。新会话的起始档位（细节见下） |
 | smoothStreaming | 流式平滑输出（默认开）：回复/思考/工具卡正文按 ~30fps 匀速揭示；回放/历史完整直出 |
 | toolBackground | 工具卡背景强调：none / subtle / strong |
 | mermaidDiagrams | Mermaid 图表（默认开）：回复中的 ```` ```mermaid ```` 代码块画成字符图，流式期间逐步成形；比终端宽或类型不支持的图保留源码并注明所需列数。立即生效 |
-| latexMath | LaTeX 公式（默认开）：回复中的 `$…$`、`\(…\)` 行内公式与 `$$…$$`、`\[…\]` 块级公式转成 Unicode 文本，块级公式里的分数与上下限竖排；不支持、仍在流式输出或比终端宽的公式保留源码（过宽的块级公式先退成单行）。价格（`$5`）、shell 变量（`$HOME`）与代码里的 `$` 不受影响。立即生效 |
 | scrollGutter | 转录边栏：timeline（轮次时间线，默认）/ scrollbar（比例滚动条）/ hidden。立即生效 |
 | pageMargin | 页边距：整屏相对终端四边向里缩。预设 none / slim / normal（默认）/ roomy，或自定义 `NxM`（细节见下）。立即生效 |
 | foldTerminalCommand | 折叠终端命令（默认关）：终端卡（Bash/PowerShell）多行命令折成首行 + 计数；`Ctrl+O` 或点击卡片展开 |

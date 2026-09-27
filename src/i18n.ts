@@ -702,8 +702,48 @@ const dict = {
   // the rendered width can be measured for centering. English stays short
   // on purpose: without OSC 8 support the link degrades to the 38-column
   // URL, and lead+URL+tail has to fit an 80-column terminal without wrapping.
-  'logo-star-lead': { zh: '谢谢使用！源码在 ', en: 'Thanks! Source is on ' },
-  'logo-star-tail': { zh: '，欢迎点个 star', en: ' — a star is welcome' },
+  // 开屏求 star 彩蛋（splashEggs.ts + LogoV2）：平时是 logo-tagline，跨里程碑
+  // 时换成"标题 + 数字 + 求星"三行，标题先出、其余两行每秒跟一行。
+  'logo-star-title': { zh: '鲸鱼娘好像在等一颗小星星…… ☆', en: 'The whale girl seems to be waiting for a little star… ☆' },
+  'logo-star-caught': { zh: '鲸鱼娘捡到一颗小星星啦 ✨', en: 'The whale girl caught a little star ✨' },
+  'logo-star-stats': { zh: '已陪你 {{hours}} 小时 · 第 {{launches}} 次打开', en: '{{hours}}h together · launch #{{launches}}' },
+  'logo-star-ask': { zh: '喜欢 dshTUI 的话，顺手点亮一颗 {{star}}？（点这一行或 {{key}} 一键支持）', en: 'If you like dsh-TUI, would you light a {{star}}? (click this line or {{key}})' },
+  'cmd-desc-star': { zh: '给这个项目点个 star（用 gh 一键）' },
+  'star-ok': { zh: '已 star，谢谢！', en: 'Starred — thank you!' },
+  'star-no-gh': {
+    zh: '没找到 gh（GitHub CLI），已经替你在浏览器里打开仓库页：{{url}}。装一个 gh 就能一键 star：https://cli.github.com',
+    en: 'gh (GitHub CLI) is not installed, so I opened the repo page in your browser: {{url}}. Install gh for one-key starring: https://cli.github.com',
+  },
+  'star-not-authed': {
+    zh: 'gh 还没登录，已经替你在浏览器里打开仓库页：{{url}}。想一键 star 就先跑 gh auth login',
+    en: 'gh is not logged in, so I opened the repo page in your browser: {{url}}. Run gh auth login for one-key starring',
+  },
+  'star-failed': {
+    zh: '一键 star 没成功：{{detail}}（也可以直接在浏览器里打开 {{url}}）',
+    en: 'One-key star failed: {{detail}} (or open {{url}} in a browser)',
+  },
+  // 99h / 999 次的"求 star"开屏弹窗（StarPrompt.tsx）。正文是维护者定的
+  // 原话——诚恳、不催；标题按里程碑取"小时"或"次启动"。**每一行都是
+  // 一行**（48 列内不折行），所以排版与作者写的断句完全一致。
+  'star-modal-title-hours': { zh: '🐳 已经陪你 {{hours}} 小时了！', en: '🐳 {{hours}} hours together!' },
+  'star-modal-title-launches': { zh: '🐳 已经陪你 {{launches}} 次启动了！', en: '🐳 {{launches}} launches together!' },
+  'star-modal-body-1': { zh: '不知不觉，dshTUI 已经陪你走了这么久啦。', en: 'Before you noticed, dsh-TUI had already come this far with you.' },
+  'star-modal-body-2': { zh: '如果它有让你的 DSH 更好用一点、', en: 'If it made your DSH a little more usable,' },
+  'star-modal-body-3': { zh: '更顺手一点，或者只是让你开心了一点——', en: 'a little smoother — or just made you smile —' },
+  'star-modal-body-4': { zh: '那就送鲸鱼娘一颗小小的 Star 吧 ⭐', en: 'treat the whale girl to a tiny Star ⭐' },
+  'star-modal-body-5': { zh: '每一颗 Star，都会变成我们继续折腾', en: 'Every Star becomes fuel for us to keep tinkering' },
+  'star-modal-body-6': { zh: '和把 dshTUI 做得更好的动力！', en: 'and to keep making dsh-TUI better!' },
+  'star-modal-star': { zh: '投喂一颗 Star ⭐', en: 'Feed a Star ⭐' },
+  'star-modal-open': { zh: '在浏览器中打开 GitHub', en: 'Open GitHub in the browser' },
+  'star-modal-working': { zh: '正在点 star…', en: 'Starring…' },
+  'star-modal-hint': { zh: '↑↓ 选择 · **Enter** 确认 · **Esc** 下次一定 (´;ω;`)', en: '↑↓ choose · **Enter** confirm · **Esc** next time (´;ω;`)' },
+  // star 成功后的庆祝态（星光 + 鲸鱼喷水），几秒后卡片自己收场。
+  'star-modal-thanks-title': { zh: '🌟 收到 Star 啦！', en: '🌟 Star received!' },
+  'star-modal-thanks-1': { zh: '鲸鱼娘成功接住了一颗小星星 ~', en: 'The whale girl caught a little star ~' },
+  'star-modal-thanks-2': { zh: '谢谢你的支持！', en: 'Thank you for your support!' },
+  'star-modal-thanks-3': { zh: '这颗 Star 会变成 dshTUI 继续成长的动力。', en: 'This Star becomes fuel for dsh-TUI to keep growing.' },
+  'star-modal-thanks-4': { zh: '希望以后，它也能继续陪你走很久。', en: 'May it keep you company for a long time to come.' },
+  'star-modal-thanks-hint': { zh: '**Enter** / **Esc** 关闭', en: '**Enter** / **Esc** to close' },
   'logo-tip-prefix': { zh: '提示：', en: 'Tip: ' },
   'logo-tip-more': { zh: '更多技巧', en: 'more tips' },
   // Upstream-drift notice (merged one-liner under the tip; copy explains

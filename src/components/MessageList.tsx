@@ -1731,6 +1731,9 @@ export function LogoHeader({
   cwd,
   whale = true,
   whaleIdle = true,
+  whaleGirl = false,
+  starred = false,
+  onStarClick,
   working = false,
   skipIntro = false,
 }: {
@@ -1740,6 +1743,12 @@ export function LogoHeader({
   whale?: boolean
   /** Idle whale behaviors + working signal (passed through to LogoV2). */
   whaleIdle?: boolean
+  /** Maid portrait swap (passed through to LogoV2; settings `dsh-tui.whaleGirl`). */
+  whaleGirl?: boolean
+  /** 求 star 标语行被点击（一键 star；host 不传则不可点）。 */
+  onStarClick?: () => void
+  /** 本次会话已 star（彩蛋换「捡到星星」版）。 */
+  starred?: boolean
   working?: boolean
   /** Jump straight to the settled header (long-session resume: the ~3.4s
    *  opening animation competes with transcript mount batches). */
@@ -1750,7 +1759,7 @@ export function LogoHeader({
   if (isMinimalMode()) return null
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <LogoV2 model={model} effort={effort} cwd={cwd} whale={whale} whaleIdle={whaleIdle} working={working} skipIntro={skipIntro} />
+      <LogoV2 model={model} effort={effort} cwd={cwd} whale={whale} whaleIdle={whaleIdle} whaleGirl={whaleGirl} starred={starred} onStarClick={onStarClick} working={working} skipIntro={skipIntro} />
     </Box>
   )
 }

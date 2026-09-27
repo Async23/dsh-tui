@@ -13,6 +13,7 @@ import { t } from '../i18n.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import { supportsHyperlinks } from '../ink/supports-hyperlinks.js'
 import { createHyperlink } from '../terminal-utils/hyperlink.js'
+import type { UsageStats } from '../usageStats.js'
 
 /** 一个节日彩蛋：当天要用的上下两排词。 */
 export interface SplashEgg {
@@ -58,51 +59,59 @@ export function pickSplashEgg(now: Date = new Date()): SplashEgg | null {
 /** 求 star 标语指向的仓库。 */
 export const SPLASH_STAR_URL = 'https://github.com/ccch1mneyyy/dsh-TUI'
 
-/** 求 star 标语的命中概率：1/20。 */
-export const SPLASH_STAR_CHANCE = 0.05
+/** 链接显示文本（比裸 URL 短，整行还能按鲸鱼居中）。 */
+const SPLASH_STAR_LABEL = 'Star'
 
-/** 链接显示文本（比裸 URL 短，整行还能按鲸鱼居中）；退化时 `createHyperlink` 会换成 URL。 */
-const SPLASH_STAR_LABEL = 'GitHub'
-
-/**
- * 掷一次「这次 mount 要不要显示求 star 标语」。
- * @param chance - 命中概率（0..1；测试缝可传 0/1 强制不命中/命中）。
- * @param random - 随机源（测试缝，默认 `Math.random`）。
- * @returns 命中为 true。
- */
-export function pickSplashStar(chance: number = SPLASH_STAR_CHANCE, random: () => number = Math.random): boolean {
-  return random() < chance
-}
-
-/** 求 star 标语那一行的三段：链接前文案 + 链接 + 链接后文案。 */
+/** 求 star 彩蛋的三行结构（标题 / 数字 / 求星）。 */
 export interface SplashStarLine {
-  /** 链接前的文案（调用方按主题上色/扫光）。 */
-  readonly lead: string
-  /** 链接本身（OSC 8；终端不支持时是纯文本 URL）。 */
-  readonly link: string
-  /** 链接后的文案。 */
-  readonly tail: string
-  /** 整行**可见**宽度（终端列）：居中缩进必须按它算，不能沿用 `logo-tagline` 的宽度。 */
+  /** 标题行：替换平时的欢迎语（本次会话 star 过后换成"捡到星星"版）。 */
+  readonly title: string
+  /** 数字行：本机实测累计值。 */
+  readonly stats: string
+  /**
+   * 求星行（`Star` 上是 OSC 8 链接），已拼好；**终端不支持超链接时为
+   * `null`**——那行会退化成裸 URL，长 30+ 列会把整块撑破，宁可不显示。
+   */
+  readonly ask: string | null
+  /** 整块里**最宽一行**的可见宽度：居中缩进必须按它算。 */
   readonly width: number
 }
 
+/** 剥掉 OSC 8 包裹序列（量可见宽度用）。 */
+const stripHyperlink = (text: string): string => text.replace(/\x1b\]8;;[^\x07]*\x07/gu, '')
+
 /**
- * 组装求 star 标语那一行。文案走 i18n 字典（中英齐全），链接指向 `SPLASH_STAR_URL`。
- * @param options - `supportsHyperlinks` 是终端能力的测试缝（默认问真实终端）。
- * @returns 三段文案与整行可见宽度。
+ * 组装求 star 彩蛋。文案走 i18n 字典（中英齐全），`{{hours}}`/`{{launches}}`
+ * 换成本机**实测**的累计值，`{{key}}` 换成生效中的快捷键显示。
+ * @param options - `usage` 是本机累计用量；`supportsHyperlinks` 是终端能力的测试缝；
+ *   `keyHint` 是快捷键显示（如 `Alt+S`）；`caught` 表示本次会话已经 star 过。
+ * @returns 三行文案与最宽行可见宽度。
  */
-export function splashStarLine(options?: { supportsHyperlinks?: boolean }): SplashStarLine {
-  const supported = options?.supportsHyperlinks ?? supportsHyperlinks()
-  const lead = t('logo-star-lead')
-  // 不支持 OSC 8 时上屏的是裸 URL（比 `GitHub` 长出 30+ 列），再加尾巴整行就会超出内容宽
-  // 被折成两行——那种终端上省掉尾巴：URL 本身已经说明去哪，少一句邀请比折行好看。
-  const tail = supported ? t('logo-star-tail') : ''
-  const link = createHyperlink(SPLASH_STAR_URL, SPLASH_STAR_LABEL, { supportsHyperlinks: supported })
+export function splashStarLine(options: {
+  usage: UsageStats
+  supportsHyperlinks?: boolean
+  keyHint?: string
+  caught?: boolean
+}): SplashStarLine {
+  const supported = options.supportsHyperlinks ?? supportsHyperlinks()
+  const hours = Math.max(1, Math.round(options.usage.totalMs / 3_600_000))
+  const launches = Math.max(1, options.usage.launches)
+  const title = t(options.caught === true ? 'logo-star-caught' : 'logo-star-title')
+  const stats = t('logo-star-stats', { hours, launches })
+  const ask = supported
+    ? t('logo-star-ask', {
+      star: createHyperlink(SPLASH_STAR_URL, SPLASH_STAR_LABEL, { supportsHyperlinks: true }),
+      key: options.keyHint ?? '',
+    })
+    : null
   return {
-    lead,
-    link,
-    tail,
-    // 按可见文本量：不支持超链接时上屏的是 URL 本身，宽度也就跟着变（缩进要重算）。
-    width: stringWidth(lead) + stringWidth(supported ? SPLASH_STAR_LABEL : SPLASH_STAR_URL) + stringWidth(tail),
+    title,
+    stats,
+    ask,
+    width: Math.max(
+      stringWidth(title),
+      stringWidth(stats),
+      ask === null ? 0 : stringWidth(stripHyperlink(ask)),
+    ),
   }
 }

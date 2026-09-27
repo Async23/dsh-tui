@@ -48,6 +48,8 @@ import { useCopyOnSelect } from '../ink/hooks/use-copy-on-select.js'
 import { useSelection } from '../ink/hooks/use-selection.js'
 import { NoSelect } from '../ink/components/NoSelect.js'
 import { LogoHeader, MessageList } from '../components/MessageList.js'
+import { StarPrompt, type StarAttempt } from '../components/StarPrompt.js'
+import { dueStarModal, markStarAsked, STAR_MILESTONES } from '../usageStats.js'
 import { TimelineRail } from '../components/TimelineRail.js'
 import { ScrollbarGutter } from '../components/ScrollbarGutter.js'
 import type { TimelineSnapshot } from '../ink/timeline-rail.js'
@@ -294,6 +296,7 @@ export function Chat({
   promptControllerRef: promptControllerRefProp,
   renderScene,
   openHomeOnBoot,
+  starPrompt,
 }: {
   channel: Channel
   renderScene?: (id: string, channel: Channel) => React.ReactNode
@@ -357,6 +360,14 @@ export function Chat({
    * installation, and tests need it deterministic.
    */
   openHomeOnBoot?: boolean
+  /**
+   * Test seam for the startup star modal (usage milestones 99h / 999
+   * launches): `null` disables the modal outright; `dir` points the usage
+   * ledger at a fixture directory; overriding the actions keeps it fully
+   * interactive without spawning `gh` or a browser. Production leaves it
+   * undefined.
+   */
+  starPrompt?: { dir?: string; onStar?: () => StarAttempt | Promise<StarAttempt>; onOpen?: () => void } | null
   /**
    * The composer's live controller, published every render. Exposed as a prop
    * so a regression can read the draft the composer HOLDS — the ownership
@@ -608,6 +619,135 @@ export function Chat({
    *  browser, a screen rather than a panel: it owns its own focus, staged
    *  drafts and keyboard; Chat only opens it. */
   const [settingsOpen, setSettingsOpen] = React.useState(false)
+  /** 99h / 999 次的"求 star"开屏弹窗（`usageStats` 记账，一档只弹一次）：
+   * 只在启动时判定一次——回合进行中、或已有整屏界面在开（如开机首页），
+   * 这一轮不弹也**不记账**，留给下一次启动。`starPrompt` 是测试缝：传
+   * `null` 显式关闭，传 actions 覆写两个按钮（不跑真 gh、不开真浏览器）。 */
+  /** 本次会话是否已经 star 成功（开屏彩蛋标题切「捡到小星星啦」）。 */
+  const [starred, setStarred] = React.useState(false)
+  const [starModal, setStarModal] = React.useState<{ index: number; phase: 'ask' | 'done' } | null>(null)
+  // 单发闩：只在第一个"安静的开屏视口"上武装定时器。700ms 窗口内整屏
+  // 界面打开 → cleanup 掐掉定时器且**不再重臂**（记账只发生在回调里，
+  // 所以这一档完好留给下一次启动）；整屏界面随后关闭也不追到聊天视图
+  // 上补弹——开屏求星不追人。
+  const starModalArmedRef = React.useRef(false)
+  /** 预览缝（`DSH_TUI_STAR_MODAL=1`）：启动即弹一次 99h 档的弹窗，**既不
+   * 读账本也不记账**——给作者看效果、给回归夹具用；生产不设这个变量。 */
+  const starModalPreview = process.env.DSH_TUI_STAR_MODAL === '1'
+  React.useEffect(() => {
+    if (starModalArmedRef.current) return
+    if (starPrompt === null) return
+    if (supervisorOpen || treeOpen || settingsOpen || channel.working) return
+    starModalArmedRef.current = true
+    // 让开屏先画半秒：弹窗压在介绍动画之上，而不是同抢第一帧。
+    const timer = setTimeout(() => {
+      // 到点时回合已经开始的仍不弹（channel 是活对象，读到的是当前值）。
+      if (channel.working) return
+      if (starModalPreview) {
+        const preview = STAR_MILESTONES.findIndex(milestone => milestone.hours === 99)
+        if (preview >= 0) setStarModal({ index: preview, phase: 'ask' })
+        return
+      }
+      const index = dueStarModal(starPrompt?.dir)
+      if (index === null) return
+      markStarAsked(index, starPrompt?.dir)
+      setStarModal({ index, phase: 'ask' })
+    }, 700)
+    return () => { clearTimeout(timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在整屏界面开合时重判；闩保证只武装一次
+  }, [supervisorOpen, treeOpen, settingsOpen])
+  /** `/star` 命令、开屏标语的点击/`Alt+S` 共用的一键动作：异步跑 gh，界面
+   * 全程不阻塞，结果回来按四类各报一句（成功 / 没装 gh / 没登录 / 失败）。
+   * `starPrompt.onStar` 存在时走同一条测试缝（夹具因此不会真的去 star）。 */
+  /** 打开仓库页（走 `starPrompt.onOpen` 测试缝——夹具里不会真的拉起浏览器）。 */
+  const openStarPage = React.useCallback((): void => {
+    const seam = starPrompt?.onOpen
+    if (seam !== undefined) { seam(); return }
+    void import('../starAction.js').then(({ STAR_REPO }) => {
+      openExternal(`https://github.com/${STAR_REPO}`)
+    })
+  }, [starPrompt])
+  const runStarAction = React.useCallback((): void => {
+    const seam = starPrompt?.onStar
+    void (seam !== undefined
+      ? Promise.resolve(seam())
+      : import('../starAction.js').then(async ({ starRepo, STAR_REPO }) => {
+        const url = `https://github.com/${STAR_REPO}`
+        const outcome = await starRepo()
+        if (outcome.kind === 'starred') return { kind: 'starred' as const }
+        if (outcome.kind === 'no-gh') return { kind: 'no-gh' as const, url }
+        if (outcome.kind === 'not-authed') return { kind: 'not-authed' as const, url }
+        return { kind: 'failed' as const, detail: outcome.detail, url }
+      })).then(attempt => {
+      if (attempt.kind === 'starred') {
+        setStarred(true)
+        // 成功就演一段庆祝（女仆娘接住星星）——`/star`、`Alt+S`、标语点击
+        // 都是这一条路。整屏界面开着或回合进行中时弹窗放不下，退回一句
+        // 通知，用户至少知道 star 点上了。
+        const blocked = channel.working || supervisorOpen || treeOpen || settingsOpen
+        const index = STAR_MILESTONES.findIndex(milestone => milestone.hours === 99)
+        if (!blocked && index >= 0) {
+          setStarModal({ index, phase: 'done' })
+          return
+        }
+        channel.notify(t('star-ok'), { color: 'success' })
+        return
+      }
+      if (attempt.kind === 'no-gh') {
+        // 本机没法一键（没装 gh / 没登录）→ **自动**打开仓库页让用户自己点，
+        // 通知里说明原因（浏览器没拉起来时 URL 也还在文案里）。
+        openStarPage()
+        channel.notify(t('star-no-gh', { url: attempt.url }), { color: 'warning' })
+        return
+      }
+      if (attempt.kind === 'not-authed') {
+        openStarPage()
+        channel.notify(t('star-not-authed', { url: attempt.url }), { color: 'warning' })
+        return
+      }
+      channel.notify(t('star-failed', { detail: attempt.detail, url: attempt.url }), { color: 'error' })
+    })
+  }, [channel, starPrompt, openStarPage, supervisorOpen, treeOpen, settingsOpen])
+  const starModalActions = React.useMemo(() => ({
+    // 弹窗自己演结果（成功→庆祝、失败→留在卡里说明原因），所以这里把
+    // 结局**回传**给它；`/star` 命令那条路仍走 runStarAction 的 notify。
+    onStar: (): StarAttempt | Promise<StarAttempt> => {
+      const seam = starPrompt?.onStar
+      // 成功把开屏彩蛋切成「捡到星星」版；gh 缺失/未登录**自动**打开仓库页
+      // （与一键路径同一套兜底）。注意**不要**给返回值再包一层 `.then()`——
+      // 多一个微任务会让弹窗"庆祝那一帧"被紧随其后的 Enter 关窗批掉
+      //（夹具 C8/C9 实测）。这里只挂副作用、原样返回。
+      const afterAttempt = (attempt: StarAttempt): StarAttempt => {
+        if (attempt.kind === 'starred') setStarred(true)
+        else if (attempt.kind === 'no-gh' || attempt.kind === 'not-authed') openStarPage()
+        return attempt
+      }
+      if (seam !== undefined) {
+        const result = seam()
+        if (result instanceof Promise) {
+          void result.then(afterAttempt)
+          return result
+        }
+        return afterAttempt(result)
+      }
+      const run = import('../starAction.js').then(async ({ starRepo, STAR_REPO }) => {
+        const url = `https://github.com/${STAR_REPO}`
+        const outcome = await starRepo()
+        if (outcome.kind === 'starred') return { kind: 'starred' as const }
+        if (outcome.kind === 'no-gh') return { kind: 'no-gh' as const, url }
+        if (outcome.kind === 'not-authed') return { kind: 'not-authed' as const, url }
+        return { kind: 'failed' as const, detail: outcome.detail, url }
+      })
+      void run.then(afterAttempt)
+      return run
+    },
+    onOpen: () => {
+      setStarModal(null)
+      openStarPage()
+    },
+  }), [starPrompt, openStarPage])
+  /** 弹窗关闭回调：稳定引用（见渲染处的注释）。 */
+  const closeStarModal = React.useCallback((): void => { setStarModal(null) }, [])
   const [workspaceTargets, setWorkspaceTargets] = React.useState<readonly TuiWorkspaceTarget[]>([])
   const workspaceFlowRequestRef = React.useRef(0)
   const workspaceFlowAbortRef = React.useRef<AbortController | null>(null)
@@ -2292,6 +2432,13 @@ export function Chat({
         setSettingsOpen(true)
         return true
       }
+      case 'star': {
+        // 一键 star：**只有用户主动敲 /star 才会跑**（绝不自动）。动作用
+        // runStarAction（与开屏弹窗共用），异步执行、结果用 notify 报。
+        setHelpOpen(false)
+        runStarAction()
+        return true
+      }
       case 'config': {
         const userHome = process.env.USERPROFILE ?? ''
         const lines = [
@@ -3022,6 +3169,10 @@ export function Chat({
   const lastModalEnterAtRef = React.useRef(0)
 
   useInput((input, key, event) => {
+    // 开屏"求 star"弹窗开着时键盘全归它（↑/↓/Enter/Esc 由它自己的
+    // useInput 处理），滚轮也不许滚动它身后的转录——和下面的整屏界面
+    // 同一套让位规则。
+    if (starModal !== null) return
     // Prompt-slot panels own the keyboard while visible. Their own useInput
     // handles the relevant keys; Chat registered first, so yielding here
     // still lets the panel receive them. PromptInput now stays mounted but
@@ -3892,6 +4043,11 @@ export function Chat({
       setTodoCollapsed(previous => !previous)
       // Consume: same readline-shadowing rule as dashboard/showAll above.
       event.stopImmediatePropagation()
+    } else if (actionMatches('star', input, key)) {
+      // 一键 star（默认 Alt+S）——与 `/star`、开屏标语点击同一个动作。
+      // 消费事件：alt 组合不该再落进输入框当普通字符。
+      runStarAction()
+      event.stopImmediatePropagation()
     } else if (plainReturn && !isSticky) {
       // Enter while scrolled up returns to the bottom: the
       // affordance now exists whenever the view is off the bottom, not
@@ -4183,6 +4339,7 @@ export function Chat({
     || (recap !== null && (!recap.auto || recap.expanded))
     || btw !== null
     || questionPanelNode !== null
+    || starModal !== null
 
   // The trajectory scene replaces the conversation for as long as it is open.
   // Rendering it INSTEAD of (not above) the transcript is what makes it a
@@ -4285,6 +4442,9 @@ export function Chat({
           cwd={channel.displayCwd}
           whale={channel.whale}
           whaleIdle={channel.whaleIdle && whaleArtVisible}
+          whaleGirl={channel.whaleGirl}
+          starred={starred}
+          onStarClick={runStarAction}
           working={channel.working}
           // Resuming a long session skips the ~3.4s opening animation: it
           // keeps firing low-frequency React commits that compete with the
@@ -4966,6 +5126,18 @@ export function Chat({
           transcript 行，预览必须作为根的最后一个孩子才压得过它）；平时
           预览挂在上面的 transcript 行内，见 imagePreviewNode。 */}
       {promptEditorOpen && imagePreviewNode}
+      {/* 开屏"求 star"弹窗（99h / 999 次）：最后一个孩子，压过包括全屏
+          草稿编辑器在内的全部后绘兄弟；关闭即整树卸载——键盘自然交还，
+          没有残留的监听会再抢键。onClose 用 useCallback 钉死引用：弹窗
+          开着的每一帧 Chat 重渲染都不弄脏它的绝对定位捕获层。 */}
+      {starModal !== null && STAR_MILESTONES[starModal.index] !== undefined && (
+        <StarPrompt
+          milestone={STAR_MILESTONES[starModal.index]}
+          actions={starModalActions}
+          onClose={closeStarModal}
+          initialPhase={starModal.phase}
+        />
+      )}
     </Box>
   )
 }

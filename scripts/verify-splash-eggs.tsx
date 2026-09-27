@@ -19,7 +19,7 @@ const [
   React,
   { renderBigText, bigTextWidth },
   { SPLASH_FONTS, splashFontById, withTagline },
-  { pickSplashEgg, pickSplashStar, splashStarLine, SPLASH_STAR_URL, SPLASH_STAR_CHANCE },
+  { pickSplashEgg, splashStarLine, SPLASH_STAR_URL },
   { OSC8_START, OSC8_END },
   { stringWidth },
   { renderToScreen },
@@ -27,6 +27,7 @@ const [
   { TerminalSizeContext },
   { LogoV2 },
   { COLUMN_GAP, WHALE_BOX_WIDTH },
+  { settle },
 ] = await Promise.all([
   import('react'),
   import('../src/components/bigfont.js'),
@@ -39,6 +40,7 @@ const [
   import('../src/ink/components/TerminalSizeContext.js'),
   import('../src/components/LogoV2.js'),
   import('../src/components/splashLayout.js'),
+  import('./lib/term-test.mjs'),
 ])
 
 const ACCENT = { r: 63, g: 108, b: 196 }
@@ -174,43 +176,41 @@ check(
   SPLASH_FONTS.every(font => [...'DEEPSEEK' + 'HARNESS'].every(letter => (font.glyphs[letter] ?? []).length === 5)),
 )
 
-// ── ④ 求 star 标语 ────────────────────────────────────────────────────────
+// ── ④ 求 star 彩蛋（**触发条件**在 `verify-usage-stats` 里，这里只管三行怎么拼）──
+const SAMPLE_USAGE = { launches: 103, totalMs: 26 * 3_600_000, celebrated: 0 }
+const sample = splashStarLine({ usage: SAMPLE_USAGE })
 check(
-  '概率默认 1/20 且可注入',
-  SPLASH_STAR_CHANCE === 1 / 20 &&
-    pickSplashStar(1, () => 0.999) &&
-    !pickSplashStar(0, () => 0) &&
-    pickSplashStar(0.05, () => 0.049) &&
-    !pickSplashStar(0.05, () => 0.05),
-  `${SPLASH_STAR_CHANCE}`,
+  '标题是"等一颗小星星"、数字行换成本机实测值',
+  sample.title.includes('小星星') && sample.stats.includes('26') && sample.stats.includes('103'),
+  `${sample.title} | ${sample.stats}`,
 )
+check('标题行不再带数字（数字归独立那一行）', !sample.title.includes('26'))
 
-const rich = splashStarLine({ supportsHyperlinks: true })
-const richText = rich.lead + rich.link + rich.tail
+const rich = splashStarLine({ supportsHyperlinks: true, usage: SAMPLE_USAGE, keyHint: 'Alt+S' })
+const richText = rich.ask ?? ''
 check('链接指向仓库（常量没被改错）', SPLASH_STAR_URL === REPO_URL, SPLASH_STAR_URL)
 check(
-  '命中时含成对的 OSC 8 序列（开/闭各 2 段）且 URL 正确',
-  rich.link.startsWith(`${OSC8_START}${REPO_URL}${OSC8_END}`) &&
-    rich.link.endsWith(`${OSC8_START}${OSC8_END}`) &&
-    rich.link.split(OSC8_START).length - 1 === 2 &&
-    rich.link.split(OSC8_END).length - 1 === 2,
-  rich.link.replaceAll('\x1b', '\\e').replaceAll('\x07', '\\a'),
+  '求星行含成对的 OSC 8 序列（开/闭各 2 段）且 URL 正确',
+  richText.startsWith(`${OSC8_START}${REPO_URL}${OSC8_END}`) ||
+    richText.includes(`${OSC8_START}${REPO_URL}${OSC8_END}`),
+  richText.replaceAll('\x1b', '\\e').replaceAll('\x07', '\\a'),
 )
-check('命中时显示的是短标签而不是裸 URL', rich.link.includes('GitHub'))
-check('整行宽度按可见文本算（OSC 8 不占列）', stringWidth(richText) === rich.width, `${stringWidth(richText)} vs ${rich.width}`)
+check('链接显示的是短标签而不是裸 URL', richText.includes('Star') && !richText.includes(`Star${OSC8_END}${SPLASH_STAR_URL}`))
+check('求星行带括号提示与生效键位',
+  richText.includes('（点这一行或 Alt+S 一键支持）') || richText.includes('(click this line or Alt+S)'),
+  richText.replaceAll('\x1b', '\\e').replaceAll('\x07', '\\a'))
+check('整块宽度按可见文本算（OSC 8 不占列）',
+  stringWidth(richText.replace(/\x1b\]8;;[^\x07]*\x07/gu, '')) <= rich.width
+  && rich.width >= stringWidth(rich.title) && rich.width >= stringWidth(rich.stats),
+  `${rich.width}`)
 check('宽度不是沿用 logo-tagline 的', rich.width > stringWidth('探索未至之境！') && rich.width !== stringWidth('Explore the uncharted!'))
 
-const plain = splashStarLine({ supportsHyperlinks: false })
-check(
-  '终端不支持超链接时退化成纯文本 URL',
-  plain.link === REPO_URL && !plain.link.includes('\x1b') && !plain.link.includes(OSC8_START),
-  plain.link,
-)
-check(
-  '退化后宽度跟着变（URL 比标签长）',
-  plain.width === stringWidth(plain.lead + plain.tail) + stringWidth(REPO_URL) && plain.width > rich.width,
-  `${plain.width} vs ${rich.width}`,
-)
+const plain = splashStarLine({ supportsHyperlinks: false, usage: SAMPLE_USAGE })
+check('终端不支持超链接时**整行不画**（裸 URL 会把块撑破）', plain.ask === null)
+check('退化后宽度只按剩下的两行算', plain.width === Math.max(stringWidth(plain.title), stringWidth(plain.stats)))
+
+const caught = splashStarLine({ supportsHyperlinks: true, usage: SAMPLE_USAGE, caught: true })
+check('已 star 过的会话：标题换成"捡到小星星"', caught.title.includes('捡到') && caught.title !== rich.title, caught.title)
 
 // ── ④b 挂真实 LogoV2 读屏 ─────────────────────────────────────────────────
 const WIDTH = 120
@@ -247,11 +247,22 @@ const textAt = (line: string): string => line.padEnd(TEXT_LEFT).slice(TEXT_LEFT)
 const centeredPad = (visible: number): number => Math.max(0, Math.round(WHALE_CENTER - visible / 2))
 
 {
-  const { rows, screen } = mount(view(<LogoV2 {...baseProps} starChance={1} />))
+  // 先看"第一帧"：渐显只画出标题行——这就是动效本身（真机随后每秒补一行）。
+  const first = mount(view(<LogoV2 {...baseProps} starChance={1} />))
+  check('彩蛋首帧只画标题行（渐显第一拍）',
+    first.rows.some(line => line.includes('小星星'))
+    && !first.rows.some(line => line.includes('已陪你'))
+    && !first.rows.some(line => line.includes('一键支持')))
+
+  // 静态渲染夹具不会再渲染一轮，用 `starReveal="instant"` 把三行一次画全，
+  // 检查排版/链接落格这些与时间无关的部分。
+  const { rows, screen } = mount(view(<LogoV2 {...baseProps} starChance={1} starReveal="instant" />))
   const row = bottomRow(rows)
   const line = rows[row] ?? ''
-  const { first, width } = span(screen, row)
-  check('命中时底部那一行就是求 star 标语', line.includes('GitHub'), line.trim())
+  const { first: firstColumn, width } = span(screen, row)
+  check('命中时底部那块就是求 star 彩蛋（标题 + 数字 + 求星）',
+    rows.some(entry => entry.includes('小星星')) && rows.some(entry => entry.includes('已陪你')) && line.includes('一键支持'),
+    line.trim())
   const links = new Set<string>()
   let linkCells = 0
   for (let column = 0; column < WIDTH; column++) {
@@ -262,15 +273,15 @@ const centeredPad = (visible: number): number => Math.max(0, Math.round(WHALE_CE
   }
   check(
     '链接落到真正的 OSC 8 单元格上且 URL 正确',
-    links.size === 1 && links.has(REPO_URL) && linkCells === 'GitHub'.length,
+    links.size === 1 && links.has(REPO_URL) && linkCells === 'Star'.length,
     [...links].join(',') + ` ${linkCells} 格`,
   )
   check(
-    '缩进按该行实际显示宽度重算（不是沿用 logo-tagline 的宽度）',
-    first === centeredPad(width) && first !== centeredPad(stringWidth('探索未至之境！')),
-    `first=${first} width=${width} 期望 ${centeredPad(width)}`,
+    '缩进按最宽那行的实际显示宽度重算（不是沿用 logo-tagline 的宽度）',
+    firstColumn === centeredPad(width) && firstColumn !== centeredPad(stringWidth('探索未至之境！')),
+    `first=${firstColumn} width=${width} 期望 ${centeredPad(width)}`,
   )
-  check('整行不超屏', width <= WIDTH && row >= 0)
+  check('整块不超屏', width <= WIDTH && row >= 0)
 }
 
 {
@@ -331,7 +342,7 @@ const centeredPad = (visible: number): number => Math.max(0, Math.round(WHALE_CE
       Math.random = original
     }
   }
-  const once = countRolls(view(<LogoV2 {...baseProps} egg={null} starChance={0.5} />))
+  const once = countRolls(view(<LogoV2 {...baseProps} egg={null} starChance={1} />))
   // `useLayoutEffect` 里自更新 + 每次渲染都换 `model`：commit 后再渲染一轮，
   // LogoV2 拿到新 props 必须重渲染——这才是真实"重绘"（窗口 resize 同路径）。
   const Remount = (): React.ReactElement => {
@@ -339,13 +350,13 @@ const centeredPad = (visible: number): number => Math.max(0, Math.round(WHALE_CE
     React.useLayoutEffect(() => {
       setPass(1)
     }, [])
-    return <LogoV2 {...baseProps} model={`pass-${pass}`} egg={null} starChance={0.5} />
+    return <LogoV2 {...baseProps} model={`pass-${pass}`} egg={null} starChance={1} />
   }
   const twice = countRolls(view(<Remount />))
   check('重渲染真的发生了（否则上面那条断言是空转）', twice.rows.some(line => line.includes('pass-1')), 'pass-1 在屏上')
   check(
-    '概率按 mount 钉一次（重渲染不重掷）',
-    twice.rolls === once.rolls && twice.rows.every(line => !line.includes('GitHub')),
+    '里程碑只在 mount 时判一次（重渲染不会把那一行甩掉）',
+    once.rows.some(line => line.includes('小星星')) && twice.rows.some(line => line.includes('小星星')),
     `单次渲染 ${once.rolls} 次随机 → 重渲染后 ${twice.rolls} 次`,
   )
 }

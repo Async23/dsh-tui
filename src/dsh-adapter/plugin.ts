@@ -556,6 +556,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     expandEditor: config.expandEditor,
     smoothStreaming: config.smoothStreaming,
     statusBar: config.statusBar,
+    // 启动种子：与上面各显示偏好同款（设置服务的 boot apply 会再对一次
+    // 值，setWhaleGirl 对同值是 no-op，不会多通知）。
+    whaleGirl: config.whaleGirl,
     handle,
   })
   // Register the live Channel for the adapter Kernel. The Channel driver
@@ -693,6 +696,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         // the idle-wakeup gate stays: an explicit `false` keeps the settled
         // header timer-free.
         whaleIdle: Schema.boolean().default(true),
+        // Maid portrait instead of the pixel whale in the header splash;
+        // off by default — the portrait is static (no idle animation).
+        whaleGirl: Schema.boolean().default(false),
         // Minimal mode: strips the header splash, emoji glyphs, and
         // decorative colors; code highlight and tool colors stay.
         minimal: Schema.boolean().default(false),
@@ -722,6 +728,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       lang?: 'zh' | 'en'
       whale?: boolean
       whaleIdle?: boolean
+      whaleGirl?: boolean
       minimal?: boolean
       fullscreen?: boolean
       terminalImages?: boolean
@@ -749,6 +756,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     /** Apply the idle-whale-behavior setting: live-toggle the channel flag. */
     const applyWhaleIdle = (value: { whaleIdle?: boolean }): void => {
       channel.setWhaleIdle(value.whaleIdle ?? true)
+    }
+    /** Apply the maid-portrait setting: live-swap the header art. */
+    const applyWhaleGirl = (value: { whaleGirl?: boolean }): void => {
+      channel.setWhaleGirl(value.whaleGirl ?? false)
     }
     const applyMinimal = (value: { minimal?: boolean }): void => {
       if (shadow) return
@@ -828,6 +839,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       applyLayout(next)
       applyWhale(next)
       applyWhaleIdle(next)
+      applyWhaleGirl(next)
       applyMinimal(next)
       applyLang(next)
       applyDisplay(next)
@@ -954,6 +966,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       zh: '全屏草稿编辑快捷键',
       hintEn: d => `Toggle the fullscreen draft editor (Enter inserts a newline, Ctrl+Enter sends). Default: ${d}.`,
       hintZh: d => `切换全屏草稿编辑器（Enter 换行、Ctrl+Enter 发送）。默认 ${d}。`,
+    },
+    star: {
+      label: 'One-key star shortcut',
+      zh: '一键 star 快捷键',
+      hintEn: d => `Star the project via the gh CLI (same action as /star and the splash line's click). Default: ${d}.`,
+      hintZh: d => `用 gh 给项目点 star（与 /star、开屏标语点击同一个动作）。默认 ${d}。`,
     },
   }
   const shortcutFields: TuiSettingsField[] = SHORTCUT_ACTIONS.map(action => {
@@ -1396,10 +1414,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         },
         {
           path: ['whale'],
-          label: 'Whale art',
-          descriptions: { zh: '鲸鱼娘' },
-          hint: 'Show the pixel whale in the header splash.',
-          hintDescriptions: { zh: '开屏头部显示像素鲸鱼娘。' },
+          label: 'Header art',
+          descriptions: { zh: '标题图形 logo' },
+          hint: 'Show the header splash art — the pixel whale, or the maid portrait when the setting below is on. Off leaves a text-only header.',
+          hintDescriptions: { zh: '开屏头部显示图形 logo：像素鲸鱼（打开下方「女仆娘立绘」时显示女仆娘）。关闭则只留文字标题。' },
           kind: 'boolean',
         },
         {
@@ -1408,6 +1426,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           descriptions: { zh: '鲸鱼娘闲置动画（欢迎期）' },
           hint: 'Welcome-phase idle behaviors: after the intro the whale flutters its fins, thumps its tail, and dozes off when idle; clicking wakes a dozing whale and pops a heart. The first agent turn freezes it to the static standard frame.',
           hintDescriptions: { zh: '欢迎期闲置行为：开屏后鲸鱼娘摆鱼鳍、偶尔拍尾巴，空闲会睡着冒 Z；点击唤醒睡着的鲸鱼娘并冒爱心。开始第一个任务后定格为静态标准帧。' },
+          kind: 'boolean',
+        },
+        {
+          path: ['whaleGirl'],
+          label: 'Maid portrait',
+          descriptions: { zh: '女仆娘立绘' },
+          hint: 'Swap the header splash\'s pixel whale for the author-designed maid portrait, rendered FIRST as a real raster through the terminal image protocols (Kitty/Sixel); terminals without graphics support fall back to the character-art maid.',
+          hintDescriptions: { zh: '把开屏头部的像素鲸鱼换成项目作者绘制的女仆娘立绘，最优先走终端图像协议（Kitty/Sixel）的真图渲染；终端不支持时回落到字符画版女仆娘。' },
           kind: 'boolean',
         },
         {

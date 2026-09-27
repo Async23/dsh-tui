@@ -145,8 +145,13 @@ export interface ChannelUi {
   readonly whale: boolean
   /** Idle whale behaviors switch (settings `dsh-tui.whaleIdle`). */
   readonly whaleIdle: boolean
+  /** Swap the header's pixel whale for the static maid portrait (settings
+   * `dsh-tui.whaleGirl`; off by default). */
+  readonly whaleGirl: boolean
   /** Apply an idle-whale-behavior change (see the public Channel type). */
   setWhaleIdle(enabled: boolean): void
+  /** Apply a maid-portrait change (see the public Channel type). */
+  setWhaleGirl(enabled: boolean): void
   /** Minimal mode (settings `dsh-tui.minimal`): no header splash, no emoji
    *  glyphs, no decorative colors; code highlight and tool colors stay. */
   readonly minimal: boolean
