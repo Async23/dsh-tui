@@ -77,6 +77,7 @@ export async function listPathCandidates(fs: FileSuggestionFs, cwd: string, quer
   const bareDir = slash < 0 && (normalized === '.' || normalized === '..' || normalized === '~')
   const directoryPart = slash < 0 ? (bareDir ? `${normalized}/` : '') : normalized.slice(0, slash + 1)
   const displayDirectoryPart = rawSlash < 0 ? (bareDir ? `${query}/` : '') : query.slice(0, rawSlash + 1)
+  const displaySeparator = displayDirectoryPart.endsWith('\\') ? '\\' : '/'
   const nameQuery = slash < 0 || bareDir ? '' : normalized.slice(slash + 1)
   // `~/` expands against the host home (matches the cwd resolution rules);
   // drive-letter and POSIX-absolute prefixes pass through untouched.
@@ -90,7 +91,7 @@ export async function listPathCandidates(fs: FileSuggestionFs, cwd: string, quer
     const target = await fs.resolve(expanded)
     const entries = (await fs.listDir(target)).slice().sort((a, b) => a.name.localeCompare(b.name))
     return rankFileCandidates(entries.filter(entry => entry.type === 'file' || entry.type === 'directory').map(entry => {
-      const path = `${displayDirectoryPart}${entry.name}${entry.type === 'directory' ? '/' : ''}`
+      const path = `${displayDirectoryPart}${entry.name}${entry.type === 'directory' ? displaySeparator : ''}`
       return { id: path, path, displayPath: path, name: entry.name, kind: entry.type as 'file' | 'directory', score: 0 }
     }), nameQuery, topK)
   } catch {
