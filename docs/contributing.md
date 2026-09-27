@@ -235,7 +235,9 @@ UI 语言在 import 时按 `DSH_TUI_LANG` → `~/.dsh-tui/lang.json` → 系统 
 不要用 `??=` 保留宿主值，也不要按宿主语言选择不同断言。已逐场景调用 `setLang`
 的双语回归和仅用中文作输入数据的宽度/剪贴板等测试不需要重复设置。
 `node scripts/verify-regression-language.mjs`（先构建，已接入 `channel-ui` CI 组）
-在临时 HOME 下覆盖英文 locale、持久化 en 偏好和显式 en 环境变量三种启动条件。
+在临时 HOME 下覆盖与脚本预期语言相反的 locale、持久化偏好和环境变量三种启动条件，
+同时保护中文正向断言和英文否定断言。`verify-ime-cursor`、`repro-suggestion-click`
+和 `verify-queue` 的语言修复保留，但在既有固定等待迁移完成前仅独立运行，不进入 CI 矩阵。
 诊断探针不作为此回归组全量执行；需要固定中文输出时显式带上 `DSH_TUI_LANG=zh`。
 
 改动共享渲染、`Chat`、提示/问卷布局、工具卡、主题原语或 Ink core 时，三个
@@ -274,7 +276,8 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 
 - 保留的固定 `sleep(` 必须带机读标签 `固定窗:探针` / `固定窗:墙钟` /
   `固定窗:pacing`（定义见该文件头部），写在 sleep 同行尾注释或紧贴上方注释里。
-- `verify:fixed-window` 门禁扫描 `scripts/run-ci-group.mjs` 登记的脚本，无标签即失败。
+- `verify:fixed-window` 门禁扫描 `scripts/run-ci-group.mjs` 与
+  `scripts/verify-regression-language.mjs` 登记的脚本（含矩阵子进程），无标签即失败。
 - `固定窗:待迁移` 是存量技术债（清零跟踪 #791），按文件计数锁在
   `scripts/fixed-window.baseline.json`：任一文件增加即失败，旧债减少不能抵消。
 - 清掉一处后用 `--write-baseline` 重写基线并一起提交。新代码不得使用。

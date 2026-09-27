@@ -317,9 +317,13 @@ to preserve the host value or choose assertions based on the host language.
 Bilingual regressions already calling `setLang` per scenario and tests using
 Chinese only as input data (width, clipboard, etc.) need no redundant pin.
 `node scripts/verify-regression-language.mjs` (build first; included in the
-`channel-ui` CI group) covers an English locale, a saved en preference, and
-an explicit en environment override, each with a temporary HOME. Diagnostic
-probes are not run wholesale by this regression group; pass `DSH_TUI_LANG=zh`
+`channel-ui` CI group) tests locale, saved preference, and environment
+overrides opposing each script's expected language, each with a temporary
+HOME. This protects both Chinese positive assertions and English negative
+assertions. The language fixes in `verify-ime-cursor`, `repro-suggestion-click`,
+and `verify-queue` remain, but those scripts run only standalone until their
+legacy fixed waits are migrated; they are not included in the CI matrix.
+Diagnostic probes are not run wholesale by this regression group; pass `DSH_TUI_LANG=zh`
 explicitly when their output needs to be Chinese.
 
 Run all three CI regressions for changes to shared rendering, `Chat`, prompt or
@@ -361,7 +365,8 @@ Regression scripts take their wait primitives from `scripts/lib/term-test.mjs`:
   header), in a trailing comment on the same line or in the comment block
   directly above.
 - The `verify:fixed-window` gate scans every script registered in
-  `scripts/run-ci-group.mjs` and fails on an untagged call.
+  `scripts/run-ci-group.mjs` and `scripts/verify-regression-language.mjs`
+  (including matrix child processes), and fails on an untagged call.
 - `固定窗:待迁移` marks pre-existing debt (burn-down tracked in issue #791),
   pinned per file in `scripts/fixed-window.baseline.json`: any file going up
   fails, and old debt going down never offsets it.
