@@ -48,16 +48,12 @@ const TEXT_BLOCK_BUDGET = 8192
 const tokenCache = new Map<string, Token[]>()
 let tokenCacheChars = 0
 
-// 语法探针：命中任意 markdown 结构标记才值得走 lexer；内容过长时
-// 只探测开头一段，纯文本直接跳过约 3ms 的 lexer 调用。`$` 与 `\` 覆盖
-// LaTeX 公式定界符（`$…$`、`\(…\)`）。
+// 语法探针：全文都没有结构标记时才跳过 lexer，不能仅凭纯文本前缀
+// 忽略后面的公式或 Markdown。`$` 与 `\` 覆盖 LaTeX 公式定界符。
 const MD_SYNTAX_MARKERS = /[#*`|[>\-_~$\\]|\n\n|^\d+\. |\n\d+\. /
-const SYNTAX_PROBE_WINDOW = 500
 
 function looksLikePlainText(s: string): boolean {
-  const probe =
-    s.length > SYNTAX_PROBE_WINDOW ? s.slice(0, SYNTAX_PROBE_WINDOW) : s
-  return !MD_SYNTAX_MARKERS.test(probe)
+  return !MD_SYNTAX_MARKERS.test(s)
 }
 
 function lexWithCache(content: string, allowCache: boolean): Token[] {

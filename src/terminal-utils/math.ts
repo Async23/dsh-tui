@@ -85,7 +85,8 @@ function isEscaped(source: string, index: number): boolean {
 function findClosingDelimiter(source: string, closing: string, start: number): number {
   let index = source.indexOf(closing, start)
   while (index >= 0 && isEscaped(source, index)) {
-    index = source.indexOf(closing, index + closing.length)
+    // A literal \$ can sit directly before $$, so candidate pairs may overlap.
+    index = source.indexOf(closing, index + 1)
   }
   return index
 }
@@ -150,19 +151,22 @@ function tokenizeInlineMath(source: string): MathToken | undefined {
  * block is pending only while no closer exists at all.
  */
 const BLOCK_OPENER = /^ {0,3}(\$\$|\\\[)/
-const COMPLETE_DOLLAR_BLOCK = /^ {0,3}\$\$[ \t]*\n?([\s\S]*?)\$\$[ \t]*(?:\n|$)/
-const COMPLETE_BRACKET_BLOCK = /^ {0,3}\\\[[ \t]*\n?([\s\S]*?)\\\][ \t]*(?:\n|$)/
 
 function tokenizeBlockMath(source: string): MathToken | undefined {
   const opener = BLOCK_OPENER.exec(source)
   if (opener === null) return undefined
   const dollar = opener[1] === '$$'
   const closing = dollar ? '$$' : '\\]'
-  const complete = (dollar ? COMPLETE_DOLLAR_BLOCK : COMPLETE_BRACKET_BLOCK).exec(source)
-  if (complete?.[1] !== undefined && complete[1].trim() !== '') {
-    return { type: 'mathBlock', raw: complete[0], text: complete[1].trim() }
+  const closingIndex = findClosingDelimiter(source, closing, opener[0].length)
+  if (closingIndex >= 0) {
+    const end = closingIndex + closing.length
+    const trailing = /^[ \t]*(?:\n|$)/.exec(source.slice(end))
+    const text = source.slice(opener[0].length, closingIndex).trim()
+    // The first closer decides the boundary. Looking for a later line-ending
+    // closer would swallow intervening prose and the next formula.
+    if (trailing === null || text === '') return undefined
+    return { type: 'mathBlock', raw: source.slice(0, end + trailing[0].length), text }
   }
-  if (findClosingDelimiter(source, closing, opener[0].length) >= 0) return undefined
   const body = source.slice(opener[0].length).replace(/^[ \t]*\n?/, '')
   // An opener with nothing after it yet is held too, so a streaming block
   // does not flip from prose to a block node when its first command arrives.

@@ -123,6 +123,32 @@ assert.deepEqual(mathTexts('$a*b*c$ and $x_1 + y_1$'), ['math:a*b*c', 'math:x_1 
 assert.deepEqual(mathTexts('text\n$$\n\\frac{a}{b}\n$$\nmore'), ['mathBlock:\\frac{a}{b}'], 'a $$ block interrupts a paragraph')
 assert.deepEqual(mathTexts('\\[\nx^2\n\\]'), ['mathBlock:x^2'], '\\[ \\] is a block delimiter')
 assert.deepEqual(mathTexts('$$x^2$$ trails prose\n\nnext'), ['math:x^2'], 'a $$ pair with trailing text is inline')
+const MIXED_MATH_DOCUMENTS = [
+  '$$x^2$$ trails prose\n\n**Important**\n\n$$y^2$$',
+  '\\[x^2\\] trails prose\n\n**Important**\n\n\\[y^2\\]',
+]
+for (const source of MIXED_MATH_DOCUMENTS) {
+  assert.deepEqual(
+    mathTexts(source),
+    ['math:x^2', 'mathBlock:y^2'],
+    'the first closer with trailing prose must not consume a later formula',
+  )
+  const strongTexts: string[] = []
+  marked.walkTokens(marked.lexer(source), token => {
+    if (token.type === 'strong') strongTexts.push(token.text)
+  })
+  assert.deepEqual(strongTexts, ['Important'], 'intervening prose retains its Markdown structure')
+}
+assert.deepEqual(
+  mathTexts('$$x + \\$$$\n'),
+  ['mathBlock:x + \\$'],
+  'an escaped dollar before the closing pair stays inside the formula',
+)
+assert.deepEqual(
+  mathTexts('\\[x \\\\]\ny\\]\n'),
+  ['mathBlock:x \\\\]\ny'],
+  'an escaped bracket closer stays inside the formula',
+)
 assert.deepEqual(mathTexts('- item\n\n  $$\\sum_i i$$'), ['mathBlock:\\sum_i i'], 'blocks nest in list items')
 assert.deepEqual(mathTexts('> $$\n> \\frac{a}{b}\n> $$'), ['mathBlock:\\frac{a}{b}'], 'blocks nest in blockquotes')
 {
@@ -151,6 +177,34 @@ function screenLines(element: React.ReactElement, width: number): string[] {
   return Array.from({ length: screen.height }, (_, row) =>
     Array.from({ length: width }, (_, column) => cellAt(screen.screen, column, row)?.char ?? '').join('').trimEnd(),
   )
+}
+
+for (const source of MIXED_MATH_DOCUMENTS) {
+  assert.deepEqual(
+    screenLines(<Markdown>{source}</Markdown>, 80),
+    ['x² trails prose', '', 'Important', '', '  y²'],
+    'inline math, intervening prose and the following display block stay separate',
+  )
+}
+
+const LONG_PREFIX = 'a'.repeat(501)
+const LATE_INLINE_MATH = ['$x^2$', String.raw`\(x^2\)`]
+const LATE_BLOCK_MATH = ['$$\nx^2\n$$', '\\[\nx^2\n\\]']
+for (const cacheTokens of [true, false]) {
+  for (const formula of LATE_INLINE_MATH) {
+    const source = `${LONG_PREFIX} ${formula}`
+    assert.equal(
+      screenLines(<Markdown cacheTokens={cacheTokens}>{source}</Markdown>, 80).join(''),
+      `${LONG_PREFIX} x²`,
+      'inline math after a long plain prefix must reach the lexer',
+    )
+  }
+  for (const formula of LATE_BLOCK_MATH) {
+    const source = `${LONG_PREFIX}\n\n${formula}`
+    const lines = screenLines(<Markdown cacheTokens={cacheTokens}>{source}</Markdown>, 80)
+    assert.equal(lines.slice(0, -2).join(''), LONG_PREFIX, 'the long prose prefix remains intact')
+    assert.deepEqual(lines.slice(-2), ['', '  x²'], 'a late display block still gets its own layout node')
+  }
 }
 
 const QUADRATIC = String.raw`x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}`
@@ -278,5 +332,18 @@ const expected = await renderRows([STREAMED], false)
 const actual = await renderRows(prefixes, true)
 assert.deepEqual(actual, expected, 'char-by-char streaming settles on the one-shot render')
 assert.ok(expected.some(line => line.includes('─')), 'the streamed reply contains a stacked block')
+
+for (const source of [
+  ...MIXED_MATH_DOCUMENTS,
+  ...LATE_INLINE_MATH.map(formula => `${LONG_PREFIX} ${formula}`),
+  ...LATE_BLOCK_MATH.map(formula => `${LONG_PREFIX}\n\n${formula}`),
+]) {
+  const stages = Array.from({ length: source.length }, (_, index) => source.slice(0, index + 1))
+  assert.deepEqual(
+    await renderRows(stages, true),
+    await renderRows([source], false),
+    'delimiter boundaries and late formulas must settle identically when streamed',
+  )
+}
 
 console.log('LaTeX math verified: vendored renderer contract, delimiter guards, Markdown dispatch, fallbacks and settings, streaming parity')
