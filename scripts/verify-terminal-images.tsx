@@ -33,6 +33,7 @@ import {
 } from '../src/ink/screen.js'
 import {
   kittyGraphics,
+  TerminalQuerier,
   terminalCellSizePixels,
   terminalWindowSizePixels,
 } from '../src/ink/terminal-querier.js'
@@ -209,7 +210,7 @@ assert.match(first, /a=t,t=d,f=32/u)
 assert.match(first, /a=p,i=101,p=1,c=6,r=3,z=-2147483648,C=1/u)
 assert.match(
   first,
-  /\x1b\[4;3H\x1b_Ga=p,i=101,p=1,c=6,r=3,z=-2147483648,C=1,q=2;/u,
+  /\x1b\[4;3H\x1b_Ga=p,i=101,p=1,c=6,r=3,z=-2147483648,C=1,q=1;/u,
   'the sole display action must follow the target-cell cursor placement',
 )
 assert.equal(
@@ -308,6 +309,69 @@ assert.match(
   /a=d,d=I,i=/u,
   'variants fitted for a previous cell geometry are released, never kept dormant',
 )
+
+// Byte budget: fewer than 128 dormant images can still exceed the decoded
+// byte bound (4 MiB each); the least-recently-used ones are released first,
+// and touching an old image refreshes it so a newer one goes instead.
+const byteManager = new KittyGraphicsManager({ firstImageId: 801, cellSize: { width: 8, height: 16 } })
+const bigSource = (index: number): TerminalImageSource => {
+  const data = new Uint8Array(1024 * 1024 * 4)
+  data[0] = index
+  return { data, width: 1024, height: 1024 }
+}
+const bigNodes = Array.from({ length: 17 }, () => createNode('ink-image'))
+const bigPlacement = (index: number): TerminalImagePlacement => ({
+  node: bigNodes[index]!,
+  x: 0,
+  y: 0,
+  columns: 128,
+  rows: 64,
+  source: bigSource(index),
+  presentation: 'transcript',
+})
+const bigPlacements = bigNodes.map((_, index) => bigPlacement(index))
+let byteOutput = ''
+for (let index = 0; index < 16; index++) byteOutput += byteManager.reconcile([bigPlacements[index]!])
+assert.doesNotMatch(byteOutput, /a=d,d=I/u, '16 × 4 MiB stays within the 64 MiB byte bound')
+byteOutput = byteManager.reconcile([bigPlacements[0]!])
+assert.doesNotMatch(byteOutput, /\x1b_Ga=[tT],/u, 'touching the oldest dormant image re-places it without upload')
+byteOutput = byteManager.reconcile([bigPlacements[16]!])
+assert.deepEqual(
+  [...byteOutput.matchAll(/a=d,d=I,i=(\d+)/gu)].map(match => Number(match[1])),
+  [802],
+  'the 17th image evicts the least recently used (802), not the refreshed oldest (801)',
+)
+
+// Terminal-side eviction: a terminal quota smaller than our budget can drop a
+// dormant image. Placements report failures (q=1); ENOENT re-uploads it.
+const lostManager = new KittyGraphicsManager({ firstImageId: 901 })
+const lostNode = createNode('ink-image')
+const lostPlacement = { ...placement, node: lostNode }
+assert.match(lostManager.reconcile([lostPlacement]), /a=p,i=901,[^;]*,C=1,q=1;/u, 'placements do not suppress failures')
+lostManager.reconcile([])
+assert.equal(lostManager.handleResponse(901, 'OK'), false, 'OK replies are ignored')
+assert.equal(lostManager.handleResponse(999, 'ENOENT:not found'), false, 'unknown ids are ignored')
+const lostReplaced = lostManager.reconcile([lostPlacement])
+assert.doesNotMatch(lostReplaced, /\x1b_Ga=[tT],/u)
+assert.equal(lostManager.handleResponse(901, 'ENOENT:No image with id: 901 found'), true, 'ENOENT requests a repaint')
+const lostRestored = lostManager.reconcile([lostPlacement])
+assert.match(lostRestored, /a=t,t=d,f=32,[^;]*i=901,/u, 'the evicted image is uploaded again under its id')
+assert.match(lostRestored, /a=p,i=901,/u, 'and placed again')
+assert.equal(lostManager.handleResponse(901, 'ENOENT'), true)
+lostManager.invalidateAll()
+assert.equal(lostManager.handleResponse(901, 'ENOENT'), false, 'an image already pending upload needs no second repaint')
+
+// The querier forwards replies that answer no pending query.
+{
+  const unsolicited: string[] = []
+  const querier = new TerminalQuerier(new PassThrough() as unknown as NodeJS.WriteStream)
+  querier.onUnsolicited = response => unsolicited.push(response.type)
+  const [replies] = parseMultipleKeypresses(INITIAL_STATE, '\x1b_Gi=901,p=3;ENOENT:gone\x1b\\')
+  if (replies[0]?.kind !== 'response') throw new Error('Kitty error reply was not parsed')
+  assert.deepEqual(replies[0].response, { type: 'kittyGraphics', imageId: 901, status: 'ENOENT:gone' })
+  querier.onResponse(replies[0].response)
+  assert.deepEqual(unsolicited, ['kittyGraphics'])
+}
 
 const sharedManager = new KittyGraphicsManager({ firstImageId: 201 })
 const sharedNodeA = createNode('ink-image')

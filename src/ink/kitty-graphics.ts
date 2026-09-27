@@ -25,8 +25,10 @@ const IMAGE_Z_INDEX = -0x80000000
  * and re-sending the whole raster — the protocol's intended use, and what
  * mature terminal UIs do. Dormant images are evicted least-recently-used past
  * either bound. The byte bound counts decoded RGBA (what the terminal keeps)
- * and stays a small fraction of typical terminal image quotas, so the
- * terminal should not evict behind our back (`q=2` would hide the ENOENT).
+ * and stays a small fraction of default terminal image quotas. A terminal
+ * configured with a smaller quota may still evict a dormant image, so
+ * placements report failures (`q=1`): an ENOENT reply marks the image for
+ * re-upload (see handleResponse).
  */
 const DORMANT_MAX_IMAGES = 128
 const RETAINED_MAX_BYTES = 64 * 1024 * 1024
@@ -252,6 +254,26 @@ export class KittyGraphicsManager {
     return evicted
   }
 
+  /**
+   * Handle a Kitty graphics reply the renderer did not ask for. ENOENT for
+   * one of our images means the terminal evicted its data (its own quota is
+   * smaller than our retention budget): upload it again and re-place every
+   * node showing it on the next frame. Returns whether a repaint is needed.
+   */
+  handleResponse(imageId: number, status: string): boolean {
+    if (!status.startsWith('ENOENT')) return false
+    let image: ImageState | undefined
+    for (const candidate of this.images.values()) {
+      if (candidate.imageId === imageId) image = candidate
+    }
+    if (image === undefined || !image.uploaded) return false
+    image.uploaded = false
+    for (const state of this.placements.values()) {
+      if (state.image === image) state.placed = false
+    }
+    return true
+  }
+
   /** A clear/screen swap invalidated terminal-side data; resend next frame. */
   invalidateAll(): void {
     for (const image of this.images.values()) image.uploaded = false
@@ -383,7 +405,7 @@ export function kittyPlacement(
   return (
     `\u001b[${y + 1};${x + 1}H` +
     kittyCommand(
-      `a=p,i=${imageId},p=${placementId},c=${columns},r=${rows},z=${zIndex},C=1,q=2`,
+      `a=p,i=${imageId},p=${placementId},c=${columns},r=${rows},z=${zIndex},C=1,q=1`,
     )
   )
 }
