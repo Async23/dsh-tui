@@ -511,6 +511,13 @@ const GROUPS = {
     ['verify-message-compat', ['node', 'scripts/verify-message-compat.mjs']],
     ['verify-settings-compat', ['node', '--import', 'tsx/esm', 'scripts/verify-settings-compat.mjs']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
+// 压缩进行中的状态行（配对 verify-compact 的落地侧）：/compact 过去只发一条
+// 4 秒 toast，而实测压缩中位 ~25s、p90 ~70s（本机 800 份会话日志），其余时间
+// 屏幕与 idle 无异。这里钉住：可取消状态行（读取上下文 → 实时生成量）、
+// llm/stream 观测器只认 purpose=compaction 且本会话的调用（其余按同一
+// iterable 原样透传）、cancelCompact 报「已取消」而不是失败、compaction/start
+// |end 驱动自动压缩且宿主事件不降级手动行；外加组件渲染与窄屏降级顺序。
+    ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],
     ["verify-context-warning", ['node', '--import', 'tsx/esm', 'scripts/verify-context-warning.mjs']],
     ["verify-channel-goal-todo", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-goal-todo.mjs']],
 // IDE 选区通道回归（PR #562）：纯函数（env 直连/lock 扫描与 workspace

@@ -307,7 +307,7 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 | 新建 | `/new` | 无二次确认——旧会话已持久化，随时可 `/resume` 找回；顺带清空 resume 标记 |
 | 恢复 | `/resume`（同 `/home` `/agentview` `/bg` 与输入框行首 `⌸`） | 三合一**会话管理界面**：`←/→` 切栏、打字筛选、`Enter` 进入、`Ctrl+N` 新建、`Ctrl+X` 停后台会话、行内 ★/☆ 固定。切换只是**停放**，回合继续跑；被其他终端占用的会话标红进不去（详见 §2.7） |
 | 重命名 | `/rename <标题>` | 立即改名并持久化（写入 session/title 事件，会话管理界面里能读回） |
-| 压缩 | `/compact` | 手动触发 compaction；**回合运行中拒绝**；minimal preset 下不可用；压缩点以 Divider 摘要行呈现 |
+| 压缩 | `/compact` | 手动触发 compaction；**回合运行中拒绝**；minimal preset 下不可用；压缩点以 Divider 摘要行呈现。压缩期间 prompt 上方常驻一行状态（`正在压缩会话… · 读取上下文… · 12s · Esc 取消`），首块摘要输出到达后改为实时生成量（`↓ 1.2k tokens`）；`Esc`（或 `Ctrl+C`）可随时中止，提示为「压缩已取消」；行首指示器沿用 spinner 槽位的字形——开了工作活动行时即你 `/activity` 选的预设（如 `aesthetic` 进度条），否则是经典圆点。回合内的自动压缩不另起一行，只在工作 spinner（开了活动行时即那一行）后缀上加 `压缩中` 徽标 |
 | 导出 | `/export` | 从完整 session log 导出 Markdown（含 thinking 与工具调用分节），文件 `dsh-tui-export-<时间戳>.md` 落在当前会话 cwd |
 | 清屏 | `/clear` | 只清视图，不动会话日志 |
 | 停止 | 会话管理界面 `Ctrl+X` | 停止光标所在的**后台**会话；当前终端正在用的会话停不了（想退出整个 TUI 用 `/exit` 或双击 `Ctrl+C`） |
