@@ -5,7 +5,7 @@ import { formatTokens } from '../terminal-utils/format.js'
 import { t } from '../i18n.js'
 import { formatContextUsage, DEFAULT_STATUS_BAR, normalizeStatusBar, type StatusBarConfig } from '../tuiDisplayPrefs.js'
 import { estimateSessionCostCny, estimateSessionCostSplitCny, isDeepSeekOfficialProvider, isPeakHour } from '../deepseekPricing.js'
-import { ActivityLine, contextPressurePct } from '../components/ActivityLine.js'
+import { ActivityLine, contextPressurePct, type ActivityLineValue } from '../components/ActivityLine.js'
 import { GoalStatusChip } from '../components/GoalTodoPanel.js'
 import { formatJobDuration, type BackgroundJobState } from '../dsh-adapter/jobs.js'
 
@@ -152,10 +152,14 @@ export function StatusLine({
   selectionActive = false,
   helpOpen = false,
   wake,
+  activity: projectedActivity,
 }: {
   channel: Channel
   selectionActive?: boolean
   helpOpen?: boolean
+  /** Activity value published by the working-activity plugin for this session.
+   *  Preferred over the channel's own copy when the composition provides it. */
+  activity?: ActivityLineValue
   /**
    * The session projected onto the status line's few columns, plus the
    * animation tick and the self-retiring key hint.
@@ -439,7 +443,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
       : statusBar.shortcutHint && !helpOpen
         ? t('statusline-hint-shortcuts')
         : ''
-  const activity = channel.workingActivity
+  const activity = projectedActivity
   const showActivity =
     statusBar.activity &&
     !channel.working &&
@@ -448,7 +452,11 @@ const selectionBadge = formatSelectionBadge(channel.selection)
     activity.phase !== 'idle'
   const showTrajectory = statusBar.trajectory && wake !== undefined
 
-  const barWidth = columns - 4
+  // The root Box below paints paddingX={1} inside width={columns}, so the
+  // content area is `columns - 2` cells wide — size the bar from the same
+  // arithmetic or its right edge falls 2 columns short of the status row's
+  // (the v0.8.0 paddingX 2→1 tightening left the old `columns - 4` stale).
+  const barWidth = columns - 2
   const barColors: { freeFill: Color; freeText: Color } | undefined =
     themeName === 'light'
       ? undefined

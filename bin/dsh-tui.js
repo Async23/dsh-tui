@@ -432,11 +432,20 @@ const MSG = {
       `[dsh-tui] \`update\` 需要 profile 的编译产物，但它缺失或版本过旧、不含 CLI 入口。\n` +
       `请改用手工升级：\n  dsh plugin --profile ${PROFILE} add ${PACKAGE}@latest`,
   },
+  migrateUnavailable: {
+    en:
+      `[dsh-tui] \`migrate\` needs the profile's compiled copy, but it is missing or too old to carry the CLI entry.\n` +
+      `Update first:\n  dsh-tui update`,
+    zh:
+      `[dsh-tui] \`migrate\` 需要 profile 的编译产物，但它缺失或版本过旧、不含 CLI 入口。\n` +
+      `请先升级：\n  dsh-tui update`,
+  },
   helpText: {
     en:
       `Usage: dsh-tui|dst [command] [options] [path|url]\n\n` +
       `Commands:\n` +
       `  update                 Update the ${PROFILE} profile to the latest release\n` +
+      `  migrate [agent]        Import conversations from claude-code/codex/omp/zcode/grok-build (--dry-run to preview)\n` +
       `  doctor                 Pre-flight environment checks (dsh/pnpm/profile/key)\n` +
       `  safe                   Safe mode: read-only diagnostics, inventory, repair guidance\n` +
       `  safe --rescue          Create/verify the clean rescue profile (starts it in a terminal)\n` +
@@ -445,12 +454,15 @@ const MSG = {
       `Options:\n` +
       `  --resume [id]          Resume the last (or the given) session\n` +
       `  -c, --continue         Same as --resume\n` +
+      `  -- <prompt...>        Treat the remaining arguments as literal prompt text\n` +
       `  <path|url>             Open with the given workspace target\n\n` +
-      `Any other argument is forwarded to \`dsh --profile ${PROFILE}\`.`,
+      `Leading DSH options (e.g. --dump-config, --patch <path>) are forwarded unchanged.\n` +
+      `Other arguments go to the app in \`dsh --profile ${PROFILE}\`.`,
     zh:
       `用法：dsh-tui|dst [命令] [选项] [路径|URL]\n\n` +
       `命令：\n` +
       `  update                 将 ${PROFILE} profile 升级到最新版本\n` +
+      `  migrate [agent]        迁移 claude-code/codex/omp/zcode/grok-build 的对话（--dry-run 预览）\n` +
       `  doctor                 启动前环境诊断（dsh/pnpm/profile/密钥）\n` +
       `  safe                   安全模式：只读诊断、插件清单与修复指引\n` +
       `  safe --rescue          创建/校验干净的救援 profile（有终端时随即启动它）\n` +
@@ -459,8 +471,10 @@ const MSG = {
       `选项：\n` +
       `  --resume [id]          恢复上次（或指定 id 的）会话\n` +
       `  -c, --continue         同 --resume\n` +
+      `  -- <提示词...>         将剩余参数作为字面提示词\n` +
       `  <路径|URL>             以指定工作区目标启动\n\n` +
-      `其余参数原样转发给 \`dsh --profile ${PROFILE}\`。`,
+      `前置 DSH 选项（如 --dump-config、--patch <路径>）原样转发。\n` +
+      `其余参数交给 \`dsh --profile ${PROFILE}\` 中的应用。`,
   },
 }
 const msg = key => MSG[key][lang]
@@ -1234,6 +1248,26 @@ if (subcommand === 'update') {
   process.exit(await cliUpdate(PROFILE))
 }
 
+// ─── 子命令：migrate ─────────────────────────────────────────────────────────
+// 跨代理会话迁移（claude-code / codex / omp → DSH sessions）。与 update 同
+// 一条委托路径：动态 import **profile 的**编译产物（瘦壳零 lib 依赖不变），
+// 落盘走上游官方 JsonlSessionPersistence（见 src/dsh-adapter/migrate/）。
+// profile 未初始化时先自举；产物缺失或旧版无 cliMigrate 导出给升级指引。
+if (subcommand === 'migrate') {
+  if (!profileReady()) bootstrapProfile()
+  let cliMigrate
+  try {
+    ;({ cliMigrate } = await import(pathToFileURL(join(profilePkgDir, 'lib', 'types', 'dsh-adapter', 'migrate', 'cli.js')).href))
+  } catch {
+    cliMigrate = undefined
+  }
+  if (typeof cliMigrate !== 'function') {
+    console.error(msg('migrateUnavailable'))
+    process.exit(1)
+  }
+  process.exit(await cliMigrate(process.argv.slice(3)))
+}
+
 // ─── 全局副本：瘦壳角色 ───────────────────────────────────────────────────────
 // DSH_TUI_NO_DELEGATE=1 是测试/调试逃生口：强制走完整逻辑（verify-launcher
 // 的沙箱用它直接驱动全量路径；现场排查委托链时同样可用）。
@@ -1302,10 +1336,34 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     }
     return ''
   }
+  // Launcher-owned options from DSH apps/cli/src/args.ts. Only classify the
+  // leading prefix here; DSH still owns validation and execution. Keep this
+  // inline: migrated global launchers must not depend on lib/ or other files.
+  const dshValueFlags = new Set(['--profile', '--from-default-profile', '--patch'])
+  const dshSwitches = new Set(['--dump-config', '--dump-default-config', '--dump-config-schema', '-V', '--version'])
+  const hostArgs = []
   const args = []
   const argv = process.argv.slice(2)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
+    if (a === '--') {
+      args.push(...argv.slice(i))
+      break
+    }
+    if (args.length === 0) {
+      const flag = a.split('=', 1)[0]
+      if (dshValueFlags.has(flag)) {
+        hostArgs.push(a)
+        // Required host values are raw tokens, even when flag-shaped. Never
+        // intercept them as a resume flag or an existing workspace path.
+        if (a === flag && argv[i + 1] !== undefined) hostArgs.push(argv[++i])
+        continue
+      }
+      if (dshSwitches.has(a)) {
+        hostArgs.push(a)
+        continue
+      }
+    }
     if (a === '--resume' || a === '-c' || a === '--continue' || a.startsWith('--resume=')) {
       let sessionId = ''
       if (a.startsWith('--resume=')) {
@@ -1331,6 +1389,8 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     process.env.DSH_TUI_LAUNCHER_VERSION = ownVersion
   }
 
-  const firstArgs = args
+  // DSH consumes its own --; only the app tail belongs behind it. Preserve
+  // the app-level separator too, and replay this same argv on a safe retry.
+  const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
   settleFirstResult(await startDshSession(firstArgs), firstArgs)
 }

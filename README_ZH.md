@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="docs/assets/logo.svg" alt="dsh-TUI - DeepSeek Harness terminal interface" width="560">
+  <img src="docs/assets/readme/logo.svg" alt="dsh-TUI 像素鲸鱼标题动画" width="560">
 </p>
 <p align="center">
   <a href="README.md">English</a> | <strong>简体中文</strong>
@@ -27,6 +27,7 @@
 - **终端原生界面** — 流式 Markdown、工具卡、`/` 与 `@` 补全、`#L12-14` 行区间、历史搜索、中英界面。
 - **图片** — Kitty/Sixel 缩略图，居中大图可缩放平移，粘贴前按限额适配，无图形时文字回退。
 - **Mermaid 图表** — ```` ```mermaid ```` 代码块画成 Unicode 字符图。
+- **LaTeX 公式** — `$…$` 与 `$$…$$` 公式转成 Unicode 文本，块级公式里的分数与上下限竖排。
 - **时间轴** — 全部回合可点；右栏时间线 / 滚动条 / 隐藏。
 - **实时状态** — 工作动画、上下文条、TPS、缓存命中率、推理强度、token、Git 与会话信息。
 - **唯一的会话管理界面** — `/resume` `/home` `/agentview` `/bg` `⌸`。
@@ -41,20 +42,10 @@
 ## 界面预览
 
 <div align="center">
-  <table>
-    <tr>
-      <td align="center" valign="middle" width="50%">
-        <img src="screenshots/splash.png" alt="首屏：像素鲸鱼顶栏" width="480">
-        <br>
-        <strong>首屏：像素鲸鱼顶栏</strong>
-      </td>
-      <td align="center" valign="middle" width="50%">
-        <img src="screenshots/ide-selection-badge.png" alt="IDE 选区徽标：编辑器选中代码后 prompt 下方实时显示行数" width="480">
-        <br>
-        <strong>IDE 选区实时徽标</strong>
-      </td>
-    </tr>
-  </table>
+  <picture>
+    <source media="(max-width: 640px)" srcset="docs/assets/readme/preview-zh-mobile.svg">
+    <img src="docs/assets/readme/preview-zh.svg" alt="dsh-TUI 会话录制：欢迎界面、补全、帮助与输入，以及像素鲸鱼动画。" width="78%">
+  </picture>
 </div>
 
 ## 官方收录
@@ -119,7 +110,34 @@ TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 
 | `dsh-tui safe` | 只读诊断、插件清单与修复指引；`safe --rescue` 创建干净的救援 profile |
 | `dsh-tui version` · `dsh-tui help` | 启动器与 profile 版本、用法；没装 dsh 时这两条也能用 |
 
-其余参数转发给 `dsh --profile dsh-tui`。安全模式：[安装与快速开始](docs/getting-started.md)。
+前置 DSH 选项（如 `--dump-config`、`--patch <路径>`）原样转发，
+其余参数交给 `dsh --profile dsh-tui` 中的应用。使用
+`dsh-tui -- --resume=sid-1 ./notes` 可将 `--resume=sid-1 ./notes` 作为字面提示词，
+不选择恢复会话或工作区。直接调用 DSH 时，使用
+`dsh --profile dsh-tui -- -- --resume=sid-1 ./notes`：第一个 `--` 属于 DSH，
+第二个属于应用。宿主选项可以放在字面提示词之前：
+`dsh-tui --patch ./overlay.yml -- --resume=sid-1` 会应用补丁，
+并将 `--resume=sid-1` 作为提示词发送，而不恢复该会话。
+安全模式：[安装与快速开始](docs/getting-started.md)。
+
+### 迁移其他编程代理的对话（`dsh-tui migrate`）
+
+把 Claude Code、Codex、OMP、zcode、Grok Build 的本地对话历史导入 DSH 会话库，之后用 `/resume` 按原工作目录浏览与恢复：
+
+```sh
+dsh-tui migrate                # 列出各代理可迁移的对话数量（不写入）
+dsh-tui migrate claude-code    # 导入 Claude Code 的全部对话（codex / omp / zcode / grok-build 同理）
+dsh-tui migrate codex --dry-run  # 只预览将落盘的内容，不写入
+```
+
+- **只读源**：迁移只读取源代理的本地存储，绝不修改；产物经官方 `JsonlSessionPersistence` 后端写入 `$DSH_HOME/sessions`——导入的会话是一等公民（可打开、可续聊）
+- **幂等**：同一源对话命中同一确定性 UUID——重复导入跳过已存在项，不堆叠重复
+- **保留结构**：用户/助手消息与思考过程（reasoning）按轮次还原；工具调用流量不迁移（源格式不可忠实回放——迁移契约是「重读对话」而非「续跑任务」）
+TUI 内：`/migrate`（或 `/migrate <agent> [--dry-run]`）以子进程运行同一导入，经通知流汇报，不卡界面。
+CLI 形态：任意终端运行 `dsh-tui migrate ...`，与 TUI 内执行同一套导入。
+完整指南：[会话迁移](docs/migrate.md)。
+
+- pi / opencode 等其他代理经 adapter 注册表逐步扩展；grok-build 支持读 `GROK_HOME` 环境变量
 
 **VS Code**：用集成终端，或用 `dsh-tui-vscode` 扩展。见 [VS Code 使用指南](docs/vscode.md)。**Herdr**：在 [Herdr](https://herdr.dev) 窗格运行 `dsh-tui`，经其本地集成 API 报告 `idle` / `working` / `blocked`。
 
@@ -131,11 +149,15 @@ TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 
 
 鼠标（全屏）：拖选即复制、双击/三击选词选行、点工具卡、时间轴刻度与 `[Image #N]` 预览。
 
+**粘贴**：终端原生与 bracketed paste 保留普通文本与换行，粘贴内容到达时不会被误当 `Enter` 提交。Windows 终端以 win32-input-mode 键记录投递粘贴时，记录残留会在入口被整体剥离（多行粘贴不再留下零散 `_`），粘贴的 CRLF 折叠为单个换行；普通文本中的真实下划线与 bracketed paste 内容不受影响。
+
 完整参考：[交互与命令](docs/interaction.md)。
 
 ## 内置命令
 
 `/resume` · `/home` · `/agentview` · `/bg` · `⌸` 打开同一个会话管理界面：工作区栏、实时状态、筛选、★ 固定。另有 `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/status` `/cost` `/jobs` `/skills` `/mcp` `/login` `/update`。
+
+会话管理界面会立即显示上次成功读取的列表，同时核对持久化存储的变化。需要深度扫描日志的标题会先显示回退名称，恢复完成后在原行更新。
 
 **后台会话**：`/bg` 或空输入按 `←`；按 `Esc` 回到它。跑在本进程内，TUI 退出即停止，日志保留。
 
@@ -159,7 +181,7 @@ TUI 只负责交互与呈现：会话日志是唯一事实源，模型、工具�
 ## 已知限制
 
 - 注入的插件上下文没有独立展示，计入上下文分段。
-- `/model` 靠 fork 切换会话；旧会话留在 `/resume`。
+- `/model` 靠 fork 切换会话；旧会话留在 `/resume`（还没人说过话的会话不记分支，换完模型第一个 prompt 仍能自动生成标题）。
 - `Ctrl+V` 需要平台剪贴板工具；不支持的位图格式直接拒绝。
 - 后台会话活在本进程内，TUI 退出即停止。
 - `/thinking` 不持久化；`/compact` 在 `minimal` 预设下不可用；`/update` 需 `dsh --profile` 启动，回合运行中会被拒绝。
