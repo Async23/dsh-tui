@@ -234,6 +234,7 @@ interface StubChannel {
    *  held-back answer really landed" signal, instead of a fixed sleep. */
   landed: number
   readonly config: StubChannelConfig
+  enrich?: (row: never) => void
 }
 
 /** Build one stub channel over the shared fixtures. */
@@ -251,7 +252,8 @@ function makeChannel(config: StubChannelConfig): StubChannel {
         return config.registry
       },
     }),
-    listSessions: async () => {
+    listSessions: async (onEnriched?: (row: never) => void) => {
+      stub.enrich = onEnriched
       // Read per call, not per channel: a case swaps the plan between mounts.
       const plan = stub.plan
       if (plan.reject === true) {
@@ -1053,6 +1055,16 @@ console.log('a refused open shows its REASON on this screen (#939)')
   await sleep(200) // 固定窗:探针 取消的打开不得在此后画出提示
   check('a cancelled open stays silent', !cancelled.lines().join('\n').includes('Could not enter'), cancelled.lines().join('\n'))
   cancelled.close()
+}
+
+console.log('background title recovery updates the existing row')
+{
+  const target = makeChannel({ registry, cwd: alphaDir })
+  const app = await mountSupervisor(target)
+  check('the foreground row is visible', await settled(() => app.lines().join('\n').includes('free session')))
+  target.enrich?.(session({ id: 'free-one', title: { text: 'recovered title', source: 'auto' }, updatedAt: now - 1_000 }))
+  check('background metadata repaints the row', await settled(() => app.lines().join('\n').includes('recovered title')))
+  app.close()
 }
 console.log(failures === 0 ? '\nAll session-supervisor checks passed.' : `\n${failures} check(s) failed.`)
 process.exit(failures === 0 ? 0 : 1)
