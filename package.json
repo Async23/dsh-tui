@@ -94,6 +94,7 @@
       "default": "./lib/types/dsh-adapter/invariant.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./settings.json": "./lib/settings.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -115,8 +116,8 @@
     "build:dsh-std": "pnpm --dir vendor/dsh-std install --frozen-lockfile --ignore-scripts && pnpm --dir vendor/dsh-std --filter @dsh-std/core --filter @dsh-std/manifest --filter @dsh-std/connection --filter @dsh-std/presentation --filter @dsh-std/command --filter @dsh-std/storage --filter @dsh-std/messages -r build",
     "build:mathjax": "pnpm --filter @dsh-tui-vendor/mathjax-tex-svg run build",
     "build:dsh-auth": "pnpm --dir dsh-auth install --frozen-lockfile --ignore-scripts && pnpm --dir dsh-auth run build",
-    "compile": "npm run build:dsh-std && npm run build:dsh-auth && npm run build:mathjax && npm run clean && tsc -p tsconfig.json",
-    "compile:src": "tsc -p tsconfig.json",
+    "compile": "npm run build:dsh-std && npm run build:dsh-auth && npm run build:mathjax && npm run clean && tsc -p tsconfig.json && node scripts/gen-settings-json.mjs",
+    "compile:src": "tsc -p tsconfig.json && node scripts/gen-settings-json.mjs",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "prepare": "node scripts/prepare-guard.mjs && npm run compile",
     "build": "npm run compile && npm run verify:build",
@@ -190,6 +191,7 @@
     "verify:table-layout": "node --import tsx/esm scripts/verify-table-layout.tsx",
     "verify:mermaid-diagram": "node --import tsx/esm scripts/verify-mermaid-diagram.tsx",
     "verify:latex-math": "node --import tsx/esm scripts/verify-latex-math.tsx",
+    "verify:settings": "node --import tsx/esm scripts/verify-settings-definitions.ts",
     "verify:math-renderer": "node --import tsx/esm scripts/verify-math-renderer.tsx",
     "verify:math-block-image": "node --import tsx/esm scripts/verify-math-block-image.tsx",
     "verify:btw": "node --import tsx/esm scripts/verify-btw.tsx",

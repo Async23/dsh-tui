@@ -444,12 +444,9 @@
         # 想退回 inline 主屏（终端原生滚动/选择）：/settings 全屏开关或 cordis.yml
         # `fullscreen: false`——显式选择始终优先于默认。
         fullscreen: true
-        # 在支持的终端预览图片；/settings 可关闭，重启生效。
+        # 以下为 /settings 可改的显示设置；每项说明与默认值见应用内 /settings 屏。
         terminalImages: true
-        # Edit/Write diff 呈现：auto（≥110 列双栏对照，窄屏统一式）/
-        # split（强制双栏）/ unified（强制统一式）。/settings 屏可实时改。
         # diffLayout: auto
-        # 回复中的 ```mermaid 代码块画成字符图；false 保留源码。/settings 可实时改。
         # mermaidDiagrams: true
         # 回复中 LaTeX 公式的显示方式：auto（默认，目前为 Unicode）/ image（支持图形的终端里块级公式显示为图片）/ unicode / source（保留源码）。/settings 可实时改。
         # mathRendering: auto
