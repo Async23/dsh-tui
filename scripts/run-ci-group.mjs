@@ -313,11 +313,18 @@ const GROUPS = {
   'session-workspace': [
 // 跨代理会话迁移回归（claude-code/codex/omp/zcode/grok-build → DSH sessions）：
 // 全程跑官方读取链——Session.append 生成骨架（turn 配对/reasoning/
-// provenance）、JsonlSessionPersistence 落盘、open+fromRestore+
-// deriveMessages 逐消息断言（CJK/emoji 无损）、restore 作 seed 续聊写回、
+// provenance/空 system head/工具调用/中断/标题/压缩检查点）、
+// JsonlSessionPersistence 落盘、open+fromRestore+deriveMessages 逐消息
+// 断言（CJK/emoji 无损、wire 合法）、restore 作 seed 续聊写回并替换 head、
 // uuid v5 幂等、五 adapter fixture 解析（含 sourceId 只取裸文件名）、
 // /migrate 命令分类矩阵。
     ["verify-migrate", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate.mjs']],
+// 迁移源解析层回归（纯函数、合成 fixture）：jsonl 坏行计数、注入识别与
+// 包装剥离、标题归一、工具调用配对，以及各源逐条解析规则。
+    ["verify-migrate-parse", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-parse.mjs']],
+// 外部来源浏览层回归（临时目录合成 fixture）：扫描 IO（头尾窗口、异步遍历、
+// 指纹复用）、各源 scan()/load()、来源探测、catalog 快照、单会话导入。
+    ["verify-migrate-browse", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-browse.mjs']],
 // /migrate 交互回归（挂真实 Chat）：fresh 会话直接 `/migrate <agent>` 必须
 // 打开确认层（旧实现查 picker 行缓存，缓存为空时一律报未知源）、未知源仍
 // 被拒、`--dry-run` 要源、多源报 usage、重开选择器清空上一轮勾选。

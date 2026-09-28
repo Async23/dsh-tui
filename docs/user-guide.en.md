@@ -162,7 +162,9 @@ Unrecognized keys are ignored, `Esc` does nothing, clear with `Ctrl+C`/`dd`.
 - Layout: left workspace column, right session column; ≥84 columns side-by-side, narrower hides the workspace column.
 - Switch column `←/→`; move `↑/↓`/`PgUp`/`PgDn`; **typing = live filter** (by title/dir/branch/model).
 - Enter `Enter` (row 0 = new session in that workspace); new `Ctrl+Enter`/`Ctrl+N`; stop background session `Ctrl+X`.
-- `Ctrl+L` reload · `Shift+Tab` open action menu · `Esc` close hint → clear filter → leave.
+- `Ctrl+L` reload · `Enter` on the rail opens the action menu · `Esc` close hint → clear filter → leave.
+- Source tabs: when Claude Code / Codex / Grok Build / zcode have conversations on this machine, tabs appear on the right of the title row; switch with `Tab`/`Shift+Tab` or a click.
+  On a source tab `Enter`/click imports just that conversation and opens it (one imported before opens directly); a missing working directory is reported and nothing is imported; `Ctrl+L` rescans the source.
 - Mouse: click a session row = enter, click `★`/`☆` = toggle pin only, right-click a workspace row = action menu.
 - Empty input + `←` (or `/bg`) = send to background and open this screen, session keeps running.
 

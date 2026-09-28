@@ -43,6 +43,14 @@
  * a cold scan stops showing nothing, and a partial answer from a superseded
  * call must not repaint.
  *
+ * The source tabs (other coding agents' conversations) are pinned too: the
+ * strip renders only when a source has data and degrades by width (subtitle
+ * first, then trailing tabs into `+N`, never the active one); a click or
+ * Tab / Shift+Tab switches source and clears the query; a source tab groups
+ * by directory, filters by title and cwd, and Enter imports then opens the
+ * deterministic id — a second Enter opens the existing copy; a conversation
+ * whose directory is gone reports it and opens nothing.
+ *
  * Renders the real `SessionSupervisor` into an in-memory terminal with a stub
  * channel, then drives it with real stdin bytes (SGR mouse reports).
  *
@@ -52,7 +60,7 @@ process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_THEME = 'dark'
 process.env.DSH_TUI_LANG = 'en'
 
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
@@ -65,12 +73,16 @@ const { Terminal: XTerm } = xterm
 const [
   { render, ThemeProvider, AlternateScreen },
   { SessionSupervisor, sessionMatchesQuery, railWindowTop },
+  { layoutSourceTabs },
+  { groupForeignRows, foreignRowMatchesQuery, FOREIGN_UNKNOWN_GROUP },
   // The REAL persistent listing cache, so one case can put actual bytes under
   // this run's fake home and prove the screen paints them.
   { beginListingSnapshot, readListingSnapshot },
 ] = await Promise.all([
   import('../src/ui.js'),
   import('../src/screens/SessionSupervisor.js'),
+  import('../src/components/sessions/SourceTabs.js'),
+  import('../src/screens/sessionSupervisor/useForeignSessions.js'),
   import('../src/dsh-adapter/sessions/snapshot.js'),
 ])
 
@@ -282,6 +294,24 @@ interface StubChannelConfig {
    * A host older than the cache read is exactly a channel without it.
    */
   readonly cache?: CacheCell
+  /** Foreign sources the channel's facade answers with; absent = no facade. */
+  readonly foreign?: ForeignStubConfig
+}
+
+/** What the stub's foreign-session facade answers with. */
+interface ForeignStubConfig {
+  readonly sources: readonly { agentId: string; label: string }[]
+  readonly rows: Readonly<Record<string, readonly ForeignRowFixture[]>>
+  /** Held unresolved to keep an import in flight (the import-after-close case). */
+  importGate?: Promise<void>
+}
+
+interface ForeignRowFixture {
+  readonly agentId: string
+  readonly key: string
+  readonly title: string
+  readonly cwd: string
+  readonly updatedAt: number
 }
 
 /** How the NEXT listing call behaves; a case swaps it between mounts. */
@@ -369,6 +399,7 @@ function makeChannel(config: StubChannelConfig): StubChannel {
       calls.push(`resumeTo:${id}`)
       return { ok: true }
     },
+    ...(config.foreign === undefined ? {} : foreignFacade(config.foreign, calls)),
     switchWorkspace: async () => true,
     resolveWorkspace: async (reference: string) => ({ cwd: reference, uri: reference, label: reference, kind: 'local', badge: 'LOCAL' }),
     stopBackgroundAgent: async () => true,
@@ -378,10 +409,46 @@ function makeChannel(config: StubChannelConfig): StubChannel {
   return stub
 }
 
+/**
+ * The foreign-session facade over fixtures. Import mimics the real importer's
+ * contract: a missing directory refuses, the first import creates, a repeat
+ * finds the copy; the id is derived from the source key, never random.
+ */
+function foreignFacade(config: ForeignStubConfig, calls: string[]): Record<string, unknown> {
+  const imported = new Set<string>()
+  const rowsOf = (agentId: string): readonly ForeignRowFixture[] => config.rows[agentId] ?? []
+  return {
+    listForeignSources: async () => {
+      calls.push('probe')
+      return config.sources
+    },
+    // Rows stream as the scan finds them, then the whole list resolves.
+    listForeignSessions: async (agentId: string, onRow?: (row: ForeignRowFixture) => void) => {
+      calls.push(`scan:${agentId}`)
+      for (const row of rowsOf(agentId)) onRow?.(row)
+      return rowsOf(agentId)
+    },
+    importForeignSession: async (agentId: string, key: string) => {
+      calls.push(`import:${agentId}:${key}`)
+      if (config.importGate !== undefined) await config.importGate
+      const row = rowsOf(agentId).find(candidate => candidate.key === key)
+      if (row === undefined) return { kind: 'failed', reason: 'missing' }
+      if (row.cwd !== '' && !existsSync(row.cwd)) return { kind: 'cwd-missing', cwd: row.cwd }
+      const sessionId = `foreign-${row.key}`
+      const created = !imported.has(sessionId)
+      imported.add(sessionId)
+      calls.push(`${created ? 'created' : 'existing'}:${sessionId}`)
+      return { kind: 'ready', sessionId, created }
+    },
+  }
+}
+
 /** A mounted screen over one stub channel. */
 interface SupervisorScreen {
   write: (data: string) => void
   lines: () => string[]
+  /** One real SGR click on the first occurrence of `needle`. */
+  click: (needle: string) => Promise<void>
   /**
    * True when `text` was written to the terminal at ANY point, even when a
    * later frame erased it again. `lines()` reads the final composition, so a
@@ -437,6 +504,13 @@ async function mountSupervisor(target: StubChannel): Promise<SupervisorScreen> {
   return {
     write: (data: string) => { input.write(data) },
     lines: () => viewportLines(screen),
+    click: async (needle: string) => {
+      await settled(() => findText(screen, needle) !== null)
+      const found = findText(screen, needle)
+      if (found === null) throw new Error(`text not found: ${needle}`)
+      input.write(`\u001b[<0;${found.col + 1};${found.row + 1}M\u001b[<0;${found.col + 1};${found.row + 1}m`)
+      await sleep(120) // 固定窗:pacing 输入泵需要一轮事件循环把点击交给解析器
+    },
     saw: (text: string) => out.painted.join('').includes(text),
     calls: target.calls,
     close: () => { app.unmount() },
@@ -1511,6 +1585,279 @@ console.log('background title recovery updates the existing row')
   check('background metadata repaints the row', await settled(() => app.lines().join('\n').includes('recovered title')))
   app.close()
 }
+// ── source tabs: other coding agents' conversations ──────────────────────
+
+const foreignRow = (over: Partial<ForeignRowFixture> & { key: string }): ForeignRowFixture => ({
+  agentId: 'claude-code',
+  title: over.key,
+  cwd: alphaDir,
+  updatedAt: now - 10_000,
+  ...over,
+})
+const claudeRows = [
+  foreignRow({ key: 'cc-1', title: 'fix the parser', updatedAt: now - 5_000 }),
+  foreignRow({ key: 'cc-2', title: 'write the docs', updatedAt: now - 9_000 }),
+  // Newest overall, in a directory that no longer exists: the group sorts
+  // first, but the rail still opens on the terminal's own directory.
+  foreignRow({ key: 'cc-3', title: 'ghost chat', cwd: GHOST_DIR, updatedAt: now - 2_000 }),
+  foreignRow({ key: 'cc-4', title: 'no directory', cwd: '', updatedAt: now - 20_000 }),
+]
+const codexRows = [foreignRow({ agentId: 'codex', key: 'cx-1', title: 'codex refactor', updatedAt: now - 7_000 })]
+const foreignConfig: ForeignStubConfig = {
+  sources: [
+    // The strip keeps the channel's order (registry order in the real host).
+    { agentId: 'claude-code', label: 'Claude Code' },
+    { agentId: 'codex', label: 'Codex' },
+  ],
+  rows: { 'claude-code': claudeRows, codex: codexRows },
+}
+
+console.log('source tabs: pure layout and grouping')
+{
+  const tabs = [
+    { id: 'dsh', label: 'DSH' },
+    { id: 'a', label: 'Claude Code' },
+    { id: 'b', label: 'Codex' },
+    { id: 'c', label: 'Grok Build' },
+  ]
+  // Cells are ` label `; the `│` after DSH costs one more.
+  const full = 5 + 1 + 13 + 7 + 12
+  const wide = layoutSourceTabs(tabs, 'dsh', full)
+  check('a wide strip shows every tab', wide.shown.length === 4 && wide.hidden.length === 0)
+  const narrow = layoutSourceTabs(tabs, 'dsh', full - 1)
+  check(
+    'a narrow strip folds trailing tabs into +N',
+    narrow.hidden.map(tab => tab.id).join(',') === 'c' && narrow.shown.map(tab => tab.id).join(',') === 'dsh,a,b',
+    JSON.stringify(narrow),
+  )
+  const keepActive = layoutSourceTabs(tabs, 'c', 5 + 1 + 12 + 4)
+  check(
+    'the active tab never folds',
+    keepActive.shown.some(tab => tab.id === 'c') && keepActive.hidden.length === 2,
+    JSON.stringify(keepActive),
+  )
+  const tiny = layoutSourceTabs(tabs, 'b', 3)
+  check(
+    'with no room at all only the active tab is drawn',
+    tiny.shown.map(tab => tab.id).join(',') === 'b' && tiny.hidden.length === 3,
+    JSON.stringify(tiny),
+  )
+
+  const groups = groupForeignRows(claudeRows as never, [{ ...registry[1]!, from: 'registry' }] as never)
+  check('conversations group by directory', groups.length === 3, JSON.stringify(groups.map(group => group.key)))
+  check('groups sort by their newest conversation', groups[0]!.rows[0]!.key === 'cc-3')
+  check(
+    'a registered directory keeps its DSH title',
+    groups.find(group => group.path === alphaDir)?.title === 'Alpha',
+  )
+  check(
+    'a directory with no record lands in the unknown group',
+    groups.find(group => group.key === FOREIGN_UNKNOWN_GROUP)?.rows[0]?.key === 'cc-4',
+  )
+  check('a vanished directory is marked missing', groups.find(group => group.path === GHOST_DIR)?.present === false)
+  check('foreign search matches the title', foreignRowMatchesQuery(claudeRows[0] as never, 'parser'))
+  check('foreign search matches the directory', foreignRowMatchesQuery(claudeRows[0] as never, 'alpha'))
+  check('foreign search rejects a non-match', !foreignRowMatchesQuery(claudeRows[0] as never, 'zzzz'))
+}
+
+console.log('source tabs: no strip without sources')
+{
+  const app = await openSupervisor({ registry, cwd: alphaDir })
+  await settled(() => app.lines().join('\n').includes('Sessions in Alpha'))
+  check('a channel without the facade draws no tab strip', !app.lines()[0]!.includes('DSH'), app.lines()[0])
+  check('and keeps the subtitle', app.lines()[0]!.includes('switching does not stop them'), app.lines()[0])
+  app.close()
+}
+
+console.log('source tabs: strip, switching and import')
+{
+  const app = await openSupervisor({ registry, cwd: alphaDir, foreign: foreignConfig })
+  const shown = (): string => app.lines().join('\n')
+  const header = (): string => app.lines()[0] ?? ''
+  await settled(() => shown().includes('Sessions in Alpha') && header().includes('Claude Code'))
+  check('the strip renders in the header', /DSH\s*│\s*Claude Code\s+Codex/u.test(header()), header())
+  check('the screen opens on the DSH tab', shown().includes('free session'), shown())
+  check('the DSH hints name the Tab key', shown().includes('Tab switch source'), shown())
+
+  await app.click('Claude Code')
+  check(
+    'clicking a tab switches to that source',
+    await settled(() => shown().includes('Claude Code · sessions in Alpha')),
+    shown(),
+  )
+  check('the source was scanned', app.calls.includes('scan:claude-code'), app.calls.join(', '))
+  check('the DSH rows are gone', !shown().includes('free session'), shown())
+  check(
+    'the rail groups the source by directory',
+    shown().includes('dsh-tui-supervisor-ghost') && shown().includes('Unknown directory'),
+    shown(),
+  )
+  check('the list shows the selected directory only', shown().includes('fix the parser') && !shown().includes('ghost chat'), shown())
+  check('there is no new-session card', !shown().includes('+ New session'), shown())
+
+  const cursorOn = (title: string): boolean => app.lines().some(line => line.includes(title) && line.includes('❯'))
+  app.write('\u001b[C')
+  check('→ lands the cursor on the first row (no card at 0)', await settled(() => cursorOn('fix the parser')), shown())
+  for (const character of 'docs') {
+    app.write(character)
+    await sleep(60) // 固定窗:pacing 逐字投喂：整串一次写入时首字符会被当作导航键吞掉
+  }
+  check(
+    'typing filters by title',
+    await settled(() => shown().includes('write the docs') && !shown().includes('fix the parser')),
+    shown(),
+  )
+  check('the filtered cursor stands on a real row', await settled(() => cursorOn('write the docs')), shown())
+  await sleep(120) // 固定窗:pacing Enter 处理步间，无可观测锚点
+  app.write('\r')
+  check(
+    'Enter imports, then opens the deterministic id',
+    await settled(() => app.calls.includes('resumeTo:foreign-cc-2'), { timeoutMs: 4_000 }),
+    app.calls.join(', '),
+  )
+  check(
+    'the import ran before the open',
+    app.calls.indexOf('created:foreign-cc-2') >= 0
+      && app.calls.indexOf('created:foreign-cc-2') < app.calls.indexOf('resumeTo:foreign-cc-2'),
+    app.calls.join(', '),
+  )
+  await sleep(120) // 固定窗:pacing 第二次 Enter 前等导入的防重入标记释放
+  app.write('\r')
+  check(
+    'a second Enter opens the existing copy without creating another',
+    await settled(() => app.calls.filter(call => call === 'resumeTo:foreign-cc-2').length === 2, { timeoutMs: 4_000 })
+      && app.calls.includes('existing:foreign-cc-2')
+      && app.calls.filter(call => call === 'created:foreign-cc-2').length === 1,
+    app.calls.join(', '),
+  )
+
+  app.write('\t')
+  check(
+    'Tab moves to the next source',
+    await settled(() => shown().includes('Codex · sessions in Alpha')),
+    shown(),
+  )
+  check('switching source clears the query', shown().includes('codex refactor'), shown())
+  app.write('\u001b[Z')
+  check(
+    'Shift+Tab moves back',
+    await settled(() => shown().includes('Claude Code · sessions in Alpha') && shown().includes('fix the parser')),
+    shown(),
+  )
+  check('the query stays cleared on the way back', shown().includes('fix the parser') && shown().includes('write the docs'), shown())
+  check('a revisited source is listed afresh (nothing kept across tabs)', app.calls.filter(call => call === 'scan:claude-code').length === 2, app.calls.join(', '))
+  check('opening the screen probed the sources once', app.calls.filter(call => call === 'probe').length === 1, app.calls.join(', '))
+
+  await app.click('dsh-tui-supervisor-ghost')
+  check('clicking a rail group selects it', await settled(() => shown().includes('ghost chat')), shown())
+  const opened = app.calls.filter(call => call.startsWith('resumeTo')).length
+  await app.click('ghost chat')
+  check(
+    'a conversation whose directory is gone reports it',
+    await settled(() => shown().includes('working directory no longer exists'), { timeoutMs: 4_000 }),
+    shown(),
+  )
+  check(
+    'and opens nothing',
+    app.calls.filter(call => call.startsWith('resumeTo')).length === opened,
+    app.calls.join(', '),
+  )
+
+  app.write('\u001b[Z')
+  await settled(() => shown().includes('Sessions in Alpha'))
+  check('Shift+Tab from the first source returns to DSH', shown().includes('free session'), shown())
+  app.close()
+}
+
+console.log('source tabs: a slow import respects where the user went meanwhile')
+{
+  // An import of a large conversation takes seconds. Closing the screen while
+  // it runs is the user saying "not now": the import may finish, but it must
+  // not pull the terminal into that session afterwards.
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const app = await openSupervisor({ registry, cwd: alphaDir, foreign: { ...foreignConfig, importGate: gate } })
+  const shown = (): string => app.lines().join('\n')
+  await settled(() => (app.lines()[0] ?? '').includes('Claude Code'))
+  await app.click('Claude Code')
+  await settled(() => shown().includes('fix the parser'))
+  await app.click('fix the parser')
+  check(
+    'the import started and says so',
+    await settled(() => app.calls.includes('import:claude-code:cc-1') && shown().includes('Importing fix the parser')),
+    shown(),
+  )
+  app.close()
+  release()
+  await settled(() => app.calls.includes('created:foreign-cc-1'), { timeoutMs: 4_000 })
+  await sleep(150) // 固定窗:pacing 断言的是不该发生的打开，没有正向锚点可轮询
+  check(
+    'closing the screen before the import landed opens nothing',
+    !app.calls.some(call => call.startsWith('resumeTo')),
+    app.calls.join(', '),
+  )
+}
+{
+  // A notice belongs to the tab that asked: a failure landing after the user
+  // moved to another source must not show up under it.
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const app = await openSupervisor({ registry, cwd: alphaDir, foreign: { ...foreignConfig, importGate: gate } })
+  const shown = (): string => app.lines().join('\n')
+  await settled(() => (app.lines()[0] ?? '').includes('Claude Code'))
+  await app.click('Claude Code')
+  await app.click('dsh-tui-supervisor-ghost')
+  await settled(() => shown().includes('ghost chat'))
+  await app.click('ghost chat')
+  await settled(() => app.calls.includes('import:claude-code:cc-3'))
+  app.write('\t')
+  await settled(() => shown().includes('Codex · sessions in Alpha'))
+  release()
+  await sleep(200) // 固定窗:pacing 断言的是不该出现的提示，没有正向锚点可轮询
+  check(
+    'an import failure that lands on another tab stays off it',
+    shown().includes('codex refactor') && !shown().includes('working directory no longer exists'),
+    shown(),
+  )
+  app.close()
+}
+
+console.log('source tabs: width degradation in the header')
+{
+  // Enough sources that the strip cannot fit next to the subtitle, and then
+  // not even on its own: the subtitle goes, then the tail folds into `+N`.
+  const many = Array.from({ length: 8 }, (_, index) => ({
+    agentId: `src-${index}`,
+    label: `Source Number ${index}`,
+  }))
+  const app = await openSupervisor({
+    registry,
+    cwd: alphaDir,
+    foreign: {
+      sources: many,
+      rows: Object.fromEntries(many.map(source => [source.agentId, [foreignRow({ agentId: source.agentId, key: `${source.agentId}-row`, title: `row of ${source.label}` })]])),
+    },
+  })
+  const header = (): string => app.lines()[0] ?? ''
+  await settled(() => header().includes('Source Number 0'))
+  check('a crowded header drops the subtitle', !header().includes('switching does not stop them'), header())
+  const fold = /\+(\d+)/u.exec(header())
+  check('trailing tabs fold into +N', fold !== null && Number(fold[1]) > 0, header())
+  check('the last source is folded away', !header().includes('Source Number 7'), header())
+  await app.click(`+${fold?.[1] ?? ''}`)
+  check(
+    'clicking +N lists the folded tabs',
+    await settled(() => app.lines().join('\n').includes('Source Number 7')),
+    app.lines().join('\n'),
+  )
+  await app.click('Source Number 7')
+  check(
+    'picking a folded tab activates it, and it stays drawn',
+    await settled(() => app.lines().join('\n').includes('row of Source Number 7') && header().includes('Source Number 7')),
+    app.lines().join('\n'),
+  )
+  app.close()
+}
 
 // ── the cache read re-scopes the in-memory slot on every mount ─────────────
 //
@@ -1582,6 +1929,7 @@ console.log('the cache read re-scopes the slot on every mount')
   )
   app.close()
 }
+
 {
   // The contrast, and the reason the stub above omits the method rather than
   // answering `undefined`: a channel with NO cache read keeps its slot, so a
