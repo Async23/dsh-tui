@@ -273,6 +273,37 @@ assert.match(
   'a dormant image comes back with one placement command',
 )
 
+// Partially visible images: the placement covers only the visible cells and
+// shows the matching source rectangle of the already uploaded raster.
+const cropManager = new KittyGraphicsManager({ firstImageId: 701 })
+const cropNode = createNode('ink-image')
+const cropPlacement = { ...placement, node: cropNode, presentation: 'transcript' as const }
+const cropFull = cropManager.reconcile([cropPlacement])
+const cropSize = /a=t,t=d,f=32,s=(\d+),v=(\d+)/u.exec(cropFull)
+assert.ok(cropSize, 'the full raster uploads once')
+const [cropWidth, cropHeight] = [Number(cropSize![1]), Number(cropSize![2])]
+const topClipped = cropManager.reconcile([{ ...cropPlacement, clip: { x: 2, y: 4, columns: 6, rows: 2 } }])
+assert.doesNotMatch(topClipped, /\x1b_Ga=[tT],/u, 'cropping never re-uploads')
+assert.match(
+  topClipped,
+  new RegExp(`\\x1b\\[5;3H\\x1b_Ga=p,i=701,p=\\d+,c=6,r=2,x=0,y=${Math.floor(cropHeight / 3)},w=${cropWidth},h=${cropHeight - Math.floor(cropHeight / 3)},`, 'u'),
+  'a top-clipped image is placed at its first visible row with the lower source rows',
+)
+const bottomClipped = cropManager.reconcile([{ ...cropPlacement, clip: { x: 2, y: 3, columns: 6, rows: 1 } }])
+assert.match(
+  bottomClipped,
+  new RegExp(`\\x1b\\[4;3H\\x1b_Ga=p,i=701,p=\\d+,c=6,r=1,x=0,y=0,w=${cropWidth},h=${Math.ceil(cropHeight / 3)},`, 'u'),
+  'a bottom-clipped image shows its top source rows',
+)
+assert.equal(
+  cropManager.reconcile([{ ...cropPlacement, clip: { x: 2, y: 3, columns: 6, rows: 1 } }]),
+  '',
+  'an unchanged crop emits nothing',
+)
+const unclipped = cropManager.reconcile([cropPlacement])
+assert.match(unclipped, /a=p,i=701,p=\d+,c=6,r=3,z=/u, 'scrolling fully back into view drops the source rectangle')
+assert.doesNotMatch(unclipped, /\x1b_Ga=[tT],/u)
+
 // Retention budget: dormant images beyond the count bound are evicted
 // least-recently-used, releasing their terminal-side data exactly once.
 const retentionManager = new KittyGraphicsManager({ firstImageId: 501 })
