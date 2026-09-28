@@ -48,17 +48,20 @@ Discussions。人不能用「私下批准」、关联 issue 或粘贴维护者�
 ### 合并队列（Merge Queue）
 
 `main` 上的合并由 [Mergify](https://mergify.com) 的合并队列执行，配置在
-[`.mergify.yml`](../.mergify.yml)。两条车道互斥，由 `merge-queue` 标签分流：
+[`.mergify.yml`](../.mergify.yml)：PR 拿到 1 个 approving review 后自动入队，队列把它
+更新到最新 `main`、在临时 PR 上重跑 CI，绿了自动合并。合并条件由 base 分支上的
+ruleset 注入（批准、`ci-gate`、评论已解决、批准最后一次推送），与手动合并同一把尺。
+队列不放水，也没有任何绕过批准的通道；急修仍然只有 admin 能做的
+`gh pr merge --admin`。
 
-- **approved**：PR 拿到 1 个 approving review 后自动入队。队列把它更新到最新
-  `main`、在临时 PR 上重跑 CI，绿了自动合并。合并条件由 base 分支上的 ruleset
-  注入（批准、`ci-gate`、评论已解决、批准最后一次推送），与手动合并同一把尺。
-- **manual**：维护者给 PR 打 `merge-queue` 标签即入队，不校验 GitHub 的批准
-  要求，等价于 `gh pr merge --admin`。合并后标签自动摘掉。
-
-两条车道都要求 base 指向 `main`：stacked PR 在 retarget 到 `main` 之前不会入队。
-`on hold` 标签把 PR 挡在队列外。队列创建的临时 PR（`mergify/merge-queue/*`）是
+队列只收 base 指向 `main` 的 PR：stacked PR 在 retarget 到 `main` 之前不会入队。
+已经批准但想先别合，打 `on hold`。队列创建的临时 PR（`mergify/merge-queue/*`）是
 draft、只跑一次 CI 就关，`pr-gate` 与 `issue-link` 都按机器人放行。
+
+配套的 ruleset 决定：`main` 的「要求分支必须最新」已关闭。它和队列冲突——队列测的是
+临时 PR，GitHub 会认为原 PR「不是最新」而拒绝合并，而「在最新 `main` 上测出合并后的
+状态」正是队列要替你做的事。批准、`ci-gate`、评论已解决这几条仍由 GitHub 强制执行，
+为此 Mergify **不在**任何豁免名单里。
 
 ## 范围（Scope）
 

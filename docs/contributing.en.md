@@ -67,23 +67,27 @@ The feature proposal flow applies only to pull requests opened on or after
 ### Merge queue
 
 Merges into `main` go through [Mergify](https://mergify.com)'s merge queue,
-configured in [`.mergify.yml`](../.mergify.yml). Two mutually exclusive lanes,
-split by the `merge-queue` label:
+configured in [`.mergify.yml`](../.mergify.yml): a pull request enters the queue
+once it has one approving review, and the queue updates it onto the latest
+`main`, re-runs CI on a temporary pull request, and merges it when green. The
+merge conditions are injected from the ruleset on the base branch (approval,
+`ci-gate`, resolved threads, approval of the last push), the same bar as a
+manual merge. The queue gives nothing away and offers no path around the
+approval requirement; an urgent merge is still `gh pr merge --admin`, which
+only an admin can run.
 
-- **approved**: the pull request enters the queue once it has one approving
-  review. The queue updates it onto the latest `main`, re-runs CI on a temporary
-  pull request, and merges it when green. The merge conditions are injected from
-  the ruleset on the base branch (approval, `ci-gate`, resolved threads,
-  approval of the last push), the same bar as a manual merge.
-- **manual**: a maintainer adding the `merge-queue` label queues the pull request
-  without GitHub's approval requirement, equivalent to `gh pr merge --admin`.
-  The label is removed once merged.
+The queue only takes pull requests whose base is `main`: a stacked pull request
+is not queued until it is retargeted. An approved pull request you want to hold
+back takes the `on hold` label. The temporary pull requests the queue creates
+(`mergify/merge-queue/*`) are drafts that run CI once and close; `pr-gate` and
+`issue-link` both let them through as bots.
 
-Both lanes require the base to be `main`: a stacked pull request is not queued
-until it is retargeted. The `on hold` label keeps a pull request out of the
-queue. The temporary pull requests the queue creates (`mergify/merge-queue/*`)
-are drafts that run CI once and close; `pr-gate` and `issue-link` both let them
-through as bots.
+The matching ruleset decision: *Require branches to be up to date before
+merging* is off on `main`. It conflicts with the queue — the queue tests a
+temporary pull request, so GitHub sees the original one as out of date and
+refuses the merge — while testing the merged state on the latest `main` is
+exactly what the queue does for you. Approval, `ci-gate` and resolved threads
+are still enforced by GitHub, and Mergify is **not** on any bypass list.
 
 ## Scope
 
