@@ -209,9 +209,8 @@ function createChannelWithOwner(
       return agents?.get(id)
     },
   })
-  const subagentStore = subagentProjection.store
+  owner.own(() => subagentProjection.dispose())
   const subagentControl = subagentProjection.control
-  const pendingTaskDescriptions = subagentProjection.pendingTaskDescriptions
   // Job projection owns registry callbacks and transcript rows. The optional
   // service attachment has no authority after its injected lifetime ends.
   const jobProjection = createJobProjection(() => state, {
@@ -685,7 +684,7 @@ function createChannelWithOwner(
   const bash = ctx.get('shell') as ForegroundShell | undefined
 
   const projector = createChannelProjection(state, {
-    agent: () => binding.agent, rowIds, resetContextWarning, pendingTaskDescriptions, jobs: jobStore, inputConvergence,
+    agent: () => binding.agent, rowIds, resetContextWarning, jobs: jobStore, inputConvergence,
     checkContextWarning, notify: (...args) => notify(...args),
     tools: ctx.get('tools') as ToolsRegistryLike | undefined, renderer: rendererRuntime,
     attachments: () => ctx.get('attachments'),
@@ -825,6 +824,8 @@ function createChannelWithOwner(
     rowIds,
     resetProjector: () => projector.reset(),
     resetSubagents: subagentProjection.reset,
+    restoreSubagents: subagentProjection.restore,
+    parkSubagents: subagentProjection.park,
     resetJobs: resetJobProjection,
     replay: replaySessionSeed,
     settleReplay: projector.settleStreaming,
@@ -853,6 +854,7 @@ function createChannelWithOwner(
     // a target already running in this process is re-attached rather than
     // resumed twice from its log (which would mount one log in two places).
     adoptLive: target => adoptLiveAgent(target),
+    parkSubagents: subagentProjection.park,
     backgroundHandles,
     rowIds,
     resetProjector: () => projector.reset(),
@@ -926,6 +928,7 @@ function createChannelWithOwner(
     rowIds,
     resetProjector: () => projector.reset(),
     resetSubagents: subagentProjection.reset,
+    parkSubagents: subagentProjection.park,
     resetJobs: resetJobProjection,
     refreshEffortLevels: () => modelActions.refreshEffortLevels(),
     bindAgent,
@@ -979,6 +982,7 @@ function createChannelWithOwner(
     sideQuestion: sessionMetadataActions.sideQuestion,
     listFileCandidates: fileActions.listFileCandidates,
     listFiles: fileActions.listFiles,
+    cachedSessions: sessionMetadataActions.cachedSessions,
     listSessions: sessionMetadataActions.listSessions,
     previewSession: sessionMetadataActions.previewSession,
     listForeignSources: foreignBrowser.listSources,

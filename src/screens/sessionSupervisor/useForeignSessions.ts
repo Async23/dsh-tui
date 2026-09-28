@@ -25,6 +25,8 @@ import { existsSync } from 'node:fs'
 import { t } from '../../i18n.js'
 import { normalizeWorkspaceCwd } from '../../sessions/view.js'
 import type { ForeignImportOutcome, ForeignSessionRow, ForeignSource } from '../../adapter/ports/channel-session.js'
+import type { ResumeResult } from '../../adapter/ports/channel-view.js'
+import { resumeFailureText } from '../../sessions/resumeFailure.js'
 import type { ChannelUi as Channel } from '../../adapter/channel/ui-policy.js'
 import { message, samePath, type RailEntry } from './model.js'
 
@@ -81,7 +83,7 @@ export interface ForeignSessionsInput {
   readonly query: string
   setNotice(next: Notice): void
   /** Mount a persisted session (the channel's unified resume path). */
-  onOpenSession(sessionId: string): Promise<boolean>
+  onOpenSession(sessionId: string): Promise<ResumeResult>
 }
 
 /**
@@ -328,10 +330,11 @@ export function useForeignSessions(input: ForeignSessionsInput) {
         }
         if (!mounted.current) return
         report(undefined)
-        // The host owns the refusal's reason (see the DSH open path); this
-        // screen only names which conversation could not be entered.
-        const ok = await onOpenSession(outcome.sessionId)
-        if (!ok) report({ text: t('supervisor-open-failed', { name: row.title }), tone: 'error' })
+        // The host owns the refusal's reason (same contract as the DSH half):
+        // `cancelled` stays silent, a plain failure shows the bare error.
+        const result = await onOpenSession(outcome.sessionId)
+        const reason = !result.ok && result.reason === 'failed' ? result.error : resumeFailureText(result)
+        if (reason !== undefined) report({ text: t('supervisor-open-failed', { name: row.title, reason }), tone: 'error' })
       })
       .catch(error => report({ text: t('supervisor-foreign-import-failed', { err: message(error) }), tone: 'error' }))
       .finally(() => importing.current.delete(key))

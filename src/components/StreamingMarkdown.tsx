@@ -3,6 +3,7 @@ import { marked, type Token } from 'marked'
 import Box from '../ink/components/Box.js'
 import { configureMarked, formatToken, stripPromptXMLTags } from '../terminal-utils/markdown.js'
 import { t } from '../i18n.js'
+import { isMathBlockToken, mayBecomeCodeSpan } from '../terminal-utils/math.js'
 import { isStandaloneToken, Markdown } from './Markdown.js'
 
 /**
@@ -255,6 +256,21 @@ export function StreamingMarkdown({
   while (lastContentIdx >= 0 && tokens[lastContentIdx].type === 'space') {
     lastContentIdx--
   }
+  // A block formula after a paragraph with an open backtick run is
+  // provisional until a blank line: the run's closer may still arrive and
+  // turn both into one code span, so the paragraph stays unsealed.
+  let consumed = 0
+  for (let i = 0; i < lastContentIdx; i++) {
+    const token = tokens[i]!
+    if (
+      token.type === 'paragraph' && isMathBlockToken(tokens[i + 1]) &&
+      mayBecomeCodeSpan(token.raw, stripped.substring(boundary + consumed + token.raw.length))
+    ) {
+      lastContentIdx = i
+      break
+    }
+    consumed += token.raw.length
+  }
   let advance = 0
   for (let i = 0; i < lastContentIdx; i++) {
     advance += tokens[i].raw.length
@@ -294,7 +310,7 @@ export function StreamingMarkdown({
   }
 
   if (blocks.definitions) {
-    return <Markdown dimColor={dimColor} cacheTokens={false}>{stripped}</Markdown>
+    return <Markdown dimColor={dimColor} inlineMathImages={false} cacheTokens={false}>{stripped}</Markdown>
   }
 
   const stablePrefix = prefixRef.current
@@ -328,17 +344,17 @@ export function StreamingMarkdown({
     <Box flexDirection="column">
       {blocks.blocks.map((block, index) => (
         <Box key={index} flexDirection="column" marginTop={block.gap}>
-          <Markdown dimColor={dimColor}>{block.text}</Markdown>
+          <Markdown dimColor={dimColor} inlineMathImages={false}>{block.text}</Markdown>
         </Box>
       ))}
       {prefixTail && (
         <Box key="prefix" flexDirection="column" marginTop={blocks.tailGap}>
-          <Markdown dimColor={dimColor}>{prefixTail}</Markdown>
+          <Markdown dimColor={dimColor} inlineMathImages={false}>{prefixTail}</Markdown>
         </Box>
       )}
       {hasDistinctSuffix && (
         <Box key="suffix" flexDirection="column" marginTop={boundaryGap}>
-          <Markdown dimColor={dimColor} cacheTokens={false}>{unstableSuffix}</Markdown>
+          <Markdown dimColor={dimColor} inlineMathImages={false} cacheTokens={false}>{unstableSuffix}</Markdown>
         </Box>
       )}
     </Box>

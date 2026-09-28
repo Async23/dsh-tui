@@ -24,6 +24,7 @@ import { readSessionOwners, type SessionMountOwner } from '../sessionMounts.js'
 import type { SessionSummary } from '../dsh-adapter/sessions/index.js'
 import type { TuiWorkspaceEntry, TuiWorkspaceTarget } from '../workspaces.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
+import type { ResumeResult } from '../adapter/ports/channel-view.js'
 import { useSessionSupervisor } from './sessionSupervisor/useSessionSupervisor.js'
 import { DSH_TAB, useForeignSessions } from './sessionSupervisor/useForeignSessions.js'
 import { ForeignSessionPanes } from './sessionSupervisor/ForeignSessionPanes.js'
@@ -77,7 +78,7 @@ export function SessionSupervisor({
   /** Leave the screen and show the conversation. */
   onClose(): void
   /** Mount a persisted session (the channel's unified resume path). */
-  onOpenSession(sessionId: string): Promise<boolean>
+  onOpenSession(sessionId: string): Promise<ResumeResult>
   /** Start a fresh session in the workspace at `path`. */
   onNewSession(target: TuiWorkspaceTarget): Promise<boolean>
   /** Stop a background session of this terminal; false when it is not ours. */
@@ -104,6 +105,7 @@ export function SessionSupervisor({
     entries,
     sessions,
     loading,
+    refreshing,
     notice,
     setNotice,
     query,
@@ -140,6 +142,7 @@ export function SessionSupervisor({
     sessionWidth,
     railEntryCapacity,
     sessionListHeight,
+    noticeRows,
     persistPin,
     selectEntry,
     openSession,
@@ -602,7 +605,7 @@ export function SessionSupervisor({
               <Text color="remember" bold>{truncateWidth(` ${t('home-sessions-title', { name: selected?.title ?? t('supervisor-title') })}`, Math.max(4, sessionWidth - 3))}</Text>
               <Text dimColor>
                 {`  ${truncateWidth(
-                  t('supervisor-counts', { working: workingCount, live: liveCount, total: visibleSessions.length }),
+                  t('supervisor-counts', { working: workingCount, live: liveCount, total: visibleSessions.length }) + (refreshing ? ` · ${t('home-sessions-refreshing')}` : ''),
                   Math.max(4, sessionWidth - 3),
                 )}`}
               </Text>
@@ -698,10 +701,10 @@ export function SessionSupervisor({
               )
             })}
           </ink-box>
-          <Box flexShrink={0} height={1} overflow="hidden">
-            <Text color={notice?.tone === 'error' ? 'error' : 'success'}>
-              {notice === undefined ? ' ' : ` ${truncateWidth(notice.text, Math.max(0, sessionWidth - 3))}`}
-            </Text>
+          <Box flexShrink={0} flexDirection="column" height={noticeRows.length} overflow="hidden">
+            {noticeRows.map((line, index) => (
+              <Text key={index} color={notice?.tone === 'error' ? 'error' : 'success'}>{` ${line}`}</Text>
+            ))}
           </Box>
           <Box flexShrink={0}>
             <Text dimColor italic>

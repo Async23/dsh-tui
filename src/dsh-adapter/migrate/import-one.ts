@@ -10,7 +10,9 @@
  *      later and less clearly);
  *   3. the whole conversation is parsed and sessionized in memory;
  *   4. only then create → append → flush → close; a write failure removes
- *      what was written, best effort.
+ *      what was written, best effort — except a create that lost to a
+ *      concurrent writer of the same deterministic id: that log is the
+ *      winner's, and the import simply opens it.
  *
  * @module @deepseek-harness-tui/dsh-tui/migrate/import-one
  */
@@ -46,8 +48,10 @@ export function foreignSessionId(agentId: string, sourceId: string): SessionId {
 }
 
 /**
- * Write one sessionized conversation. Shared by the CLI batch and the
- * single import so both produce byte-identical logs.
+ * Write one sessionized conversation (the CLI batch path; the single import
+ * phases create/append itself so a create race stays out of its cleanup).
+ * Both paths produce byte-identical logs: sessionize is deterministic in
+ * the id and the events.
  */
 export async function writeImportedSession(
   persistence: Pick<ImportPersistence, 'create'>,
@@ -61,7 +65,9 @@ export async function writeImportedSession(
     await handle.append(events)
     await handle.flush()
   } finally {
-    await handle.close()
+    // A close failure must not mask an append/flush error, nor (on the
+    // single-import path) turn a completed write into a cleanup candidate.
+    await handle.close().catch(() => {})
   }
 }
 
@@ -108,12 +114,27 @@ export async function importForeignSession(
     id = foreignSessionId(adapter.id, loaded.sourceId)
     if (await exists(persistence, id)) return { kind: 'ready', sessionId: id, created: false }
   }
+  // create is its own phase: losing the race for the deterministic id to a
+  // concurrent writer (the /migrate batch, another TUI) means the log that is
+  // already there is theirs — complete or becoming complete — and never this
+  // failure's to delete. Any other create failure wrote nothing at all.
+  const { header, events } = sessionize(id, adapter.id, loaded)
+  let handle: ImportWriteHandle
   try {
-    await writeImportedSession(persistence, id, adapter.id, loaded)
+    handle = await persistence.create(header)
   } catch (error) {
+    if (await exists(persistence, id)) return { kind: 'ready', sessionId: id, created: false }
+    return { kind: 'failed', reason: 'write-failed', detail: error instanceof Error ? error.message : String(error) }
+  }
+  try {
+    await handle.append(events)
+    await handle.flush()
+  } catch (error) {
+    await handle.close().catch(() => {})
     ;(deps.discard ?? deleteSessionLog)(id)
     return { kind: 'failed', reason: 'write-failed', detail: error instanceof Error ? error.message : String(error) }
   }
+  await handle.close().catch(() => {})
   return { kind: 'ready', sessionId: id, created: true }
 }
 

@@ -442,6 +442,10 @@ const GROUPS = {
 // 日志、标题来源判定、revision 命中/失效（钉住 revision 改写日志作
 // 判据）、索引自愈与剪枝、**终态等价**（增量索引 == 全新构建）。
     ["verify-session-index", ['node', 'scripts/verify-session-index.mjs']],
+// 真 JSONL 混合版本库：无关追加不重读旧会话摘要，文件改写/替换仍须失效。
+    ["verify-session-artifact-cache", ['node', 'scripts/verify-session-artifact-cache.mjs']],
+// 跨进程首屏快照：不等慢枚举、来源隔离、失败保留、空库清空与迟到守卫。
+    ["verify-session-list-snapshot", ['node', 'scripts/verify-session-list-snapshot.mjs']],
 // 空会话须完整读取后才能判定：截断/损坏、帧数上限、纯图片输入与旧缓存
 // 不得隐藏真实历史或进入清理名单；真实 JSONL 重开验证落盘后的可见性。
     ['verify-session-emptiness', ['node', '--import', 'tsx/esm', 'scripts/verify-session-emptiness.ts']],
@@ -538,6 +542,8 @@ const GROUPS = {
     ['verify-settings-compat', ['node', '--import', 'tsx/esm', 'scripts/verify-settings-compat.mjs']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
     ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],
+// #1030：隔离 locale、持久化 /lang 与环境变量，不能靠 CI 的 zh 默认掩盖脚本依赖。
+    ['verify-regression-language', ['node', 'scripts/verify-regression-language.mjs']],
     ["verify-context-warning", ['node', '--import', 'tsx/esm', 'scripts/verify-context-warning.mjs']],
     ["verify-channel-goal-todo", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-goal-todo.mjs']],
 // IDE 选区通道回归（PR #562）：纯函数（env 直连/lock 扫描与 workspace
@@ -639,6 +645,8 @@ const GROUPS = {
 // 匹配、北京时间高峰/空闲时段边界、缓存命中计价、未知模型与零 token
 // 不估算、官方 provider 判定。注入 fake fetch，不发真实请求。
     ["verify-balance", ['node', '--import', 'tsx/esm', 'scripts/verify-balance.tsx']],
+// 本会话费用估算回归（#1089）：主会话按模型分桶 + 子代理按各自 (provider, model)、峰值/空闲、缓存分项合并计价，非官方/未收录只报 token 并标注未计价。
+    ["verify-session-cost", ['node', '--import', 'tsx/esm', 'scripts/verify-session-cost.tsx']],
 // /model 二级选择器派生回归：provider 分组（首现排序、显示名回退、
 // 计数）与落焦规则（多 provider 聚焦当前组、单 provider 直达模型层、
 // 缺席当前 provider 落首行）。键盘与 overlay 归约由 verify-chat-overlay
@@ -723,7 +731,9 @@ const GROUPS = {
     ["repro-collapse-shrink", ['node', '--import', 'tsx/esm', 'scripts/repro-collapse-shrink.tsx']],
 // /provider 向导回归：catalog/custom 两分支的 profile 形状、凭据回滚
 // （覆盖时恢复旧 key 而非误删）、env shadow 跳过、rc.6 兼容守卫、
-// hideCustomInput 逐题标记。
+// hideCustomInput 逐题标记；模型列表编辑的双通道发现（内置目录 + 无
+// provider 字段的端点实拉）合并、线上新增标记、目录外 id 容量写入、
+// 实拉失败降级与匿名探测请求形状。
     ["verify-provider-wizard", ['node', 'scripts/verify-provider-wizard.mjs']],
 // /login 凭据状态回归（issue #213）：只通过 credentials.describe()
 // 展示 configured/source/writable，managed key 不得误报或泄露值。
@@ -743,6 +753,13 @@ const GROUPS = {
 // 长问卷列表回归：24 行终端中的 36 个两行 provider 选项必须围绕
 // focusIndex 窗口化，初始和深度导航后焦点 label/单选标记始终可见。
     ["verify-askpanel-long-list", ['node', '--import', 'tsx/esm', 'scripts/verify-askpanel-long-list.tsx']],
+// 问卷作答记录的真源投影回归（issue #1009）：ask_user_question 不渲染工具卡，
+// 它的 tool/result 必须自己折叠出作答记录——实时一条、重放（/resume、rewind、
+// 模型切换）同一条、同 callId 不重复、错误结果渲染日志里的错误文本（ASK_CANCELLED/
+// ASK_ABORTED 不得伪造答案）、redact 仍只在本地向导打码、不可解析的载荷退化成
+// 只有标题而不抛异常中断投影。修复前记录只由面板「开→关」那一跳 pushLocal 推送，
+// 重放后必丢。
+    ["verify-question-transcript-record", ['node', '--import', 'tsx/esm', 'scripts/verify-question-transcript-record.tsx']],
 // 长 plan-review 正文回归（issue #413）：24 行终端里 40 段 plan 不得把
 // Approve/反馈顶出屏外；滚轮必须滚 plan body（直接面板 + 挂进 Chat）。
     ["verify-plan-review-scroll", ['node', '--import', 'tsx/esm', 'scripts/verify-plan-review-scroll.tsx']],

@@ -28,9 +28,9 @@
 - **Terminal-native UI** — streaming Markdown, tool cards, `/` and `@` completion, `#L12-14` ranges, history search, zh/en UI.
 - **Images** — Kitty/Sixel thumbnails, centered preview with zoom and pan, paste-time fitting, text fallback.
 - **Mermaid diagrams** — ````mermaid ```` fences drawn as Unicode diagrams.
-- **LaTeX math** — `$…$` and `$$…$$` formulas rendered as Unicode, fractions and limits stacked in display blocks.
+- **LaTeX math** — `$…$` and `$$…$$` formulas as Unicode text, fractions and limits stacked in display blocks; `mathRendering: image` typesets block and one-row inline formulas as terminal images on graphics terminals.
 - **Timeline rail** — every turn clickable; timeline / scrollbar / hidden gutter.
-- **Live state** — activity animation, context bar, TPS, cache hit rate, effort, tokens, Git and session metadata.
+- **Live state** — activity animation, context bar, TPS, cache hit rate, effort, tokens, session cost estimate (main + subagents), Git and session metadata.
 - **One session manager** — `/resume` `/home` `/agentview` `/bg` `⌸`.
 - **Session workflow** — `/new` `/compact` `/export` `/btw`, model hot-switch, fork, rewind, vim, fullscreen draft editor.
 - **IDE selection channel** — a VS Code selection lands in the prompt.
@@ -83,7 +83,7 @@ Prerequisites: [Node.js](https://nodejs.org/en) and
 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness), with
 `DEEPSEEK_API_KEY` configured.
 
-The primary compatibility target is DSH `0.1.7-rc.2`. This adapter supports its
+The primary compatibility target is DSH `0.2.0-rc.1`. This adapter supports its
 Shell API, V4 session messages, declarative presets, and profile-backed settings;
 older supported hosts retain their compatibility paths. See [configuration](docs/configuration.en.md).
 
@@ -205,6 +205,7 @@ Runtime path, module boundaries, performance notes and persistence locations: [A
 - `Ctrl+V` needs platform clipboard tools; unsupported bitmap formats are rejected.
 - A background session lives inside this process and stops when the TUI exits.
 - `/thinking` is not persisted; `/compact` is unavailable under the `minimal` preset; `/update` needs a `dsh --profile` launch and is refused while a turn is running.
+- The status-bar `≈¥` and `/cost` are session estimates that include subagent usage (priced per each agent's model × peak/idle × cache components); unofficial or unlisted models show tokens only and are marked unpriced. **The platform bill is authoritative.**
 
 Full list: [Architecture and limitations → Known limitations](docs/architecture.en.md#known-limitations).
 

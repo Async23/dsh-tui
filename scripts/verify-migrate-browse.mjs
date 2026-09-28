@@ -361,6 +361,20 @@ const keyed = entries => entries.filter(e => e.summary !== null).map(e => e.summ
   check('5f. 写入失败时清理半截日志并报告原因',
     failed.kind === 'failed' && failed.reason === 'write-failed' && failed.detail === 'disk full' && discarded.length === 1)
 
+  // create 竞态：exists 检查与 create 之间，别的写入者（/migrate 批量、另一个
+  // TUI）已把同一个确定性 id 落盘——失败路径绝不能删掉对方的完整会话。
+  const racedDiscard = []
+  let raceLost = false
+  const raced = {
+    stat: async id => (raceLost ? { header: { id } } : undefined),
+    list: async () => [],
+    create: async () => { raceLost = true; throw new Error('session already exists') },
+  }
+  const racedResult = await importForeignSession(raced, claudeCodeAdapter, { sessionKey: 'bbbb', ref: other.ref, cwd: '' }, { cwdExists, discard: id => racedDiscard.push(id) })
+  check('5f2. create 输掉并发竞态时打开已存在的会话，而不是删掉它',
+    racedResult.kind === 'ready' && racedResult.created === false && racedDiscard.length === 0,
+    JSON.stringify(racedResult) + ` discarded=[${racedDiscard.join(',')}]`)
+
   // 防重入：同一会话连续两次选中只写一次
   let creates = 0
   const counting = {

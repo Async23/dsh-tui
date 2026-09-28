@@ -30,7 +30,7 @@ dsh-tui
 - `dsh-tui safe`: safe mode — read-only environment view, lists profile plugins, suggests fixes, and can create a clean rescue profile (see §5.5).
 - `dsh --profile dsh-tui`: manual launch, equivalent to `dsh-tui` (`/update` only works this way).
 - Running a model needs `DEEPSEEK_API_KEY`. Run `/doctor` to check the environment.
-- Primary verified dsh engine version: `0.1.7-rc.2`. See `ADAPTER.md` for compatibility lines; versions outside that list show a drift note and the command to align on the logo page.
+- Primary verified dsh engine version: `0.2.0-rc.1`. See `ADAPTER.md` for compatibility lines; versions outside that list show a drift note and the command to align on the logo page.
 - If the logo page shows a ⚠ version-drift warning, align the dsh engine:
   `npm i -g @deepseek-ai/dsh@<版本>`
 
@@ -251,8 +251,8 @@ The command menu = built-in commands (50) + DSH registry commands (`/plan` `/goa
 |---|---|---|
 | `/context` | none | loaded-context detail (instructions/runtime context/skills/tools etc.) |
 | `/status` | none | model+effort, working/idle, session id, dir+git branch, token, cache hit rate, context percentage, session title |
-| `/cost` | none | token usage + cache hit rate (DSH provides no cost metering) |
-| `/balance` | none | DeepSeek official account balance (free read-only API): summary line + hover detail, click refresh, `×` close |
+| `/cost` | none | token usage + cache hit rate + a session estimate (subagent usage included) split into main/subagent; unofficial or unlisted models show tokens only and are marked unpriced (**an estimate — the platform bill is authoritative**) |
+| `/balance` | none | DeepSeek official account balance (free read-only API): summary line + hover detail (same session-estimate split: main/subagent/unpriced), click refresh, `×` close |
 | `/config` | none | config sources: `cordis.patch.yml` path, launch method, model routing |
 | `/doctor` | none | environment check |
 | `/migrate` | `[agent] [--dry-run]` | import conversation history from other coding agents (claude-code/codex/omp/zcode/grok-build); runs in a child process — see [Session migration](migrate.en.md) |
@@ -448,8 +448,10 @@ An empty session shows the whale logo area at the top (scrolls away with the con
 
 **Row 2 — status field row** (each field toggled separately, see `/settings`)
 - left group: model → TPS → thinking → mode → ctx → cache hit rate → tokens (`1.2k→340` input→output) →
-  cost (`≈¥0.05 谷`, **an estimate, the platform bill is authoritative**,
-  official models only)
+  cost (`≈¥0.05 谷`, **a session estimate** that includes subagent usage, priced per
+  each agent's model × peak/idle × cache components; hover splits main ¥ / subagent ¥ / unpriced N tok;
+  unofficial or unlisted models show tokens only and are marked unpriced;
+  **the platform bill is authoritative**)
 - right group: git branch → working directory (basename only in compact mode) → session title → short session ID (`#` + first 8 chars, for `--resume`)
 - `statusBar.compact` merges the two sides into one row.
 - Default on: compact, model, thinking, cwd, contextUsage, cache, cost, goal, contextBar.
@@ -485,6 +487,7 @@ Common items below, full list on the /settings screen:
 | smoothStreaming | smooth streaming output (default on): replies/thinking/tool-card text reveal at ~30fps; replay/history always direct |
 | toolBackground | tool-card background emphasis: none / subtle / strong |
 | mermaidDiagrams | Mermaid diagrams (default on): ```` ```mermaid ```` blocks render as character diagrams, forming while streaming; too-wide or unsupported types keep source with the required columns. Applies immediately |
+| mathRendering | LaTeX math (default `auto`): how `$…$` / `\(…\)` inline and `$$…$$` / `\[…\]` / bare display-environment (`\begin{align}` …) block formulas in replies show. `auto` uses the best available renderer (today Unicode text, with fractions and limits stacked in blocks), `image` typesets formulas with MathJax as terminal images in terminals with graphics support (Kitty, Ghostty, WezTerm, iTerm2…), in the theme's text color (block formulas up to 16 rows; inline formulas as one-row images when a single row can hold them legibly; still-streaming formulas, dimmed thinking, terminals without graphics, formulas too small on one row, and any render failure fall back to Unicode), `unicode` pins Unicode text, `source` keeps the TeX. Unsupported, still-streaming, or too-wide formulas keep their source (a too-wide block first falls back to one line). Prices (`$5`), shell variables (`$HOME`), and `$` in code are left alone. The older `latexMath: false` still means `source`. Applies immediately |
 | scrollGutter | transcript gutter: timeline (turn timeline, default) / scrollbar (proportional) / hidden. Applies immediately |
 | pageMargin | page margin: inset from all four terminal edges. Presets none / slim / normal (default) / roomy, or custom `NxM` (details below). Applies immediately |
 | foldTerminalCommand | fold terminal commands (default off): multi-line commands on terminal cards (Bash/PowerShell) fold to first line + count; `Ctrl+O` or click to expand |
