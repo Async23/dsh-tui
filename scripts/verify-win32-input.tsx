@@ -16,6 +16,9 @@
  *  5. UTF-16 surrogate pairs across records, incl. state-pollution guards
  *  6. repeat-count expansion, keyup/modifier swallowing
  *  7. record fragments across escape flushes, expiry and resynchronization
+ *  8. the capability gate without decoded evidence (Esc stays at 50ms on
+ *     hosts that ignore DECSET 9001), split-position sweeps, and the
+ *     64-byte / 1-second hold bounds
  *
  * Run with: node --import tsx/esm scripts/verify-win32-input.tsx
  * Exits 1 on the first failed assertion (CI gate).
@@ -27,6 +30,7 @@ import {
   type ParsedInput,
 } from '../src/ink/parse-keypress.js'
 import { supportsWin32InputMode } from '../src/ink/terminal.js'
+import { default as App } from '../src/ink/components/App.js'
 import { InputEvent } from '../src/ink/events/input-event.js'
 
 type KeySummary = {
@@ -542,15 +546,15 @@ for (const [label, bridge] of [
 }
 
 // --- 10. record framing across the escape timer (#827) -----------------------
-// App supplies the capability flag before the first record. Drive exactly
-// the parser -> InputEvent path; null represents the escape timer, without
-// relying on wall-clock sleeps or a Windows-only test runner.
-function fragments(chunks: Array<string | null>, enabled = true): {
+// Drive the parser from an explicit starting state. `null` stands for App's
+// escape timer, and `text` is what the draft would receive — collected through
+// InputEvent exactly as prompt-input consumes it, with no wall-clock sleeps.
+function drive(start: KeyParseState, chunks: Array<string | null>): {
   keys: ParsedInput[]
   state: KeyParseState
   text: string
 } {
-  let state: KeyParseState = { ...INITIAL_STATE, win32InputMode: enabled }
+  let state = start
   const keys: ParsedInput[] = []
   for (const chunk of chunks) {
     const [out, next] = parseMultipleKeypresses(state, chunk)
@@ -562,6 +566,16 @@ function fragments(chunks: Array<string | null>, enabled = true): {
     state,
     text: keys.flatMap(key => key.kind === 'key' ? new InputEvent(key).input : []).join(''),
   }
+}
+
+// `enabled` seeds the evidence bit (`win32InputMode`, lit by decoding a
+// record); `capable` seeds the host gate App injects (T02). Leaving `capable`
+// absent keeps the pre-gate meaning — the parser treats a missing gate as
+// open — so every existing call site above/below is untouched.
+function fragments(chunks: Array<string | null>, enabled = true, capable?: boolean) {
+  const seed: KeyParseState = { ...INITIAL_STATE, win32InputMode: enabled }
+  if (capable !== undefined) seed.win32Capable = capable
+  return drive(seed, chunks)
 }
 
 const SHIFT_RECORD = `${CSI}16;42;0;1;16;1_`
@@ -756,6 +770,167 @@ for (const protocol of ['\x1b[<0;32;5M', '\x1b[?1;0c']) {
 }
 checkBoolean('oversized incomplete record has bounded storage',
   fragments([`${CSI}${'1'.repeat(80)}`, null]).state.incomplete === '', true)
+
+// --- 11. capability gate without decoded evidence (AC-4) ---------------------
+// App must hand the parser `win32Capable` — a gate — and never a lit evidence
+// bit. These cases seed the parser exactly the way App does (a fresh instance,
+// so a revert to "the platform capability lights the mode" fails right here on
+// native Windows), and compare against the closed-gate control: an unlit
+// capable host has to be indistinguishable from classic VT input.
+const appStart = (): KeyParseState => new App({} as never).keyParseState
+checkBoolean('AC-4 App injects the gate and never lights the parser by itself',
+  appStart().win32InputMode !== true && appStart().win32Capable === supportsWin32InputMode(), true)
+
+for (const chunks of [
+  ['\x1b', null],               // a lone Escape releases on the flush
+  [CSI, null],                  // a bare CSI introducer must not start a hold
+  [CSI, null, 'a'],             // ...nor eat the next letter as its final byte
+  ['\x1b', null, '[123'],       // '['-led literal text stays literal
+  ['\x1b', null, '[1;2;3'],     // ...as do record-like but non-body shapes
+  ['\x1b', null, '[1,2'],
+] as Array<Array<string | null>>) {
+  const gated = drive(appStart(), chunks)
+  const closed = fragments(chunks, false, false)
+  const label = JSON.stringify(chunks)
+  check(`AC-4 unlit capable host mirrors the classic path: ${label}`,
+    summarize(gated.keys), summarize(closed.keys))
+  checkBoolean(`AC-4 unlit capable host types the same text: ${label}`, gated.text === closed.text, true)
+}
+
+{
+  const bare = drive(appStart(), [CSI, null])
+  checkBoolean('AC-4 a bare CSI introducer arms no hold on an unlit capable host',
+    bare.state.win32InputStartedAt === undefined, true)
+  checkBoolean('AC-4 a lone Escape is still released by the flush',
+    drive(appStart(), ['\x1b', null]).keys.length === 1, true)
+  checkBoolean('AC-4 a flushed introducer cannot eat the letter after it',
+    drive(appStart(), [CSI, null, 'a']).text === '[a', true)
+  // An explicit `false` is authoritative even for an already-lit parser.
+  const closedGate = fragments([`${CSI}16;`, null], true, false)
+  checkBoolean('AC-4 an explicitly closed gate releases a non-body frame even when lit',
+    closedGate.state.win32InputStartedAt === undefined && closedGate.text === '[16;', true)
+  // Callers predating the gate keep the pre-T02 hold (missing == open).
+  const legacy = fragments([CSI, null], true)
+  checkBoolean('AC-4 callers that inject no gate keep the pre-gate hold',
+    legacy.keys.length === 0 && legacy.state.win32InputStartedAt !== undefined, true)
+  // ADR-0003 Consequences keeps this ambiguity on purpose: a body-shaped
+  // literal is indistinguishable from a record prefix inside the ESC window.
+  // Pinned so the documented trade-off cannot drift away unnoticed.
+  const residual = drive(appStart(), ['\x1b', null, '[1;2;3;1'])
+  checkBoolean('AC-4 documented residual: a body-shaped literal inside the ESC window is still captured',
+    residual.keys.length === 1 && residual.text === '' && residual.state.win32InputStartedAt !== undefined, true)
+}
+
+// --- 12. AC-1: a half record never reaches the draft ------------------------
+for (const enabled of [false, true]) {
+  const half = fragments([`${CSI}16;42;0;1;16;1`, null, '_'], enabled, true)
+  check(`AC-1 half record + flush + late '_' dispatches no key (lit=${enabled})`,
+    summarize(half.keys), [])
+  checkBoolean(`AC-1 InputEvent.input stays empty (lit=${enabled})`, half.text === '', true)
+}
+
+// --- 13. AC-2: every split position x 0..2 flushes --------------------------
+// One flush is App's 50ms escape timer, two model the re-armed timer.
+const interleave = (head: string, tail: string, flushes: number): Array<string | null> =>
+  [head, ...Array<string | null>(flushes).fill(null), tail]
+// Smallest split whose head the parser holds across a quiet flush: the first
+// body-shaped prefix, i.e. where D2/ADR-0003 starts guaranteeing recovery.
+const heldFrom = (record: string): number => {
+  for (let split = 2; split <= record.length; split++) {
+    if (fragments([record.slice(0, split), null], false, true).keys.length === 0) return split
+  }
+  return record.length
+}
+for (const record of [`${CSI}88;45;120;1;32;1_`, CJK_RECORD]) {
+  const intact = fragments([record])
+  const boundary = heldFrom(record)
+  checkBoolean(`AC-2 unlit hold boundary lies inside the frame: ${JSON.stringify(record)}`,
+    boundary > 1 && boundary < record.length, true)
+  for (let split = 1; split < record.length; split++) {
+    for (const flushes of [0, 1, 2]) {
+      const actual = fragments(interleave(record.slice(0, split), record.slice(split), flushes))
+      // A split that isolates a raw lone ESC still releases an Escape event
+      // before the tail is re-attached, and that cannot be undone.
+      const keys = split === 1 && flushes > 0 ? actual.keys.slice(1) : actual.keys
+      check(`AC-2 lit split ${split}/${record.length} flush=${flushes}: ${JSON.stringify(record)}`,
+        summarize(keys), summarize(intact.keys))
+    }
+  }
+  for (const split of [1, boundary, boundary + 2, record.length - 2, record.length - 1]) {
+    for (const flushes of [0, 1, 2]) {
+      const actual = fragments(interleave(record.slice(0, split), record.slice(split), flushes), false, true)
+      const keys = split === 1 && flushes > 0 ? actual.keys.slice(1) : actual.keys
+      check(`AC-2 unlit split ${split}/${record.length} flush=${flushes}: ${JSON.stringify(record)}`,
+        summarize(keys), summarize(intact.keys))
+    }
+  }
+  // The tail may fragment further still: '...;' + '1' + '_'.
+  for (const enabled of [false, true]) {
+    for (const count of [0, 1, 2]) {
+      const gap = Array<string | null>(count).fill(null)
+      const actual = fragments([record.slice(0, -2), ...gap, '1', ...gap, '_'], enabled, true)
+      check(`AC-2 tail re-split lit=${enabled} flush=${count}: ${JSON.stringify(record)}`,
+        summarize(actual.keys), summarize(intact.keys))
+    }
+  }
+}
+
+// --- 14. AC-5: a complete but unknown CSI never reaches editable text -------
+for (const sequence of [`${CSI}1;2;3;1A`, `${CSI}1;2;3;1$y`]) {
+  const intact = fragments([sequence], false, true)
+  const protocol = intact.keys[0]
+  checkBoolean(`AC-5 unknown CSI keeps its identity: ${JSON.stringify(sequence)}`,
+    intact.keys.length === 1 && protocol?.kind === 'key' &&
+    protocol.sequence === sequence && protocol.code === sequence.slice(1), true)
+  // Only a record-shaped (numeric) head survives a quiet flush; an
+  // intermediate byte such as `$` is released as classic input, so that tail
+  // has to arrive alone.
+  const head = sequence.replace(/[^\d;]+$/, '')
+  for (const chunks of [
+    ...Array.from({ length: sequence.length - 1 }, (_, i) => [sequence.slice(0, i + 1), sequence.slice(i + 1)]),
+    [head, null, sequence.slice(head.length)],
+    [head, null, null, sequence.slice(head.length)],
+  ] as Array<Array<string | null>>) {
+    const actual = fragments(chunks, false, true)
+    checkBoolean(`AC-5 parameter bytes and final stay out of the draft: ${JSON.stringify(chunks)}`,
+      actual.text === '' && JSON.stringify(actual.keys) === JSON.stringify(intact.keys), true)
+  }
+}
+
+// --- 15. AC-5 bounds: an abandoned hold must never strand later input -------
+{
+  // Past WIN32_INPUT_MAX_LENGTH (64) and still body-shaped, so the frame is
+  // genuinely held until the bound releases it.
+  const overlong = `${CSI}65;30;97;1;${'1'.repeat(60)}`
+  const bounded = fragments([overlong, null, 'ok'], false, true)
+  checkBoolean(`AC-5 a ${overlong.length}-byte held frame is discarded, not stranded`,
+    bounded.state.win32InputStartedAt === undefined && bounded.state.incomplete === '', true)
+  checkBoolean('AC-5 typing after the discard still reaches the draft', bounded.text.endsWith('ok'), true)
+  const prefixOnly = fragments([`${CSI}${'1'.repeat(65)}`, null, 'ok'], false, true)
+  checkBoolean('AC-5 a non-body prefix past the limit leaves nothing held either',
+    prefixOnly.state.win32InputStartedAt === undefined && prefixOnly.state.incomplete === '', true)
+  checkBoolean('AC-5 ...and typing after it is not swallowed', prefixOnly.text.endsWith('ok'), true)
+}
+{
+  // The 1s grace (D3) bounds an unlit capable host's hold the same way.
+  const originalNow = Date.now
+  let now = 60000
+  Date.now = () => now
+  try {
+    let state: KeyParseState = { ...INITIAL_STATE, win32Capable: true, win32InputMode: false }
+    ;[, state] = parseMultipleKeypresses(state, `${CSI}65;30;97;1;`)
+    checkBoolean('AC-5 an unlit capable host does hold a body-shaped frame',
+      state.win32InputStartedAt !== undefined, true)
+    now += 1000
+    const [expired, next] = parseMultipleKeypresses(state, null)
+    check('AC-5 the frame is discarded at the grace deadline', summarize(expired), [])
+    checkBoolean('AC-5 expiry clears the hold sentinel', next.win32InputStartedAt === undefined, true)
+    check('AC-5 ordinary typing after expiry is not swallowed',
+      summarize(parseMultipleKeypresses(next, '_')[0]), summarize(fragments(['_']).keys))
+  } finally {
+    Date.now = originalNow
+  }
+}
 
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed`)
