@@ -12,16 +12,25 @@
  *
  * 本回归钉住：解析出的 ns、构造时传入的 ns、`channel.settingsNamespace` 暴露的
  * ns、getter 实际查询的 ns 是同一个；并覆盖「不串到别的插件 ns」「缺省回落
- * `'dsh-tui'`」与 `recapOnOpen` 的取值语义。
+ * `'dsh-tui'`」与 `recapOnOpen` 的取值语义。最后一段是**生产接线的静态断言**：
+ * 这类缺陷是「读点漂移」，plugin.ts 少传一次或某个读点改回字面量，上面的行为
+ * 断言都不会变红（Chat 的两处没有渲染 harness），所以照
+ * `verify-activity-ownership.ts` 的先例在源码上钉住。
  *
  * Source-level via tsx; no lib/ needed.
  * Run: node --import tsx/esm scripts/verify-settings-namespace.ts
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createChannel } from '../src/dsh-adapter/channel.js'
 import type { ChannelLaunchOptions } from '../src/dsh-adapter/channel/state.js'
 import { resolveSettingsNamespace } from '../src/dsh-adapter/compat/settings.js'
 import { Config } from '../src/dsh-adapter/index.js'
+
+const SRC = fileURLToPath(new URL('../src', import.meta.url))
+const source = (relative: string): string => readFileSync(join(SRC, relative), 'utf8')
 
 let checks = 0
 function check(name: string, test: () => void): void {
@@ -112,6 +121,32 @@ for (const [label, value] of [
 }
 check('没有 settings 服务时保持既有语义（关）', () => {
   assert.equal(makeChannel().autoRecapOnOpen, false)
+})
+
+// ── ⑤ 生产接线（静态）：上面验语义，这里保证生产代码真的把它接上 ──────────
+// 漂移是本缺陷的形态：plugin.ts 少传一次 settingsNs、某个读点改回字面量，
+// ①–④ 都不会变红（Chat 的两处没有渲染 harness）。静态断言零运行时成本，
+// 坏了在构建链就报——同 verify-activity-ownership.ts 对 plugin.ts 的做法。
+check('plugin.ts 把解析出的 tuiSettingsNs 传给 createChannel', () => {
+  const plugin = source('dsh-adapter/plugin.ts')
+  assert.match(
+    plugin,
+    /const rawChannel = createChannel\(ctx, agent, \{[\s\S]{0,1200}?settingsNs: tuiSettingsNs,/,
+    'createChannel 的启动选项必须带上 settingsNs: tuiSettingsNs',
+  )
+})
+check('channel.ts 的 getter 查 state.settingsNamespace，不残留字面量比较', () => {
+  const channel = source('dsh-adapter/channel.ts')
+  assert.match(channel, /find\(entry => entry\.ns === state\.settingsNamespace\)/)
+  assert.doesNotMatch(channel, /entry\.ns === 'dsh-tui'/, '读点不得回退到字面量 ns')
+})
+check("Chat.tsx 的两处读点都用 channel.settingsNamespace，且不再比较 'dsh-tui'", () => {
+  const chat = source('screens/Chat.tsx')
+  assert.doesNotMatch(chat, /entry\.ns === 'dsh-tui'/)
+  assert.doesNotMatch(chat, /\.write\('dsh-tui'/, 'applyLang 的镜像写入不得回退到字面量 ns')
+  assert.match(chat, /\.write\(channel\.settingsNamespace, \[\{ op: 'set', path: \['lang'\]/)
+  const sites = chat.match(/entry\.ns === channel\.settingsNamespace/g) ?? []
+  assert.equal(sites.length, 2, 'applyLang 与 /reload 两处都必须查挂载 ns')
 })
 
 console.log(`\nAll ${checks} settings-namespace checks passed.`)
