@@ -523,6 +523,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // line attaches nothing at all — no feed, no 500ms tick.
   const activityStore = createActivityStore(ctx, config.activity !== false)
   const rawChannel = createChannel(ctx, agent, {
+    // The namespace this boot actually registered the settings section under
+    // (the Config owner's Loader id; custom ids are supported). Chat and the
+    // channel's own settings reads look the section up by it.
+    settingsNs: tuiSettingsNs,
     model: displayRoute.model,
     // The activity projection only pushes on change; read the current value as
     // soon as this session binds so a resumed or reattached session renders its

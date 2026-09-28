@@ -529,6 +529,11 @@ const GROUPS = {
     ['verify-preset-startup', ['node', 'scripts/verify-preset-startup.mjs']],
     ['verify-message-compat', ['node', 'scripts/verify-message-compat.mjs']],
     ['verify-settings-compat', ['node', '--import', 'tsx/esm', 'scripts/verify-settings-compat.mjs']],
+// 设置读点的 ns 归属（issue #1124）：分区注册与写入用 Config owner 的 Loader id
+// （可为自定义 id），读点（channel.autoRecapOnOpen、Chat 的 lang 镜像、/reload 的
+// langOverriddenBySettings）必须用同一个 ns —— 写死 'dsh-tui' 会让非默认挂载
+// 「写得进、读不回」，自动回顾永远关不掉。
+    ["verify-settings-namespace", ['node', '--import', 'tsx/esm', 'scripts/verify-settings-namespace.ts']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
     ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],
 // #1030：隔离 locale、持久化 /lang 与环境变量，不能靠 CI 的 zh 默认掩盖脚本依赖。

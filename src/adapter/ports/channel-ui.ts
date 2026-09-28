@@ -41,6 +41,12 @@ export interface ChannelUi {
    *  (settings service), so a `/settings` change applies on the next
    *  session switch; absent settings service → on. */
   readonly autoRecapOnOpen: boolean
+  /** Settings namespace this mount registered under — the Config owner's
+   *  Loader id (see `resolveSettingsNamespace`), not a fixed plugin name, so
+   *  custom mount ids are supported. Read sites that look the TUI's section up
+   *  through `describe()`/`listNamespaces()` must match on this value; a
+   *  literal `'dsh-tui'` silently misses every non-default mount. */
+  readonly settingsNamespace: string
   /** Resolved model id (from the plugin config). */
   readonly model: string
   /** Provider route of the live agent. */

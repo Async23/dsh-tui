@@ -482,12 +482,15 @@ function createChannelWithOwner(
     emitStream: emitter.emitStream,
     ...createSettingsHosts(ctx, owner.assertActive),
     ...createPreferences(() => state),
+    /** Mount-owned settings namespace: the section registers under it, so this
+     *  is the only ns whose section carries the TUI's user layer. */
+    settingsNamespace: options.settingsNs ?? 'dsh-tui',
     get autoRecapOnOpen(): boolean {
       const settings = ctx.get('settings') as
         | { describe(options?: { redactSecrets?: boolean }): readonly { ns: string; value: unknown }[] }
         | undefined
       if (settings === undefined) return false
-      const ns = settings.describe({ redactSecrets: true }).find(entry => entry.ns === 'dsh-tui')
+      const ns = settings.describe({ redactSecrets: true }).find(entry => entry.ns === state.settingsNamespace)
       return (ns?.value as Record<string, unknown> | undefined)?.recapOnOpen !== false
     },
     ...createInitialChannelView(options, {
