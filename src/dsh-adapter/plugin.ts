@@ -684,7 +684,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         // Same no-default rule: applyDisplay resolves `?? config.mermaidDiagrams ?? true`.
         mermaidDiagrams: Schema.boolean(),
         // Same no-default rule: resolveMathRendering falls back to cordis.yml.
-        mathRendering: Schema.union(['auto', 'unicode', 'source']),
+        mathRendering: Schema.union(['auto', 'image', 'unicode', 'source']),
         // Pre-`mathRendering` user layers; `false` still resolves to `source`.
         latexMath: Schema.boolean(),
         // No default on purpose: unset keeps the boot chain decisive

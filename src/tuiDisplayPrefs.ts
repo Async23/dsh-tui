@@ -203,12 +203,14 @@ export const applyMermaidDiagrams = mermaidDiagramsStore.apply
 
 /**
  * How LaTeX math in replies renders (settings `dsh-tui.mathRendering`):
- * `auto` picks the best available backend (today the Unicode renderer; a
- * typeset-image backend will take over where the terminal supports it),
+ * `auto` picks the best available backend (today the Unicode renderer),
+ * `image` typesets complete block formulas as terminal images where the
+ * terminal supports graphics (Unicode everywhere else; opt-in until it has
+ * been validated across terminals, after which `auto` adopts it),
  * `unicode` pins the Unicode renderer, `source` always shows the TeX.
  */
-export type MathRendering = 'auto' | 'unicode' | 'source'
-const MATH_RENDERING_MODES = new Set<MathRendering>(['auto', 'unicode', 'source'])
+export type MathRendering = 'auto' | 'image' | 'unicode' | 'source'
+const MATH_RENDERING_MODES = new Set<MathRendering>(['auto', 'image', 'unicode', 'source'])
 
 export function normalizeMathRendering(value: unknown): MathRendering {
   return typeof value === 'string' && MATH_RENDERING_MODES.has(value as MathRendering)
