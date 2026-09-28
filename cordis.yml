@@ -65,8 +65,8 @@
     terminalImages: true
     # 回复中的 ```mermaid 代码块画成字符图；false 保留源码。/settings 可实时改。
     # mermaidDiagrams: true
-    # 回复中的 LaTeX 公式（$…$、$$…$$）转成 Unicode；false 保留源码。/settings 可实时改。
-    # latexMath: true
+    # 回复中 LaTeX 公式的显示方式：auto（默认，目前为 Unicode）/ unicode / source（保留源码）。/settings 可实时改。
+    # mathRendering: auto
     # Reasoning effort applied to every request, validated against the live
     # route's adapter levels. An unlisted level falls back to the adapter
     # default; this wins over the persisted /effort choice and seeds the

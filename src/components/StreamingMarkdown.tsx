@@ -3,6 +3,7 @@ import { marked, type Token } from 'marked'
 import Box from '../ink/components/Box.js'
 import { configureMarked, formatToken, stripPromptXMLTags } from '../terminal-utils/markdown.js'
 import { t } from '../i18n.js'
+import { isMathBlockToken, mayBecomeCodeSpan } from '../terminal-utils/math.js'
 import { isStandaloneToken, Markdown } from './Markdown.js'
 
 /**
@@ -254,6 +255,21 @@ export function StreamingMarkdown({
   let lastContentIdx = tokens.length - 1
   while (lastContentIdx >= 0 && tokens[lastContentIdx].type === 'space') {
     lastContentIdx--
+  }
+  // A block formula after a paragraph with an open backtick run is
+  // provisional until a blank line: the run's closer may still arrive and
+  // turn both into one code span, so the paragraph stays unsealed.
+  let consumed = 0
+  for (let i = 0; i < lastContentIdx; i++) {
+    const token = tokens[i]!
+    if (
+      token.type === 'paragraph' && isMathBlockToken(tokens[i + 1]) &&
+      mayBecomeCodeSpan(token.raw, stripped.substring(boundary + consumed + token.raw.length))
+    ) {
+      lastContentIdx = i
+      break
+    }
+    consumed += token.raw.length
   }
   let advance = 0
   for (let i = 0; i < lastContentIdx; i++) {
