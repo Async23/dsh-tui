@@ -118,7 +118,6 @@ import instances from '../ink/instances.js'
 import { useAnimationFrame } from '../ink/hooks/use-animation-frame.js'
 import { useExternalVersion } from '../hooks/useExternalVersion.js'
 import { TrajectoryScene } from './TrajectoryScene.js'
-import { resumeFailureText } from '../sessions/resumeFailure.js'
 import { markHomeSeen } from '../homePrefs.js'
 import { extendTrajectory, projectWave, type TrajBuild } from '../dsh-adapter/trajectory/index.js'
 import { miniWakeWidth } from '../components/trajectory/MiniWake.js'
@@ -444,18 +443,6 @@ export function Chat({
       channel.notify(t('ext-shortcut-failed', { combo }), { color: 'error', timeoutMs: 4000 })
     })
   }, [extensionShortcuts, channel])
-  // When a questionnaire batch completes, fold a Q&A summary into the
-  // transcript (the tool card itself is hidden from the message list).
-  const questionOpenRef = React.useRef(questionSnapshot !== null)
-  React.useEffect(() => {
-    const wasOpen = questionOpenRef.current
-    questionOpenRef.current = questionSnapshot !== null
-    if (wasOpen && questionSnapshot === null) {
-      for (const summary of questionStore.takeSummaries()) {
-        channel.pushLocal(summary.title, summary.lines)
-      }
-    }
-  }, [channel, questionSnapshot, questionStore])
   const [expanded, setExpanded] = React.useState(false)
   const [helpOpen, setHelpOpen] = React.useState(false)
   const [handle, setHandle] = React.useState<ScrollBoxHandle | null>(null)
@@ -4221,18 +4208,16 @@ export function Chat({
         approval={approvalSnapshot}
         onApprove={outcome => approvals.decide(outcome)}
         onOpenSession={async (sessionId) => {
+          // A refusal is reported by the screen itself (see `openSession`):
+          // the composer that draws channel notifications is not mounted here.
           const result = await channel.resumeTo(sessionId)
-          if (!result.ok) {
-            const text = resumeFailureText(result)
-            if (text !== undefined) channel.notify(text, { color: 'error', timeoutMs: 8000 })
-            return false
-          }
+          if (!result.ok) return result
           channel.notify(t('resume-resumed'))
           suppressLogoIntroRef.current = true
           setAgentViewReturnId(undefined)
           setSupervisorOpen(false)
           repaintTranscript()
-          return true
+          return result
         }}
         onNewSession={async (target) => {
           const ok = await channel.switchWorkspace(target)
