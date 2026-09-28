@@ -162,6 +162,7 @@ function makeQuestionStore() {
         total: 1,
         answered: 0,
         canGoBack: false,
+        canGoForward: false,
       }
       for (const l of listeners) l()
     },

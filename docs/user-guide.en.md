@@ -146,8 +146,8 @@ Unrecognized keys are ignored, `Esc` does nothing, clear with `Ctrl+C`/`dd`.
 
 **Questionnaire (model ask_user_question)**
 
-- `↑/↓` select, `Space` multi-select, `Tab` jump to custom answer, `Enter` submit; `Ctrl+V` paste, `Ctrl+K` fold.
-- `Esc` back from question 2 onward, cancel the whole batch on question 1; `Ctrl+C` cancel on any question.
+- `↑/↓` select, `Space` multi-select, `Tab` jump to custom answer, `Enter` submit; `←/→` switch question (no submit, draft kept); `Ctrl+V` paste, `Ctrl+K` fold.
+- `Esc` back from question 2 onward, cancel the whole batch on question 1; `Ctrl+C` cancel on any question. On the input row, `←/→` move the caret first and switch questions only at the text edge.
 
 **Plan review**
 

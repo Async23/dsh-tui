@@ -81,8 +81,10 @@ export interface QuestionSnapshot {
   readonly answered: number
   /** Previously saved answer or draft for the current question. */
   readonly draft?: QuestionDraft
-  /** Whether Esc should navigate to the previous question. */
+  /** Whether Esc / ← should navigate to the previous question. */
   readonly canGoBack: boolean
+  /** Whether → should navigate to the next question without submitting. */
+  readonly canGoForward: boolean
 }
 
 const questionStores = new WeakMap<object, QuestionStore>()
@@ -191,6 +193,7 @@ export class QuestionStore {
           ? { draft: selectionFromAnswer(savedAnswer) }
           : {}),
       canGoBack: pending.index > 0,
+      canGoForward: pending.index + 1 < pending.request.questions.length,
     }
   }
 
@@ -247,8 +250,8 @@ export class QuestionStore {
 
   /**
    * The user submitted an answer for the current question; replaces any
-   * previous answer at that position, advances the batch, and settles it once
-   * every question is answered.
+   * previous answer at that position, advances to the next unanswered
+   * question, and settles the batch once every question is answered.
    * @param selection - Selected option labels plus optional custom text.
    */
   answerCurrent(selection: QuestionSelection): void {
@@ -264,17 +267,42 @@ export class QuestionStore {
     }
     pending.answers[pending.index] = answer
     pending.drafts[pending.index] = copyDraft(selection)
-    pending.index += 1
-    if (pending.index >= pending.request.questions.length) {
+    // The answers array is sparse until each question is committed. `every`
+    // skips holes, so a peek-ahead answer would look complete and settle
+    // early. Read every index explicitly.
+    const complete = pending.request.questions.every((_, index) => pending.answers[index] !== undefined)
+    if (complete) {
       // Batch complete: settle the harness promise and drain the next queued
-      // ask if any. The transcript record is NOT written here — it is
-      // projected from the persisted `tool/result` (issue #1009), so it
-      // survives `/resume`, rewind and every replay.
+      // ask if any. Filling the last gap after a → peek counts — the user
+      // should not have to walk onto an already-answered tail just to submit.
+      // The transcript record is NOT written here — it is projected from the
+      // persisted `tool/result` (issue #1009), so it survives `/resume`,
+      // rewind and every replay.
       const answers = pending.answers.filter(isDefined)
       this.active = undefined
       pending.resolve({ answers })
       this.startNext()
+    } else {
+      const after = pending.request.questions.findIndex((_, index) => index > pending.index && pending.answers[index] === undefined)
+      const firstGap = pending.request.questions.findIndex((_, index) => pending.answers[index] === undefined)
+      pending.index = after >= 0 ? after : firstGap
     }
+    this.rebuildSnapshot()
+    this.emit()
+  }
+
+  /**
+   * Navigate to the next question without committing the current one. The
+   * caller supplies the panel's draft so a peek forward does not discard
+   * in-progress text. No-op on the last question — Enter still owns submit.
+   */
+  forwardCurrent(draft?: QuestionDraft): void {
+    const pending = this.active
+    if (pending === undefined || pending.index + 1 >= pending.request.questions.length) return
+    if (draft !== undefined) {
+      pending.drafts[pending.index] = copyDraft(draft)
+    }
+    pending.index += 1
     this.rebuildSnapshot()
     this.emit()
   }

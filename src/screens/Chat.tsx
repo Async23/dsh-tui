@@ -4128,6 +4128,9 @@ export function Chat({
       onBack={questionSnapshot.canGoBack
         ? draft => questionStore.backCurrent(draft)
         : undefined}
+      onForward={questionSnapshot.canGoForward
+        ? draft => questionStore.forwardCurrent(draft)
+        : undefined}
       collapsed={questionMinimized}
       onExpand={() => setMinimizedQuestionKey(null)}
       onToggleFold={() => setMinimizedQuestionKey(previous =>

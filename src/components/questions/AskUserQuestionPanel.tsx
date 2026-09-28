@@ -40,6 +40,11 @@ import { flattenPasteInline } from '../../dsh-adapter/sanitize.js'
 import { readClipboard, type ClipboardRead } from '../../utils/clipboard.js'
 import { listWindow } from '../listWindow.js'
 
+/** Unmodified arrows switch questions; Ctrl/Alt/Super/Shift stay caret motion. */
+function isPlainArrow(key: { ctrl?: boolean; meta?: boolean; super?: boolean; shift?: boolean }): boolean {
+  return key.ctrl !== true && key.meta !== true && key.super !== true && key.shift !== true
+}
+
 const CHECKED = '◉'
 const UNCHECKED = '○'
 const PENCIL = '✎'
@@ -86,8 +91,14 @@ export type AskUserQuestionPanelProps = {
   readonly onAnswer: (selection: QuestionSelection) => void
   /** Esc on the first question / Ctrl+C — aborts the whole ask. */
   readonly onCancel: () => void
-  /** Esc on later questions — navigates to the previous question. */
+  /** Esc / ← on later questions — navigates to the previous question. */
   readonly onBack?: (draft: QuestionDraft) => void
+  /**
+   * → — navigates to the next question without submitting. On the free-text
+   * row this only fires when the caret is already at the end, so ←/→ keep
+   * editing the answer.
+   */
+  readonly onForward?: (draft: QuestionDraft) => void
   /**
    * Test seam: clipboard reader for the Ctrl+V paste arm. Defaults to the
    * real cross-platform reader (PowerShell/pbpaste/wl-paste…); headless
@@ -121,6 +132,7 @@ export function AskUserQuestionPanel({
   onAnswer,
   onCancel,
   onBack,
+  onForward,
   readClipboardOverride,
   collapsed = false,
   onExpand,
@@ -446,11 +458,22 @@ export function AskUserQuestionPanel({
         return
       }
       if (key.leftArrow) {
+        // Plain ← at the start of the answer switches questions; anywhere
+        // else (and modified arrows) stays a caret step.
+        if (isPlainArrow(key) && cursorRef.current === 0 && onBack !== undefined) {
+          onBack(currentDraft())
+          return
+        }
         applyText(textRef.current, Math.max(0, cursorRef.current - 1))
         return
       }
       if (key.rightArrow) {
-        applyText(textRef.current, Math.min([...textRef.current].length, cursorRef.current + 1))
+        const length = [...textRef.current].length
+        if (isPlainArrow(key) && cursorRef.current >= length && onForward !== undefined) {
+          onForward(currentDraft())
+          return
+        }
+        applyText(textRef.current, Math.min(length, cursorRef.current + 1))
         return
       }
       if (key.home) {
@@ -480,6 +503,14 @@ export function AskUserQuestionPanel({
     }
     if (key.downArrow) {
       moveFocus(1)
+      return
+    }
+    if (key.leftArrow && isPlainArrow(key)) {
+      if (onBack !== undefined) onBack(currentDraft())
+      return
+    }
+    if (key.rightArrow && isPlainArrow(key)) {
+      if (onForward !== undefined) onForward(currentDraft())
       return
     }
     if (key.tab && !hideCustomInput) {
@@ -691,6 +722,7 @@ export function AskUserQuestionPanel({
         t('question-hint-enter'),
         ...(options.length > 0 ? [t('question-hint-back')] : []),
         onBack === undefined ? t('question-hint-esc') : t('question-hint-previous'),
+        ...(onBack !== undefined || onForward !== undefined ? [t('question-hint-switch-input')] : []),
         ...(onBack === undefined ? [] : [t('question-hint-cancel')]),
         ...(multiSelect && checked.size > 0 ? [t('question-hint-selected', { n: checked.size })] : []),
         t('question-fold-hint', { combo: foldCombo }),
@@ -701,6 +733,7 @@ export function AskUserQuestionPanel({
         ...(hideCustomInput ? [] : [t('question-hint-paste', { key: comboDisplay(primaryComboString('paste')) }), t('question-hint-attach')]),
         t('question-hint-enter'),
         onBack === undefined ? t('question-hint-esc') : t('question-hint-previous'),
+        ...(onBack !== undefined || onForward !== undefined ? [t('question-hint-switch')] : []),
         ...(onBack === undefined ? [] : [t('question-hint-cancel')]),
         ...(multiSelect && checked.size > 0 ? [t('question-hint-selected', { n: checked.size })] : []),
         t('question-fold-hint', { combo: foldCombo }),
