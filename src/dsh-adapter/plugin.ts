@@ -39,7 +39,7 @@ import { readHomePrefs } from '../homePrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
-import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, applyLatexMath, applyMermaidDiagrams, applyPageMargin, isPageMarginMode, normalizePageMargin, normalizeScrollGutter, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, applyMathRendering, applyMermaidDiagrams, type MathRendering, applyPageMargin, isPageMarginMode, normalizePageMargin, normalizeScrollGutter, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
   draftComboConflicts,
   effectiveComboString,
@@ -611,7 +611,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // memoized by content, so no prop reaches the diagram/formula nodes).
   applyPageMargin(config.pageMargin)
   applyMermaidDiagrams(config.mermaidDiagrams)
-  applyLatexMath(config.latexMath)
+  applyMathRendering(resolveMathRendering({}, config))
   // Plugin toasts ride the channel's own notification surface: the runtime
   // already sanitized/rate-limited the delivery, the sink only forwards.
   // Without the extensions row (tuiToast absent) plugin toasts are dropped
@@ -683,7 +683,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         smoothStreaming: Schema.boolean(),
         // Same no-default rule: applyDisplay resolves `?? config.mermaidDiagrams ?? true`.
         mermaidDiagrams: Schema.boolean(),
-        // Same no-default rule: applyDisplay resolves `?? config.latexMath ?? true`.
+        // Same no-default rule: resolveMathRendering falls back to cordis.yml.
+        mathRendering: Schema.union(['auto', 'unicode', 'source']),
+        // Pre-`mathRendering` user layers; `false` still resolves to `source`.
         latexMath: Schema.boolean(),
         // No default on purpose: unset keeps the boot chain decisive
         // (applyEffortDefault hands `undefined` to channel.setDefaultEffort,
@@ -770,6 +772,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       expandEditor?: boolean
       smoothStreaming?: boolean
       mermaidDiagrams?: boolean
+      mathRendering?: MathRendering
       latexMath?: boolean
       statusBar?: Partial<StatusBarConfig>
       shortcuts?: Partial<Record<ShortcutActionId, string>>
@@ -836,7 +839,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       channel.setExpandEditor(value.expandEditor ?? config.expandEditor ?? true)
       channel.setSmoothStreaming(value.smoothStreaming ?? config.smoothStreaming ?? true)
       applyMermaidDiagrams(value.mermaidDiagrams ?? config.mermaidDiagrams)
-      applyLatexMath(value.latexMath ?? config.latexMath)
+      applyMathRendering(resolveMathRendering(value, config))
       channel.setStatusBar(normalizeStatusBar(value.statusBar ?? config.statusBar))
     }
     // Legacy user scopes layer over cordis.yml. Modern Config is already
@@ -1061,11 +1064,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           },
         },
         {
-          ...settingField('latexMath'),
-          format(value: unknown): string {
-            // Unset in settings.yaml: the effective default is on.
-            return String(typeof value === 'boolean' ? value : config.latexMath !== false)
-          },
+          ...settingField('mathRendering'),
         },
         {
           ...settingField('recapOnOpen'),

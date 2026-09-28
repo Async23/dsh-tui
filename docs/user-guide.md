@@ -30,7 +30,7 @@ dsh-tui
 - `dsh-tui safe`：安全模式——只读查看环境、列出 profile 插件并给出修复建议，还能创建干净的救援 profile（见 §5.5）。
 - `dsh --profile dsh-tui`：与 `dsh-tui` 等价的手工启动方式（`/update` 仅此方式可用）。
 - 运行模型需要 `DEEPSEEK_API_KEY`；环境自检用 `/doctor`。
-- 主验证 dsh 引擎版本 `0.1.7-rc.2`；兼容列表以 `ADAPTER.md` 为准，列表之外的版本在 logo 页提示版本漂移与对齐命令。
+- 主验证 dsh 引擎版本 `0.2.0-rc.1`；兼容列表以 `ADAPTER.md` 为准，列表之外的版本在 logo 页提示版本漂移与对齐命令。
 - 如果 logo 页出现 ⚠ 版本漂移警告，按提示执行 `npm i -g @deepseek-ai/dsh@<版本>` 对齐 dsh 引擎。
 
 ### 1.2 首次启动你会看到
@@ -238,8 +238,8 @@ dsh-tui
 |---|---|---|
 | `/context` | 无 | 已加载上下文明细（指令/运行时上下文/技能/工具等） |
 | `/status` | 无 | 模型+effort、工作/空闲、会话 id、目录+git 分支、token、缓存命中率、上下文百分比、会话标题 |
-| `/cost` | 无 | token 用量 + 缓存命中率（DSH 不提供费用计量） |
-| `/balance` | 无 | DeepSeek 官方账户余额（免费只读接口）：摘要行 + hover 明细，点击刷新、`×` 关闭 |
+| `/cost` | 无 | token 用量 + 缓存命中率 + 本会话估算（并入子代理）与「主会话/子代理」拆解；非官方/未收录模型只显示 token 并标注未计价（**估算是参考，以平台账单为准**） |
+| `/balance` | 无 | DeepSeek 官方账户余额（免费只读接口）：摘要行 + hover 明细（同款本会话估算拆解：主会话/子代理/未计价），点击刷新、`×` 关闭 |
 | `/config` | 无 | 配置来源：`cordis.patch.yml` 路径、启动方式、模型路由 |
 | `/doctor` | 无 | 环境自检 |
 | `/migrate` | `[agent] [--dry-run]` | 从其他编程代理（claude-code/codex/omp/zcode/grok-build）导入对话历史，子进程运行不卡界面，详见[会话迁移](migrate.md) |
@@ -427,7 +427,9 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 
 **Row 2 — 状态字段行**（每个字段独立开关，见 `/settings`）
 - 左组：模型 → TPS → thinking → mode → ctx → cache 缓存命中率 → tokens（`1.2k→340` 输入→输出）→
-  cost（`≈¥0.05 谷`，**估算是参考，以平台账单为准**，仅官方模型显示）
+  cost（`≈¥0.05 谷`，**本会话估算**：包含子代理用量，按各自模型 × 峰值/空闲 × 缓存分项计价；
+  hover 拆「主会话 ¥ / 子代理 ¥ / 未计价 N tok」；非官方/未收录模型只显示 token 并标注未计价；
+  **估算是参考，以平台账单为准**）
 - 右组：git 分支 → 工作目录（紧凑模式仅 basename）→ 会话标题 → 短会话 ID（`#` + 前 8 位，方便 `--resume` 定位）
 - `statusBar.compact` 时左右合并为单行。
 - 默认开：compact、model、thinking、cwd、contextUsage、cache、cost、goal、contextBar。
@@ -463,6 +465,7 @@ dsh-tui 自身区块在 0.1.7 写入当前 profile 的 `cordis.patch.yml`，旧�
 | smoothStreaming | 流式平滑输出（默认开）：回复/思考/工具卡正文按 ~30fps 匀速揭示；回放/历史完整直出 |
 | toolBackground | 工具卡背景强调：none / subtle / strong |
 | mermaidDiagrams | Mermaid 图表（默认开）：回复中的 ```` ```mermaid ```` 代码块画成字符图，流式期间逐步成形；比终端宽或类型不支持的图保留源码并注明所需列数。立即生效 |
+| mathRendering | LaTeX 公式（默认 `auto`）：回复中的 `$…$`、`\(…\)` 行内公式，`$$…$$`、`\[…\]` 与单独成行的 `\begin{align}` 等显示环境块级公式的显示方式。`auto` 用当前最好的渲染方式（目前是 Unicode 文本，块级公式里的分数与上下限竖排），`unicode` 固定用它，`source` 保留原始 TeX。不支持、仍在流式输出或比终端宽的公式保留源码（过宽的块级公式先退成单行）。价格（`$5`）、shell 变量（`$HOME`）与代码里的 `$` 不受影响。旧的 `latexMath: false` 仍等同 `source`。立即生效 |
 | scrollGutter | 转录边栏：timeline（轮次时间线，默认）/ scrollbar（比例滚动条）/ hidden。立即生效 |
 | pageMargin | 页边距：整屏相对终端四边向里缩。预设 none / slim / normal（默认）/ roomy，或自定义 `NxM`（细节见下）。立即生效 |
 | foldTerminalCommand | 折叠终端命令（默认关）：终端卡（Bash/PowerShell）多行命令折成首行 + 计数；`Ctrl+O` 或点击卡片展开 |

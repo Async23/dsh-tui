@@ -31,10 +31,12 @@ for (const key of EDITABLE_CONFIG_KEYS) {
 }
 // The hand-written list this derivation replaced: every key in it must stay
 // editable (a key may only leave this list together with its setting).
+// `latexMath` was renamed to `mathRendering` upstream (#1095); the old key stays
+// in the Config schema as a deprecated non-UI layer and is no longer editable.
 const PREVIOUSLY_EDITABLE = [
   'diffLayout', 'thinkingFold', 'toolBackground', 'scrollGutter', 'pageMargin',
   'foldTerminalCommand', 'promptSessionLabel', 'expandEditor', 'smoothStreaming',
-  'mermaidDiagrams', 'latexMath', 'effortDefault', 'statusBar', 'whale', 'whaleIdle', 'whaleGirl', 'splashFont', 'minimal',
+  'mermaidDiagrams', 'mathRendering', 'effortDefault', 'statusBar', 'whale', 'whaleIdle', 'whaleGirl', 'splashFont', 'minimal',
   'lang', 'fullscreen', 'terminalImages', 'shortcuts',
 ]
 assert.deepEqual(PREVIOUSLY_EDITABLE.filter(key => !EDITABLE_CONFIG_KEYS.includes(key)), [], 'every previously editable key is still editable')

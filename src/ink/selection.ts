@@ -12,6 +12,7 @@
 
 import { clamp } from './layout/geometry.js'
 import type { Screen, StylePool } from './screen.js'
+import type { TerminalImagePlacement } from './terminal-image.js'
 import { CellWidth, cellAt, cellAtIndex, setCellStyleId } from './screen.js'
 
 type Point = { col: number; row: number }
@@ -1476,12 +1477,14 @@ export function applySelectionOverlay(
   screen: Screen,
   selection: SelectionState,
   stylePool: StylePool,
+  images: readonly TerminalImagePlacement[] = [],
 ): void {
   const b = selectionBounds(selection)
   if (!b) return
   const { start, end } = b
   const width = screen.width
   const noSelect = screen.noSelect
+  const covered = imageCoveredCells(images, width, screen.height)
   for (let row = start.row; row <= end.row && row < screen.height; row++) {
     const colStart = row === start.row ? start.col : 0
     const colEnd = row === end.row ? Math.min(end.col, width - 1) : width - 1
@@ -1492,8 +1495,37 @@ export function applySelectionOverlay(
       // clear they're not part of the copy. Surrounding selectable cells
       // still highlight so the selection extent remains visible.
       if (noSelect[idx] === 1) continue
+      // Skip cells a terminal image is painted over: Kitty draws images
+      // below cells with a non-default background, so a highlighted cell
+      // would hide the image (a selected formula turned into a blank box).
+      if (covered?.has(idx) === true) continue
       const cell = cellAtIndex(screen, idx)
       setCellStyleId(screen, col, row, stylePool.withSelectionBg(cell.styleId))
     }
   }
+}
+
+/**
+ * Screen cell indexes under terminal images that are actually painted this
+ * frame (not waiting on a raster, not fully covered by a later overlay), or
+ * undefined when there are none.
+ */
+function imageCoveredCells(
+  images: readonly TerminalImagePlacement[],
+  width: number,
+  height: number,
+): Set<number> | undefined {
+  let covered: Set<number> | undefined
+  for (const image of images) {
+    if (image.graphicsReady === false || image.occludedFully === true) continue
+    const rect = image.clip ?? image
+    const top = Math.max(0, Math.floor(rect.y))
+    const left = Math.max(0, Math.floor(rect.x))
+    const bottom = Math.min(height, Math.floor(rect.y) + rect.rows)
+    const right = Math.min(width, Math.floor(rect.x) + rect.columns)
+    for (let row = top; row < bottom; row++) {
+      for (let col = left; col < right; col++) (covered ??= new Set()).add(row * width + col)
+    }
+  }
+  return covered
 }

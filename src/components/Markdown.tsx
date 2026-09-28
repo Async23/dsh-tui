@@ -5,7 +5,7 @@ import { configureMarked, formatToken, stripPromptXMLTags } from '../terminal-ut
 import { getCliHighlightPromise, type CliHighlight } from '../terminal-utils/cliHighlight.js'
 import { isMermaidLang } from '../terminal-utils/mermaid.js'
 import { isMathBlockToken } from '../terminal-utils/math.js'
-import { getLatexMath, subscribeLatexMath } from '../tuiDisplayPrefs.js'
+import { getMathRendering, subscribeMathRendering } from '../tuiDisplayPrefs.js'
 import { MarkdownTable } from './MarkdownTable.js'
 import { MermaidDiagram } from './MermaidDiagram.js'
 import { MathBlock } from './MathBlock.js'
@@ -208,7 +208,7 @@ function MarkdownImpl({ children, dimColor = false, cacheTokens = true }: Props)
   const [highlight, setHighlight] = React.useState<CliHighlight | null>(null)
   // Inline math is baked into the ANSI text, so the switch must invalidate
   // the memo below (MathBlock nodes subscribe on their own).
-  const latexMath = React.useSyncExternalStore(subscribeLatexMath, getLatexMath)
+  const mathRendering = React.useSyncExternalStore(subscribeMathRendering, getMathRendering)
 
   React.useEffect(() => {
     let mounted = true
@@ -229,7 +229,7 @@ function MarkdownImpl({ children, dimColor = false, cacheTokens = true }: Props)
       highlight,
       dimColor,
     )
-  }, [children, dimColor, highlight, cacheTokens, latexMath])
+  }, [children, dimColor, highlight, cacheTokens, mathRendering])
 
   return (
     <Box flexDirection="column" gap={1}>

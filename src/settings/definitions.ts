@@ -74,12 +74,17 @@ export const SETTING_DEFINITIONS = {
       { value: 'en', label: 'English', descriptions: { zh: '英文' } },
     ],
   },
-  'latexMath': {
+  'mathRendering': {
     label: 'LaTeX math',
     descriptions: { zh: 'LaTeX 公式' },
-    hint: 'Render LaTeX math in replies ($…$, \\(…\\), $$…$$, \\[…\\]) as Unicode text: symbols, sub/superscripts, stacked fractions and limits, matrices, cases. Unsupported, still-streaming, or too-wide formulas keep their source. Applies immediately. On by default.',
-    hintDescriptions: { zh: '把回复中的 LaTeX 公式（$…$、\\(…\\)、$$…$$、\\[…\\]）转成 Unicode 文本：符号、上下标、竖排的分数与上下限、矩阵、分段函数。不支持、仍在流式输出或比终端宽的公式保留源码。立即生效。默认开启。' },
-    kind: 'boolean',
+    hint: 'How LaTeX math in replies ($…$, \\(…\\), $$…$$, \\[…\\]) renders. Auto: the best available renderer — today Unicode text with symbols, sub/superscripts, stacked fractions and limits, matrices, cases. Unicode: always that. Source: keep the TeX as written. Unsupported, still-streaming, or too-wide formulas keep their source. Applies immediately.',
+    hintDescriptions: { zh: '回复中的 LaTeX 公式（$…$、\\(…\\)、$$…$$、\\[…\\]）怎么显示。自动：用当前最好的渲染方式——目前是 Unicode 文本（符号、上下标、竖排的分数与上下限、矩阵、分段函数）。Unicode：固定用它。源码：保留原始 TeX。不支持、仍在流式输出或比终端宽的公式保留源码。立即生效。' },
+    kind: 'select',
+    options: [
+      { value: 'auto', label: 'Auto', descriptions: { zh: '自动' } },
+      { value: 'unicode', label: 'Unicode', descriptions: { zh: 'Unicode' } },
+      { value: 'source', label: 'Source', descriptions: { zh: '源码' } },
+    ],
   },
   'mermaidDiagrams': {
     label: 'Mermaid diagrams',

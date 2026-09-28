@@ -3,7 +3,7 @@ import { Box, Text } from '../ui.js'
 import { useTerminalSize } from '../ink/hooks/use-terminal-size.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import { renderDisplayMath, renderInlineMath, type MathToken } from '../terminal-utils/math.js'
-import { getLatexMath, subscribeLatexMath } from '../tuiDisplayPrefs.js'
+import { getMathRendering, subscribeMathRendering } from '../tuiDisplayPrefs.js'
 
 /**
  * A `$$…$$` / `\[…\]` block rendered as display-mode Unicode: fractions and
@@ -31,7 +31,7 @@ type Props = {
 }
 
 export function MathBlock({ token, dimColor, forceWidth }: Props): React.ReactNode {
-  const enabled = React.useSyncExternalStore(subscribeLatexMath, getLatexMath)
+  const enabled = React.useSyncExternalStore(subscribeMathRendering, getMathRendering) !== 'source'
   const { columns } = useTerminalSize()
   const width = Math.max(0, forceWidth ?? columns)
   const renderable = enabled && token.pending !== true
