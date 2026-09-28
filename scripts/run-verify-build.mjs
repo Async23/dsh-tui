@@ -101,6 +101,7 @@ const GATES = [
   'verify:table-layout',
   'verify:mermaid-diagram',
   'verify:latex-math',
+  'verify:math-renderer',
   'verify:btw',
   'verify:session-mounts',
 ]

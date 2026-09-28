@@ -7,6 +7,7 @@ packages:
   - 'vendor/dsh-std/packages/storage'
   - 'vendor/dsh-std/packages/messages'
   - 'vendor/sqlite-island'
+  - 'vendor/mathjax-tex-svg'
 
 # Dev-tree resolution pin: pnpm's prerelease range resolution prefers the
 # registry `latest` dist-tag (0.1.0-rc.6 for most @deepseek-ai/dsh-* even
