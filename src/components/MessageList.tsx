@@ -966,6 +966,7 @@ export function MessageList({
   // post-commit, only when the signature changes.
   let timelineTurns: TimelineTurn[] = []
   let activeTurnIndex: number | null = null
+  let pinnedTurnIndex: number | null = null
   let upTurnIndex: number | null = null
   let downTurnIndex: number | null = null
   const timelineMemoRef = React.useRef<{ key: string; turns: TimelineTurn[] } | null>(null)
@@ -1051,10 +1052,15 @@ export function MessageList({
       }
     }
     if (timelineTurns.length > 0 && activeTurnIndex === null) activeTurnIndex = 0
+    if (activeTurnIndex !== null) {
+      const active = timelineTurns[activeTurnIndex]!
+      if (active.folded === true || active.top < viewTop) pinnedTurnIndex = activeTurnIndex
+    }
   }
   const timeline: TimelineSnapshot = {
     turns: timelineTurns,
     activeId: activeTurnIndex === null ? null : timelineTurns[activeTurnIndex]!.id,
+    pinnedId: pinnedTurnIndex === null ? null : timelineTurns[pinnedTurnIndex]!.id,
     upId: upTurnIndex === null ? null : timelineTurns[upTurnIndex]!.id,
     downId: downTurnIndex === null ? null : timelineTurns[downTurnIndex]!.id,
   }
@@ -1074,6 +1080,7 @@ export function MessageList({
     if (
       prev !== null &&
       prev.activeId === timeline.activeId &&
+      prev.pinnedId === timeline.pinnedId &&
       prev.upId === timeline.upId &&
       prev.downId === timeline.downId &&
       prev.turns.length === timeline.turns.length &&
