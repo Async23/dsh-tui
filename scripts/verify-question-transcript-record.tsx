@@ -251,6 +251,22 @@ assert.equal(records(malformed.channel.rows).length, 1, 'unparseable durable pay
 assert.match(recordText(malformed.channel.rows), /Questionnaire answered/u)
 assert.doesNotMatch(recordText(malformed.channel.rows), /not json/u, 'unparseable payload text never becomes a fake answer')
 
+// A JSON `null` element inside the durable arrays is the same class of foreign
+// data: `Array.isArray` does not filter it, so the per-item guard must tolerate
+// null as well as undefined instead of dereferencing it (a throw here would
+// abort the whole transcript fold).
+const nullQuestion = buildQuestionRecord(
+  [null, { question: 'Which database?' }] as never[],
+  [{ selected: ['SQLite'] }, { selected: ['Postgres'] }] as never[],
+)
+assert.equal(nullQuestion.lines.length, 1, 'a null question entry is skipped, not dereferenced')
+assert.ok(nullQuestion.lines[0]!.includes('Postgres'), 'the well-formed pair at its own index still renders')
+const nullAnswer = buildQuestionRecord(
+  [{ question: 'Which database?' }] as never[],
+  [null] as never[],
+)
+assert.equal(nullAnswer.lines.length, 0, 'a null answer entry degrades to no line instead of throwing')
+
 // ── 7. an unanswered / non-ask tool result is untouched ─────────────────
 const otherTool = channelFixture([
   { type: 'tool/call', seq: 13, time: 13, data: { turn: 1, step: 1, callId: 'tool-1', name: 'job_output', arguments: '{}' } },

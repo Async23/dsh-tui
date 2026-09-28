@@ -75,7 +75,7 @@ export function buildQuestionRecord(
   const list = questions ?? []
   const lines = list.flatMap((question, index) => {
     const answer = answers?.[index]
-    if (question === undefined || answer === undefined) return []
+    if (question === undefined || question === null || answer === undefined || answer === null) return []
     // The question text comes from durable args too — a garbled entry must
     // not turn into the string "undefined" in the transcript.
     const prompt = typeof question.question === 'string' ? question.question : ''
