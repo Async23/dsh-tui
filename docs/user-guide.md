@@ -446,7 +446,28 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 
 `/settings` 打开插件设置编辑器；**改动自动保存**，`Esc` 直接退出。
 dsh-tui 自身区块在 0.1.7 写入当前 profile 的 `cordis.patch.yml`，旧版写入 settings.yaml 用户层。多数设置实时生效；全屏和图片预览开关需 `/restart`。
-每个设置的说明、默认值与选项见官网的[设置参考](SETTINGS_URL)（由每个发布版本自动生成，与该版本的 /settings 屏一致）。
+下表为常用项，完整列表见 /settings 屏：
+
+| 字段 | 说明 |
+|---|---|
+| lang | 界面语言 zh/en（DSH_TUI_LANG 钉死时不可改） |
+| fullscreen | 全屏模式（默认开）；保存后用 `/restart` 生效 |
+| terminalImages | 终端图片预览（默认开，需终端支持）；保存后用 `/restart` 生效。关闭后只显示文字信息并跳过预览解码，不影响向模型发送图片 |
+| whale | 开屏头部像素鲸鱼娘（默认开）；每次启动随机三选一开场动画（经典/爱心/睡觉），`/deepseek` 彩蛋重掷 |
+| whaleIdle | 鲸鱼娘欢迎期闲置动画（默认开）：定格后摆鱼鳍/拍尾巴/眨眼，空闲 10 秒入睡冒 Z；点击冒爱心。开始第一个任务后定格 |
+| splashFont | 开屏大字字体：按天轮换（默认，随本地日期换款）/ 加粗 / 方角实心 / 半立体 / 宽体 / 点阵灰度 / 镂空模板 / 细笔 / 方板。选某一款即固定那一款，选回「按天轮换」恢复。立即生效 |
+| whaleGirl | 女仆娘立绘（默认关）：标题像素鲸鱼换成作者绘制的女仆娘**真图**（Kitty/Sixel 图像协议）；不支持时回落像素鲸鱼 |
+| diffLayout | Edit/Write diff 布局：auto（≥110 列双栏）/ split / unified |
+| thinkingFold | 思考块：preview（流式 2-3 行预览 + 落定折叠）/ full（展开到轮末） |
+| effortDefault | 默认推理强度：auto / off / low / high / max。新会话的起始档位（细节见下） |
+| smoothStreaming | 流式平滑输出（默认开）：回复/思考/工具卡正文按 ~30fps 匀速揭示；回放/历史完整直出 |
+| toolBackground | 工具卡背景强调：none / subtle / strong |
+| mermaidDiagrams | Mermaid 图表（默认开）：回复中的 ```` ```mermaid ```` 代码块画成字符图，流式期间逐步成形；比终端宽或类型不支持的图保留源码并注明所需列数。立即生效 |
+| scrollGutter | 转录边栏：timeline（轮次时间线，默认）/ scrollbar（比例滚动条）/ hidden。立即生效 |
+| pageMargin | 页边距：整屏相对终端四边向里缩。预设 none / slim / normal（默认）/ roomy，或自定义 `NxM`（细节见下）。立即生效 |
+| foldTerminalCommand | 折叠终端命令（默认关）：终端卡（Bash/PowerShell）多行命令折成首行 + 计数；`Ctrl+O` 或点击卡片展开 |
+| expandEditor | 全屏草稿编辑（默认开）：输入行尾 `⛶` 或 `Ctrl+Shift+E` 展开成整屏编辑器；`Ctrl+Enter` 发送、`Esc` 收起（草稿还在）；关掉后入口不显示 |
+| statusBar.* | 上表全部状态栏开关（compact/model/thinking/cwd/contextUsage/cache/tokens/cost/tps/gitBranch/sessionTitle/sessionId/mode/contextBar/activity/trajectory；statusBar.sessionId 是底栏显示开关，与 cordis 的启动 sessionId 无关） |
 
 **effortDefault**：模型没有该档时自动就近降级并弹提示；优先级 settings 用户层 > cordis `effort` >
 上次 `/effort`（effort.json）> 模型默认。

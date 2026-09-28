@@ -427,7 +427,7 @@
         # 想退回 inline 主屏（终端原生滚动/选择）：/settings 全屏开关或 cordis.yml
         # `fullscreen: false`——显式选择始终优先于默认。
         fullscreen: true
-        # 以下为 /settings 可改的显示设置；每项说明与默认值见官网设置参考（SETTINGS_URL）。
+        # 以下为 /settings 可改的显示设置；每项说明与默认值见应用内 /settings 屏。
         terminalImages: true
         # diffLayout: auto
         # mermaidDiagrams: true

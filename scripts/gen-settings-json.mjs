@@ -11,18 +11,18 @@
  * on an incomplete definition before anything is published.
  *
  * Usage: node scripts/gen-settings-json.mjs [--check]
- *   --check  validate and print the entry count without writing the file.
+ *   --check  validate, and fail unless lib/settings.json matches exactly.
  */
-import { readFileSync, writeFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
-const root = fileURLToPath(new URL('../', import.meta.url))
 const check = process.argv.includes('--check')
+const output = new URL('../lib/settings.json', import.meta.url)
 
-const { SETTING_DEFINITIONS, SHORTCUT_FIELD_META } = await import(`${root}lib/types/settings/definitions.js`)
-const { SHORTCUT_ACTIONS } = await import(`${root}lib/types/utils/keymap.js`)
-const { Config } = await import(`${root}lib/types/dsh-adapter/index.js`)
-const pkg = JSON.parse(readFileSync(`${root}package.json`, 'utf8'))
+// URLs, not paths: a Windows path (C:\...) is not a valid import specifier.
+const { SETTING_DEFINITIONS, SHORTCUT_FIELD_META } = await import(new URL('../lib/types/settings/definitions.js', import.meta.url).href)
+const { SHORTCUT_ACTIONS } = await import(new URL('../lib/types/utils/keymap.js', import.meta.url).href)
+const { Config } = await import(new URL('../lib/types/dsh-adapter/index.js', import.meta.url).href)
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 const problems = []
 const need = (value, what) => {
@@ -97,5 +97,15 @@ const document = {
   namespace: 'dsh-tui',
   settings,
 }
-if (!check) writeFileSync(`${root}lib/settings.json`, `${JSON.stringify(document, null, 2)}\n`)
-console.log(`settings.json: ${settings.length} settings${check ? ' (checked)' : ''}`)
+const text = `${JSON.stringify(document, null, 2)}\n`
+if (check) {
+  // The shipped file must be exactly what the compiled definitions produce:
+  // a recompile that skipped this generator would otherwise publish stale text.
+  if (!existsSync(output) || readFileSync(output, 'utf8') !== text) {
+    console.error('settings.json: lib/settings.json is missing or stale; run pnpm compile')
+    process.exit(1)
+  }
+} else {
+  writeFileSync(output, text)
+}
+console.log(`settings.json: ${settings.length} settings${check ? ' (up to date)' : ''}`)
