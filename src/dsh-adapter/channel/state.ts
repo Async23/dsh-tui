@@ -17,6 +17,12 @@ export interface ChannelLaunchOptions {
    *  read to render its line before the next event lands. */
   seedActivity?: (session: unknown) => void
   activityFrames?: string
+  /** Settings namespace this boot registered its section under: the Config
+   *  owner's Loader id (`resolveSettingsNamespace`), which is NOT always the
+   *  plugin name. Read sites look the TUI's section up by it, so passing the
+   *  literal `'dsh-tui'` here would silently miss custom mounts. Absent →
+   *  `'dsh-tui'` (direct `createChannel` embedders and fixtures). */
+  settingsNs?: string
   diffLayout?: 'auto' | 'split' | 'unified'
   thinkingFold?: 'preview' | 'full'
   toolBackground?: ToolBackground

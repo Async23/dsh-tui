@@ -127,6 +127,7 @@ export const CHANNEL_UI_PROPERTIES = [
   'sessionId',
   'agentBindingGeneration',
   'autoRecapOnOpen',
+  'settingsNamespace',
   'model',
   'provider',
   'configuredProvider',

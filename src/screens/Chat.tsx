@@ -1690,10 +1690,12 @@ export function Chat({
     const ok = writeLangPref(lang)
     setLang(lang)
     const settingsHost = channel.settingsHost()
-    const tuiView = settingsHost?.listNamespaces().find(entry => entry.ns === 'dsh-tui')
+    // This mount's own namespace (custom Loader ids exist): looking up the
+    // literal 'dsh-tui' skipped the mirror entirely on such mounts.
+    const tuiView = settingsHost?.listNamespaces().find(entry => entry.ns === channel.settingsNamespace)
     if (settingsHost !== undefined && tuiView !== undefined) {
       void settingsHost
-        .write('dsh-tui', [{ op: 'set', path: ['lang'], value: lang }], tuiView.revision)
+        .write(channel.settingsNamespace, [{ op: 'set', path: ['lang'], value: lang }], tuiView.revision)
         .catch(() => {})
     }
     channel.notify(
@@ -2728,7 +2730,7 @@ export function Chat({
         setHelpOpen(false)
         const tuiNamespace = channel.settingsHost()
           ?.listNamespaces()
-          .find(entry => entry.ns === 'dsh-tui')
+          .find(entry => entry.ns === channel.settingsNamespace)
         const plan = planReload({
           envTheme: envThemeOverride(),
           envLang: isLang(process.env.DSH_TUI_LANG) ? process.env.DSH_TUI_LANG : undefined,
