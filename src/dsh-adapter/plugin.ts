@@ -99,16 +99,26 @@ let lastBootedFullscreen: boolean | undefined
 let lastBootedTerminalImages: boolean | undefined
 
 /**
- * Extract the startup prompt from raw app argv. `--resume <session>` selects
- * a persisted session and must not leak its id into the conversation.
+ * Extract the startup prompt from raw app argv, excluding session selectors
+ * and Web startup flag values. `--trusted-host` consumes multiple authorities
+ * up to the next flag; none of them are prompt text (issue #882). An app-level
+ * `--` ends flag parsing; all following tokens are literal prompt text.
  */
 export function initialPromptFromCmdlineArgs(args: readonly string[] | undefined): string {
   if (args === undefined) return ''
   const promptArgs: string[] = []
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!
-    if (arg === '--resume') {
+    if (arg === '--') {
+      promptArgs.push(...args.slice(i + 1))
+      break
+    }
+    if (arg === '--resume' || arg === '--host' || arg === '--port') {
       if (args[i + 1] !== undefined && !args[i + 1]!.startsWith('-')) i += 1
+      continue
+    }
+    if (arg === '--trusted-host') {
+      while (args[i + 1] !== undefined && !args[i + 1]!.startsWith('-')) i += 1
       continue
     }
     if (arg.startsWith('--resume=')) continue
@@ -458,8 +468,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const meta = { cwd: sessionCwd }
   // Launch-time resume target: the env handoff (launchers like naive-dsh) wins;
   // `dsh --profile tui` forwards `--resume` verbatim instead, so fall back to
-  // parsing the forwarded app args (matching the standalone bin).
-  const launchSessionId = config.sessionId ?? resumeTargetFromArgv(process.argv.slice(2))
+  // the same app-argv snapshot as the initial prompt. Raw process.argv also
+  // contains the DSH launcher's own -- and is only a legacy embedder fallback.
+  const cmdline = (ctx as { cmdlineArgs?: { get?: () => readonly string[]; args?: readonly string[] } }).cmdlineArgs
+  const cmdlineArgs = cmdline?.get?.() ?? cmdline?.args
+  const launchSessionId = config.sessionId ?? resumeTargetFromArgv(cmdlineArgs ?? process.argv.slice(2))
   const { agent, handle, agentPreset, route: createdRoute } = await resolveAgent(
     ctx,
     launchSessionId,
@@ -1189,13 +1202,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   }
   // Positional command-line arguments are the initial prompt (issue #53):
   // `dsh-tui "run the tests"` forwards positionals through the dsh CLI,
-  // which mounts them as ctx.cmdlineArgs. The service shape drifted across
-  // dsh-cmdline builds — `{ get() }` is the current contract, older builds
-  // exposed `{ args }` — so read both. Submit once the channel exists;
-  // delivery goes through the normal pending/inbox chain, so no special
-  // timing is needed; flag-shaped leftovers are not prompt text.
-  const cmdline = (ctx as { cmdlineArgs?: { get?: () => readonly string[]; args?: readonly string[] } }).cmdlineArgs
-  const cmdlineArgs = cmdline?.get?.() ?? cmdline?.args
+  // which mounts them as ctx.cmdlineArgs. Reuse the snapshot read for resume
+  // selection above, supporting both `{ get() }` and legacy `{ args }` hosts.
+  // Submit once the channel exists; delivery goes through the normal pending/inbox
+  // chain, so no special timing is needed. The parser separates startup flags
+  // from literal prompt text.
   const initialPrompt = initialPromptFromCmdlineArgs(cmdlineArgs)
   if (initialPrompt) submitChannel(initialPrompt)
   // Attach the stderr reporter to the live channel and flush anything a
@@ -1357,7 +1368,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const openHomeOnBoot = !homeSeen
     && launchSessionId === undefined
     && requestedWorkspace === undefined
-    && initialPromptFromCmdlineArgs(process.argv.slice(2)) === ''
+    && initialPrompt === ''
   const chat = React.createElement(Chat, {
     channel,
     renderScene: createChannelSceneOutlet(() => rawChannel.pluginScene),
