@@ -194,6 +194,8 @@
     "verify:settings": "node --import tsx/esm scripts/verify-settings-definitions.ts",
     "verify:math-renderer": "node --import tsx/esm scripts/verify-math-renderer.tsx",
     "verify:math-block-image": "node --import tsx/esm scripts/verify-math-block-image.tsx",
+    "verify:math-inline-image": "node --import tsx/esm scripts/verify-math-inline-image.tsx",
+    "verify:semantic-copy": "node --import tsx/esm scripts/verify-semantic-copy.tsx",
     "verify:btw": "node --import tsx/esm scripts/verify-btw.tsx",
     "verify:adapter-skeleton": "node --import tsx/esm scripts/verify-adapter-skeleton.ts",
     "verify:adapter-ports": "node --import tsx/esm scripts/verify-adapter-ports.ts",

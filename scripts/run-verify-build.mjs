@@ -104,6 +104,8 @@ const GATES = [
   'verify:settings',
   'verify:math-renderer',
   'verify:math-block-image',
+  'verify:math-inline-image',
+  'verify:semantic-copy',
   'verify:btw',
   'verify:session-mounts',
 ]
