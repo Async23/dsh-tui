@@ -230,5 +230,94 @@ stdin.write('\x1b[D') // already at the start → previous question
 assert.ok(await settled(() => backDraft !== undefined))
 assert.deepEqual(backDraft, { selected: [], custom: 'ab' })
 await inputApp.unmount()
+
+// One stdin batch shares one React commit. Space / ↓ must already be in
+// the draft → saves, and → then Enter must not record the old panel's
+// selection against the question → just opened.
+const batchApp = await render(React.createElement(AskUserQuestionPanel, {
+  position: 1,
+  total: 2,
+  answered: 0,
+  question: {
+    question: '同批多选',
+    multiSelect: true,
+    options: [{ label: 'One' }, { label: 'Two' }],
+  },
+  onAnswer() {},
+  onForward: (draft: unknown) => { forwardDraft = draft },
+  onCancel() {},
+}), { stdout, stdin, stderr: new FakeStdout(), exitOnCtrlC: false, patchConsole: false })
+await settle(() => screen().includes('同批多选'))
+forwardDraft = undefined
+stdin.write(' \x1b[C')
+assert.ok(await settled(() => forwardDraft !== undefined))
+assert.deepEqual(forwardDraft, { selected: ['One'] })
+await batchApp.unmount()
+
+const moveApp = await render(React.createElement(AskUserQuestionPanel, {
+  position: 1,
+  total: 2,
+  answered: 0,
+  question: {
+    question: '同批移动',
+    options: [{ label: 'Alpha' }, { label: 'Beta' }],
+  },
+  onAnswer() {},
+  onForward: (draft: unknown) => { forwardDraft = draft },
+  onCancel() {},
+}), { stdout, stdin, stderr: new FakeStdout(), exitOnCtrlC: false, patchConsole: false })
+await settle(() => screen().includes('同批移动'))
+forwardDraft = undefined
+stdin.write('\x1b[B\x1b[C')
+assert.ok(await settled(() => forwardDraft !== undefined))
+assert.deepEqual(forwardDraft, { selected: ['Beta'] })
+await moveApp.unmount()
+
+const staleStore = new QuestionStore()
+const stalePromise = staleStore.ask({
+  questions: [
+    { id: 's1', question: '旧面板', options: [{ label: 'Alpha' }, { label: 'Beta' }] },
+    { id: 's2', question: '新面板', options: [{ label: 'Gamma' }] },
+  ],
+} as never)
+const staleKey = staleStore.getSnapshot()?.key
+assert.equal(typeof staleKey, 'string')
+const staleApp = await render(React.createElement(AskUserQuestionPanel, {
+  position: 1,
+  total: 2,
+  answered: 0,
+  question: {
+    question: '旧面板',
+    options: [{ label: 'Alpha' }, { label: 'Beta' }],
+  },
+  onAnswer(selection: { selected: string[] }) {
+    if (!staleStore.stillCurrent(staleKey!)) return
+    staleStore.answerCurrent(selection)
+  },
+  onForward(draft: { selected: string[] }) {
+    if (!staleStore.stillCurrent(staleKey!)) return
+    staleStore.forwardCurrent(draft)
+  },
+  onCancel() {},
+}), { stdout, stdin, stderr: new FakeStdout(), exitOnCtrlC: false, patchConsole: false })
+await settle(() => screen().includes('旧面板'))
+stdin.write('\x1b[C\r')
+await settle(() => staleStore.getSnapshot()?.question.question === '新面板')
+assert.equal(staleStore.getSnapshot()?.position, 2)
+assert.equal(staleStore.getSnapshot()?.draft, undefined)
+let staleSettled = false
+void stalePromise.then(() => { staleSettled = true })
+await sleep(40) // 固定窗:探针 半套答案不得在这一拍里结算
+assert.equal(staleSettled, false)
+staleStore.backCurrent()
+staleStore.answerCurrent({ selected: ['Alpha'] })
+staleStore.answerCurrent({ selected: ['Gamma'] })
+assert.deepEqual(await stalePromise, {
+  answers: [
+    { id: 's1', selected: ['Alpha'] },
+    { id: 's2', selected: ['Gamma'] },
+  ],
+})
+await staleApp.unmount()
 terminal.dispose()
 console.log('Question back-navigation regression passed')

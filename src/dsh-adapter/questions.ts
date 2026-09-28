@@ -167,6 +167,15 @@ export class QuestionStore {
     return this.snapshotCache
   }
 
+  /**
+   * Whether a panel callback still belongs to the question it was rendered
+   * for. One stdin batch can deliver → and then Enter to the panel that
+   * was mounted for the first key, after the store has already moved.
+   */
+  stillCurrent(key: string): boolean {
+    return this.snapshotCache?.key === key
+  }
+
   private emit(): void {
     for (const listener of this.listeners) listener()
   }

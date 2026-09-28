@@ -4123,13 +4123,22 @@ export function Chat({
       total={questionSnapshot.total}
       answered={questionSnapshot.answered}
       initialDraft={questionSnapshot.draft}
-      onAnswer={selection => questionStore.answerCurrent(selection)}
+      onAnswer={selection => {
+        if (!questionStore.stillCurrent(questionSnapshot.key)) return
+        questionStore.answerCurrent(selection)
+      }}
       onCancel={() => questionStore.cancelCurrent()}
       onBack={questionSnapshot.canGoBack
-        ? draft => questionStore.backCurrent(draft)
+        ? draft => {
+            if (!questionStore.stillCurrent(questionSnapshot.key)) return
+            questionStore.backCurrent(draft)
+          }
         : undefined}
       onForward={questionSnapshot.canGoForward
-        ? draft => questionStore.forwardCurrent(draft)
+        ? draft => {
+            if (!questionStore.stillCurrent(questionSnapshot.key)) return
+            questionStore.forwardCurrent(draft)
+          }
         : undefined}
       collapsed={questionMinimized}
       onExpand={() => setMinimizedQuestionKey(null)}

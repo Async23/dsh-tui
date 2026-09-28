@@ -173,6 +173,11 @@ export function AskUserQuestionPanel({
   const [checked, setChecked] = React.useState<ReadonlySet<number>>(
     () => new Set(multiSelect ? selectedIndices : []),
   )
+  // Same stdin batch, same closure: Space / ↑ / ↓ must be visible to a
+  // following → before React commits. Refs are the draft source; state
+  // only repaints.
+  const focusRef = React.useRef(initialFocus)
+  const checkedRef = React.useRef<ReadonlySet<number>>(new Set(multiSelect ? selectedIndices : []))
   const [customText, setCustomText] = React.useState(initialCustom)
   const [customCursor, setCustomCursor] = React.useState(() => [...initialCustom].length)
   // Synchronous source of truth for the handlers (see the module header):
@@ -201,6 +206,28 @@ export function AskUserQuestionPanel({
   const [attached, setAttached] = React.useState<string | null>(
     () => initialCustom !== '' && !multiSelect ? (initialSelected[0] ?? null) : null,
   )
+  const attachedRef = React.useRef<string | null>(
+    initialCustom !== '' && !multiSelect ? (initialSelected[0] ?? null) : null,
+  )
+  const placeFocus = (index: number): void => {
+    focusRef.current = index
+    setFocusIndex(index)
+  }
+  const placeChecked = (next: ReadonlySet<number>): void => {
+    checkedRef.current = next
+    setChecked(next)
+  }
+  const toggleCheckedAt = (index: number): void => {
+    const next = new Set(checkedRef.current)
+    if (next.has(index)) next.delete(index)
+    else next.add(index)
+    placeChecked(next)
+  }
+  const placeAttached = (value: string | null): void => {
+    attachedRef.current = value
+    setAttached(value)
+  }
+  const onInputRow = (): boolean => !hideCustomInput && focusRef.current === options.length
   const [error, setError] = React.useState<string | null>(null)
 
   const inputFocused = !hideCustomInput && focusIndex === options.length
@@ -237,7 +264,7 @@ export function AskUserQuestionPanel({
 
   const moveFocus = (delta: 1 | -1): void => {
     if (rowCount <= 1) return
-    setFocusIndex(index => (index + delta + rowCount) % rowCount)
+    placeFocus((focusRef.current + delta + rowCount) % rowCount)
     setError(null)
   }
 
@@ -254,7 +281,7 @@ export function AskUserQuestionPanel({
     if (at <= 0) return
     points.splice(at - 1, 1)
     const next = points.join('')
-    if (next === '') setAttached(null)
+    if (next === '') placeAttached(null)
     applyText(next, at - 1)
   }
 
@@ -277,7 +304,7 @@ export function AskUserQuestionPanel({
     const at = atCaret ? cursorRef.current : points.length
     points.splice(at, 0, ...text)
     applyText(points.join(''), at + [...text].length)
-    if (!atCaret && !multiSelect) setAttached(options[focusIndex]?.label ?? null)
+    if (!atCaret && !multiSelect) placeAttached(options[focusRef.current]?.label ?? null)
     return 'ok'
   }
 
@@ -321,7 +348,7 @@ export function AskUserQuestionPanel({
   }
 
   const checkedLabels = (): string[] =>
-    [...checked].sort((a, b) => a - b).map(index => options[index]?.label)
+    [...checkedRef.current].sort((a, b) => a - b).map(index => options[index]?.label)
       .filter((label): label is string => label !== undefined)
 
   /** Enter on a real option: the option(s) plus whatever the input row holds. */
@@ -336,7 +363,7 @@ export function AskUserQuestionPanel({
       onAnswer({ selected, ...(text !== '' ? { custom: text } : {}) })
       return
     }
-    const label = options[focusIndex]?.label
+    const label = options[focusRef.current]?.label
     if (label === undefined) {
       setError(t('question-select-or-answer'))
       return
@@ -361,17 +388,17 @@ export function AskUserQuestionPanel({
       setError(t('question-type-answer-first'))
       return
     }
-    onAnswer({ selected: attached !== null ? [attached] : [], custom: text })
+    onAnswer({ selected: attachedRef.current !== null ? [attachedRef.current] : [], custom: text })
   }
 
   /** Capture the visible answer state before navigating away. */
   const currentDraft = (): QuestionDraft => {
     const selected = multiSelect
       ? checkedLabels()
-      : inputFocused
-        ? (attached === null ? [] : [attached])
+      : onInputRow()
+        ? (attachedRef.current === null ? [] : [attachedRef.current])
         : (() => {
-            const label = options[focusIndex]?.label
+            const label = options[focusRef.current]?.label
             return label === undefined ? [] : [label]
           })()
     return {
@@ -429,7 +456,7 @@ export function AskUserQuestionPanel({
       return
     }
 
-    if (inputFocused) {
+    if (onInputRow()) {
       if (key.upArrow) {
         moveFocus(-1)
         return
@@ -452,7 +479,7 @@ export function AskUserQuestionPanel({
         if (at < points.length) {
           points.splice(at, 1)
           const next = points.join('')
-          if (next === '') setAttached(null)
+          if (next === '') placeAttached(null)
           applyText(next, at)
         }
         return
@@ -514,17 +541,12 @@ export function AskUserQuestionPanel({
       return
     }
     if (key.tab && !hideCustomInput) {
-      setFocusIndex(options.length)
+      placeFocus(options.length)
       setError(null)
       return
     }
     if (input === ' ' && multiSelect) {
-      setChecked(previous => {
-        const next = new Set(previous)
-        if (next.has(focusIndex)) next.delete(focusIndex)
-        else next.add(focusIndex)
-        return next
-      })
+      toggleCheckedAt(focusRef.current)
       return
     }
     if (isPlainReturnInput(input, key)) {
@@ -540,7 +562,7 @@ export function AskUserQuestionPanel({
     // attaches this option's label so Enter carries label + text (#9).
     if (!hideCustomInput && !key.ctrl && !key.meta && !key.super && input) {
       appendText(input)
-      if (!multiSelect) setAttached(options[focusIndex]?.label ?? null)
+      if (!multiSelect) placeAttached(options[focusRef.current]?.label ?? null)
     }
   })
 
@@ -560,7 +582,7 @@ export function AskUserQuestionPanel({
   /** Mouse: click the input row to focus it (same as Tab). */
   const focusInputRow = (): void => {
     if (hideCustomInput) return
-    setFocusIndex(options.length)
+    placeFocus(options.length)
     setError(null)
   }
   /**
@@ -571,12 +593,7 @@ export function AskUserQuestionPanel({
    */
   const clickOption = (index: number): void => {
     if (multiSelect) {
-      setChecked(previous => {
-        const next = new Set(previous)
-        if (next.has(index)) next.delete(index)
-        else next.add(index)
-        return next
-      })
+      toggleCheckedAt(index)
       return
     }
     const label = options[index]?.label
