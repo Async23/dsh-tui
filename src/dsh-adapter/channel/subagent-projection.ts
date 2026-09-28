@@ -4,7 +4,7 @@ import { SubagentActivityStore, type SubagentState } from '../subagents.js'
 import type { ChannelState, ChatRow, SubagentControl, SubagentRow } from './types.js'
 import { isSubagentToolName } from './projection-helpers.js'
 
-type ProjectionState = Pick<ChannelState, 'rows' | 'subagents' | 'emit' | 'emitStream'>
+type ProjectionState = Pick<ChannelState, 'rows' | 'subagents' | 'subagentCost' | 'emit' | 'emitStream'>
 interface ProjectionDependencies {
   rowIds: { value: number }
   agent(): Agent
@@ -21,7 +21,7 @@ interface ProjectionDependencies {
 export function createSubagentProjection(getState: () => ProjectionState, deps: ProjectionDependencies) {
   type Projection = ReturnType<typeof createSessionSubagentProjection>
   const parked = new Map<Agent, Projection>()
-  const hidden: ProjectionState = { rows: [], subagents: [], emit() {}, emitStream() {} }
+  const hidden: ProjectionState = { rows: [], subagents: [], subagentCost: [], emit() {}, emitStream() {} }
   const make = (): Projection => {
     const projection = createSessionSubagentProjection(
       () => active === projection ? getState() : hidden,
@@ -108,7 +108,7 @@ export function createSubagentProjection(getState: () => ProjectionState, deps: 
     park, restore,
     forget(agent: Agent) { parked.delete(agent) },
     dispose() { parked.clear(); active.store.reset(); active.dropRows(); active.pendingTaskDescriptions.length = 0 },
-    reset() { active = make(); activeParent = deps.agent(); restored = false; getState().subagents = [] },
+    reset() { active = make(); activeParent = deps.agent(); restored = false; getState().subagents = []; getState().subagentCost = [] },
   }
 }
 
@@ -173,7 +173,12 @@ function createSessionSubagentProjection(
     streamDirty = false
     if (!deps.visible()) return
     const snapshot = store.snapshot()
-    getState().subagents = snapshot
+    const state = getState()
+    state.subagents = snapshot
+    // 费用快照随 dashboard 一起镜像：StatusLine/BalanceReportRow 从这里读
+    // 子代理按 (provider, model) 的 durable 用量桶。与 subagents 同在 visible
+    // 守卫之后——停靠父级的费用留在自己的 store 里，restore 时重新镜像。
+    state.subagentCost = store.costSnapshot().entries
     syncRows(snapshot)
   }
   const flush = (): boolean => {
@@ -376,6 +381,6 @@ function createSessionSubagentProjection(
     },
   }
   const dropRows = (): void => { streamDirty = false; rowsByAgentId.clear() }
-  const reset = (): void => { dropRows(); cardedIds.clear(); workflowMembers.clear(); pendingTaskDescriptions.length = 0; store.reset(); getState().subagents = [] }
+  const reset = (): void => { dropRows(); cardedIds.clear(); workflowMembers.clear(); pendingTaskDescriptions.length = 0; store.reset(); getState().subagents = []; getState().subagentCost = [] }
   return { store, control, pendingTaskDescriptions, onSessionEvent, onStreamFrame, onParentEvent, bootstrapFromLog, onStart, onEnd, syncNow, flush, dropRows, reset }
 }

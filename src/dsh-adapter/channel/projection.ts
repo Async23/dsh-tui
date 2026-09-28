@@ -12,7 +12,7 @@ import { ARGS_PREVIEW_LIMIT, harnessToolResultView, LOCAL_OUTPUT_LIMIT, prepareR
 import { estimateTokens, isTokenDelta, tokenDeltaChars, usageOutputTokens } from './usage.js'
 import { transcriptImagesOf, type TranscriptImage } from '../transcript-images.js'
 import { isCompactionCheckpointSource, toolResultPayload } from '../compat/messages.js'
-import { isPeakHour } from '../../deepseekPricing.js'
+import { addUsageToCostBuckets, emptyCostBuckets, isPeakHour } from '../../deepseekPricing.js'
 import { t } from '../../i18n.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { cleanRenderText } from '../sanitize.js'
@@ -24,7 +24,7 @@ import {
   parseQuestionRecordQuestions,
 } from './question-record.js'
 
-type ProjectionState = Pick<ChannelState, 'rows' | 'thinkingFold' | 'activeToolCount' | 'spinnerMode' | 'goal' | 'contextSegments' | 'tokens' | 'lastUsage' | 'lastUserText' | 'responseChars' | 'tps' | 'cancelPending' | 'working' | 'compaction' | 'turnStart' | 'tpsSamples' | 'contextWindow' | 'reasoningEffort' | 'sessionTitle' | 'todos' | 'agentPreset' | 'sessionColor' | 'status' | 'emit'>
+type ProjectionState = Pick<ChannelState, 'rows' | 'thinkingFold' | 'activeToolCount' | 'spinnerMode' | 'goal' | 'contextSegments' | 'tokens' | 'mainCost' | 'model' | 'lastUsage' | 'lastUserText' | 'responseChars' | 'tps' | 'cancelPending' | 'working' | 'compaction' | 'turnStart' | 'tpsSamples' | 'contextWindow' | 'reasoningEffort' | 'sessionTitle' | 'todos' | 'agentPreset' | 'sessionColor' | 'status' | 'emit'>
 interface ProjectionDependencies {
  agent(): Agent
  rowIds: { value: number }
@@ -94,6 +94,11 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
   let openStep: { turn: number; step: number } | undefined
   let activeAttempt: { attemptId: string; turn: number; step: number } | undefined
   let lastStreamRevision = -1
+  /** 最近一次 request/header 的模型：durable usage 的模型归属真源。replay
+   *  会按历史请求逐个还原，因此 /model 切换（reset + replay 整个 seed）
+   *  不会把换模型前的用量重估到新模型；旧日志没有 header 时回退
+   *  事件发生时的 state.model（AC-A4）。 */
+  let eventModel: string | undefined
   const assistantRowsByStep = new Map<string, ChatRow>()
   const lastTextDelta = new Map<ChatRow, string>()
   const stepKey = (turn: number, step: number): string => `${turn}:${step}`
@@ -433,6 +438,7 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
     openStep = undefined
     activeAttempt = undefined
     lastStreamRevision = -1
+    eventModel = undefined
     assistantRowsByStep.clear()
     lastTextDelta.clear()
     replaying = true
@@ -732,14 +738,33 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
           // replays historical events, so a resumed session prices each
           // request at the rate window it actually ran in — the session cost
           // estimate never prices the whole session at the current window).
+          const peak = isPeakHour(new Date(event.time))
           {
-            const bucket = isPeakHour(new Date(event.time))
+            const bucket = peak
               ? state.tokens.peak
               : state.tokens.idle
             bucket.input += usage.inputTokens ?? 0
             bucket.output += usage.outputTokens ?? 0
             bucket.cacheRead += usage.cacheReadTokens ?? 0
             bucket.cacheWrite += usage.cacheWriteTokens ?? 0
+          }
+          // 主会话费用分桶（DESIGN D2）：与 tokens 同口径，但按事件发生时
+          // 的模型归属——replay 用 request/header 还原历史请求模型，旧日志
+          // 回退 channel 模型；换模型不会把历史 token 重估到新模型。
+          const costInput = usage.inputTokens ?? 0
+          const costOutput = usage.outputTokens ?? 0
+          const costCacheRead = usage.cacheReadTokens ?? 0
+          const costCacheWrite = usage.cacheWriteTokens ?? 0
+          if (costInput !== 0 || costOutput !== 0 || costCacheRead !== 0 || costCacheWrite !== 0) {
+            const model = eventModel ?? state.model
+            const cost = state.mainCost[model] ?? emptyCostBuckets()
+            addUsageToCostBuckets(cost, {
+              input: costInput,
+              output: costOutput,
+              cacheRead: costCacheRead,
+              cacheWrite: costCacheWrite,
+            }, peak)
+            state.mainCost[model] = cost
           }
           // The most recent request's usage describes the CURRENT context:
           // input (uncached) + cache hits all occupy the window. Cache hits
@@ -1019,6 +1044,12 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
         if (typeof effort === 'string') {
           state.reasoningEffort = effort
         }
+        // 模型归属真源：该请求的 usage 按这里的 model 计价（replay 时逐请求
+        // 还原；live 时与 state.model 同步更新，AC-A4）。header 缺/空 model
+        // 必须清掉上一条 header 的值——否则后续 usage 会沿用旧模型进错桶；
+        // 归属时再回退 state.model（旧日志没有 header 的既有语义）。
+        const headerModel = (event.data.header.config as { model?: unknown } | undefined)?.model
+        eventModel = typeof headerModel === 'string' && headerModel !== '' ? headerModel : undefined
         const legacySystem = (event.data.header as { system?: unknown }).system
         if (typeof legacySystem === 'string') {
           state.contextSegments.system = estimateTokens(legacySystem)
@@ -1144,6 +1175,7 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
     openStep = undefined
     activeAttempt = undefined
     lastStreamRevision = -1
+    eventModel = undefined
     assistantRowsByStep.clear()
     lastTextDelta.clear()
     tpsTurn = undefined
