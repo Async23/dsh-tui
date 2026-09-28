@@ -4128,6 +4128,20 @@ export function Chat({
         questionStore.answerCurrent(selection)
       }}
       onCancel={() => questionStore.cancelCurrent()}
+      onEscape={draft => {
+        // Esc means "back" once a later question is showing, including when
+        // → and Esc share one stdin batch and this panel was mounted for
+        // question 1 (no onBack). Ctrl+C stays on onCancel: it cancels the
+        // whole ask from any question, so a same-batch → must not swallow it.
+        const live = questionStore.getSnapshot()
+        if (live?.canGoBack) {
+          questionStore.backCurrent(draft)
+          return
+        }
+        if (live !== null && questionStore.stillCurrent(questionSnapshot.key)) {
+          questionStore.cancelCurrent()
+        }
+      }}
       onBack={questionSnapshot.canGoBack
         ? draft => {
             if (!questionStore.stillCurrent(questionSnapshot.key)) return

@@ -91,6 +91,12 @@ export type AskUserQuestionPanelProps = {
   readonly onAnswer: (selection: QuestionSelection) => void
   /** Esc on the first question / Ctrl+C — aborts the whole ask. */
   readonly onCancel: () => void
+  /**
+   * Esc, when the host wants to decide back-vs-cancel from the live store.
+   * A same-batch → then Esc still runs on the panel mounted for question 1,
+   * whose `onBack` is absent; this callback sees that → already advanced.
+   */
+  readonly onEscape?: (draft: QuestionDraft) => void
   /** Esc / ← on later questions — navigates to the previous question. */
   readonly onBack?: (draft: QuestionDraft) => void
   /**
@@ -131,6 +137,7 @@ export function AskUserQuestionPanel({
   initialDraft,
   onAnswer,
   onCancel,
+  onEscape,
   onBack,
   onForward,
   readClipboardOverride,
@@ -428,7 +435,8 @@ export function AskUserQuestionPanel({
       return
     }
     if (key.escape) {
-      if (onBack !== undefined) onBack(currentDraft())
+      if (onEscape !== undefined) onEscape(currentDraft())
+      else if (onBack !== undefined) onBack(currentDraft())
       else onCancel()
       return
     }

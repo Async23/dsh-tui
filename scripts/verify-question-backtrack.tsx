@@ -319,5 +319,51 @@ assert.deepEqual(await stalePromise, {
   ],
 })
 await staleApp.unmount()
+
+// Question 1 has no onBack, so a stale Esc would cancel the batch. → then
+// Esc must follow the live question: back, not cancel. Ctrl+C still cancels.
+const escStore = new QuestionStore()
+let escCancelled = false
+const escPromise = escStore.ask({
+  questions: [
+    { id: 'e1', question: '第一题取消', options: [{ label: 'Alpha' }] },
+    { id: 'e2', question: '第二题', options: [{ label: 'Beta' }] },
+  ],
+} as never)
+const escKey = escStore.getSnapshot()?.key ?? ''
+const escapeLikeChat = (draft: { selected: string[] }): void => {
+  const live = escStore.getSnapshot()
+  if (live?.canGoBack) {
+    escStore.backCurrent(draft)
+    return
+  }
+  if (live !== null && escStore.stillCurrent(escKey)) escStore.cancelCurrent()
+}
+const escApp = await render(React.createElement(AskUserQuestionPanel, {
+  position: 1,
+  total: 2,
+  answered: 0,
+  question: { question: '第一题取消', options: [{ label: 'Alpha' }] },
+  onAnswer() {},
+  onForward(draft: { selected: string[] }) {
+    if (!escStore.stillCurrent(escKey)) return
+    escStore.forwardCurrent(draft)
+  },
+  onEscape: escapeLikeChat,
+  onCancel() {
+    escCancelled = true
+    escStore.cancelCurrent()
+  },
+}), { stdout, stdin, stderr: new FakeStdout(), exitOnCtrlC: false, patchConsole: false })
+await settle(() => screen().includes('第一题取消'))
+stdin.write('\x1b[C\x1b')
+await settle(() => escStore.getSnapshot()?.position === 1)
+assert.equal(escCancelled, false)
+assert.equal(escStore.getSnapshot()?.question.question, '第一题取消')
+let escRejected = false
+void escPromise.catch(() => { escRejected = true })
+await sleep(40) // 固定窗:探针 → 后的 Esc 不得把整批问券取消掉
+assert.equal(escRejected, false)
+await escApp.unmount()
 terminal.dispose()
 console.log('Question back-navigation regression passed')
