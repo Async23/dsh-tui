@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 
 const input = await new Promise((resolve, reject) => {
@@ -80,6 +81,13 @@ for (const section of ['dependencies', 'optionalDependencies', 'devDependencies'
       throw new Error(`manifest ${section}.${name} uses the ${range} protocol on a non-bundled package, which must never ship (reach workspace helpers by relative import)`)
     }
   }
+}
+
+// The website's settings reference reads this file from the exact published
+// version; it must describe the version it ships in.
+const settingsJson = JSON.parse(readFileSync(new URL('../lib/settings.json', import.meta.url), 'utf8'))
+if (settingsJson.schemaVersion !== 1 || settingsJson.packageVersion !== manifest.version) {
+  throw new Error(`lib/settings.json is stale (schemaVersion ${settingsJson.schemaVersion}, packageVersion ${settingsJson.packageVersion}, manifest ${manifest.version}); rerun pnpm compile`)
 }
 
 await import(new URL(`../${manifest.main}`, import.meta.url))

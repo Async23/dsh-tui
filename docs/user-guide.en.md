@@ -466,28 +466,7 @@ speed **≥50 green / ≥20 yellow / <20 red**.
 
 `/settings` opens the plugin settings editor; **changes save automatically**, `Esc` exits directly.
 On 0.1.7 the dsh-tui block writes to the active profile's `cordis.patch.yml`; older hosts use the settings.yaml user layer. Most settings apply live; fullscreen and image-preview need `/restart`.
-Common items below, full list on the /settings screen:
-
-| Field | Notes |
-|---|---|
-| lang | UI language zh/en (locked when DSH_TUI_LANG is pinned) |
-| fullscreen | fullscreen mode (default on); takes effect after `/restart` |
-| terminalImages | terminal image preview (default on, needs terminal support); takes effect after `/restart`. Off shows text only and skips preview decode, sending images to the model is unaffected |
-| whale | pixel whale header (default on); three intro animations picked per launch (classic/heart/sleep), `/deepseek` egg re-rolls |
-| whaleIdle | whale welcome idle animation (default on): fin/tail/blink, sleeps with Z after 10 s idle; click for a heart. Freezes after the first task |
-| splashFont | big-text face on the header splash: Daily rotation (default, changes with the local date) / bold / square / bevel / wide / dot matrix / stencil / thin (classic) / slab. Picking a face pins it; picking Daily rotation restores the rotation. Applies immediately |
-| whaleGirl | maid portrait (default off): swaps the header's pixel whale for the author-drawn maid as a **real raster** (Kitty/Sixel); falls back to the pixel whale without graphics support |
-| diffLayout | Edit/Write diff layout: auto (two columns ≥110 cols) / split / unified |
-| thinkingFold | thinking block: preview (2-3 line preview + folded when settled) / full (expanded to end of turn) |
-| effortDefault | default reasoning effort: auto / off / low / high / max. Start level for new sessions (details below) |
-| smoothStreaming | smooth streaming output (default on): replies/thinking/tool-card text reveal at ~30fps; replay/history always direct |
-| toolBackground | tool-card background emphasis: none / subtle / strong |
-| mermaidDiagrams | Mermaid diagrams (default on): ```` ```mermaid ```` blocks render as character diagrams, forming while streaming; too-wide or unsupported types keep source with the required columns. Applies immediately |
-| scrollGutter | transcript gutter: timeline (turn timeline, default) / scrollbar (proportional) / hidden. Applies immediately |
-| pageMargin | page margin: inset from all four terminal edges. Presets none / slim / normal (default) / roomy, or custom `NxM` (details below). Applies immediately |
-| foldTerminalCommand | fold terminal commands (default off): multi-line commands on terminal cards (Bash/PowerShell) fold to first line + count; `Ctrl+O` or click to expand |
-| expandEditor | full-screen draft editor (default on): `⛶` at the input line end or `Ctrl+Shift+E` expands to a full-screen editor; `Ctrl+Enter` send, `Esc` collapse (draft kept); off hides both entries |
-| statusBar.* | all status-bar toggles above (compact/model/thinking/cwd/contextUsage/cache/tokens/cost/tps/gitBranch/sessionTitle/sessionId/mode/contextBar/activity/trajectory; statusBar.sessionId is the bottom-bar display toggle, unrelated to cordis startup sessionId) |
+Every setting — description, default, options — is in the website's [settings reference](SETTINGS_URL), generated from each published version so it always matches that version's /settings screen.
 
 **effortDefault**: when the model lacks that level, drop one level and show a notice; priority settings user layer > cordis `effort` >
 last `/effort` (effort.json) > model default.
