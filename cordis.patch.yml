@@ -434,6 +434,8 @@
         # diffLayout: auto
         # 回复中的 ```mermaid 代码块画成字符图；false 保留源码。/settings 可实时改。
         # mermaidDiagrams: true
+        # 回复中的 LaTeX 公式（$…$、$$…$$）转成 Unicode；false 保留源码。/settings 可实时改。
+        # latexMath: true
         # 每个请求实际生效的推理强度，按当前路由的 adapter 档位校验
         #（deepseek: off/low/high/max）；非法值回落 adapter 默认。
         effort: max
@@ -471,9 +473,10 @@
     # dependency into the profile root (npm's flat layout hid this), so the
     # bare name died with ERR_MODULE_NOT_FOUND and disposed the whole app at
     # boot (#60).
-    # The plugin stays mounted for its narration/system-prompt features. The
-    # TUI derives its working line in-process from the base session stream;
-    # never persist activity/status, so the shared log remains Web-readable.
+    # The plugin stays mounted for its narration/system-prompt features and
+    # publishes the `workingActivity` session projection, which is where the
+    # TUI's working line comes from; never persist activity/status, so the
+    # shared log remains Web-readable.
     - id: working-activity
       name: '@deepseek-harness-tui/dsh-tui/working-activity'
       config:

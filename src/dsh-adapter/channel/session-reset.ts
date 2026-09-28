@@ -14,12 +14,12 @@ export type SessionResetState = Pick<
   | 'activeToolCount'
   | 'lastUserText'
   | 'working'
+  | 'compaction'
   | 'cancelPending'
   | 'spinnerMode'
   | 'tps'
   | 'tpsSamples'
   | 'lastUsage'
-  | 'workingActivity'
   | 'contextSegments'
 >
 
@@ -58,12 +58,14 @@ export function resetSessionProjection(
   state.activeToolCount = 0
   state.lastUserText = ''
   state.working = false
+  // The adoption path settles any in-flight compaction before it takes the
+  // new session over; a row that survived it would describe the old one.
+  state.compaction = undefined
   state.cancelPending = false
   state.spinnerMode = 'requesting'
   state.tps = undefined
   state.tpsSamples = []
   state.lastUsage = undefined
-  state.workingActivity = undefined
   state.contextSegments = {
     system: 0,
     prompt: 0,

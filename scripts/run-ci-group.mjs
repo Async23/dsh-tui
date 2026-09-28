@@ -32,7 +32,8 @@
  *     CI 那一次失败的原始帧字节才是证据。
  */
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const env = { NODE_ENV: 'production', ...process.env }
@@ -113,6 +114,20 @@ const GROUPS = {
 // （实测 ~73 LF/s）。静置窗口内 stdout 不得出现 LF、回滚缓冲不得增长，同时
 // 鲸鱼闲置动画必须仍在重绘（不许靠冻结界面取巧）。
     ["verify-idle-repaint", ['node', '--import', 'tsx/esm', 'scripts/verify-idle-repaint.tsx']],
+// 开屏头部契约：大字 5 行高且等宽（8×7 = 7×8）、bigTextWidth 与实际画出的列数
+// 一致；窄终端按「鲸鱼+大字 → 纯大字 → 纯鲸鱼 → 纯文字」逐档降级，档位无空档。
+    ["verify-splash-layout", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-layout.ts']],
+// 开屏彩蛋契约：节日换词（每款字体都要有 HAPPINESS/MERRY/NEW YEAR 的全部字形，
+// 两行等宽 + 下排居中取最紧解）与 1/20 的求 star 标语（OSC 8 成对 + URL 正确、
+// 缩进按该行实际宽度重算、不支持超链接时退化成纯文本 URL），并挂真实 LogoV2 读屏。
+    ["verify-splash-eggs", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-eggs.tsx']],
+    // 求 star 的触发条件（累计启动次数 / 累计在线时长的里程碑阶梯、账本坏文件兜底）：
+    ["verify-usage-stats", ['node', '--import', 'tsx/esm', 'scripts/verify-usage-stats.mjs']],
+    // 一键 star 的 gh 集成（探测/登录态/超时/失败分类，全用假执行器不联网）：
+    ["verify-star-action", ['node', '--import', 'tsx/esm', 'scripts/verify-star-action.mjs']],
+    // 女仆娘立绘（whaleGirl 设置 + 头部换画/阶梯契约）与 99h/999 次"求 star"
+    // 开屏弹窗（挂真实 Chat：弹一次/记账/Esc 关且关后不抢键/忙时不弹不记账）：
+    ["verify-whale-girl", ['node', '--import', 'tsx/esm', 'scripts/verify-whale-girl.tsx']],
 // settled 子代理卡片不得永久持有动画时钟（空闲帧归零回归）：
 // 曾以 120ms/卡片持续驱动 React commit，N 张相位错开合成 ~30ms
 // 均匀帧 cadence。
@@ -204,6 +219,11 @@ const GROUPS = {
 // Uc 优先、代理对与 keyup 交错、Rc 重复展开、conhost 拆散粘贴重组、
 // Alt+numpad 两轮合成。
     ["verify-win32-input", ['node', '--import', 'tsx/esm', 'scripts/verify-win32-input.tsx']],
+// 粘贴记录残留清洗回归（issue #1090）：win32 记录残留（带 ESC 的完整形态
+// 与记录拆散后无 ESC 的尾部形态）必须在入口整体剥离、不留下 `_`；真实
+// 下划线、仅形似的方括号文本、普通 bracketed paste 与既有 ANSI/CRLF
+// 归一化零误伤。
+    ["verify-paste-residue", ['node', '--import', 'tsx/esm', 'scripts/verify-paste-residue.tsx']],
 // win32 协议重组回归：conhost 把 SGR/X10 鼠标报告与终端回复（DA1 等）
 // 合成成逐字符 CSI Vk;Sc;Uc;Kd;Cs;Rc 记录时，必须跨块重组回完整协议
 // 事件而不是逐键泄漏进输入框；截断的鼠标候选在 flush 时丢弃，单独
@@ -291,12 +311,25 @@ const GROUPS = {
     ["verify-prompt-history-queue-retract", ['node', 'scripts/verify-prompt-history-queue-retract.mjs']],
   ],
   'session-workspace': [
+// 跨代理会话迁移回归（claude-code/codex/omp/zcode/grok-build → DSH sessions）：
+// 全程跑官方读取链——Session.append 生成骨架（turn 配对/reasoning/
+// provenance）、JsonlSessionPersistence 落盘、open+fromRestore+
+// deriveMessages 逐消息断言（CJK/emoji 无损）、restore 作 seed 续聊写回、
+// uuid v5 幂等、五 adapter fixture 解析（含 sourceId 只取裸文件名）、
+// /migrate 命令分类矩阵。
+    ["verify-migrate", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate.mjs']],
+// /migrate 交互回归（挂真实 Chat）：fresh 会话直接 `/migrate <agent>` 必须
+// 打开确认层（旧实现查 picker 行缓存，缓存为空时一律报未知源）、未知源仍
+// 被拒、`--dry-run` 要源、多源报 usage、重开选择器清空上一轮勾选。
+    ["verify-migrate-command", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-command.tsx']],
 // 审批服务配置回归（issue #49 尾巴）：裸组合 cordis.yml 必须挂载
 // approval 行；裸组合与 profile patch 的 policy 表达式逐场景同值
 // （ask / never / win32 never），两个入口语义不漂移。
     ["verify-cordis-approval", ['node', 'scripts/verify-cordis-approval.mjs']],
-// 工作状态由基础事件在进程内派生：阶段、500ms tick、Agent 切换重置。
-    ["verify-working-activity", ['node', 'scripts/verify-working-activity.mjs']],
+// 工作状态现在由 dsh-working-activity 插件的 session projection 拥有：本 app 只读，
+// 不再在进程内折叠。这条静态门禁钉住「唯一 owner」——没有 tracker、没有 status
+// import、没有 sidecar、channel 层不转发活动信号也不持 tick。
+    ["verify-activity-ownership", ['node', '--import', 'tsx/esm', 'scripts/verify-activity-ownership.ts']],
 // TUI 创建及恢复的会话必须持久关联到 Workspace。
     ["verify-workspace-attachment", ['node', 'scripts/verify-workspace-attachment.mjs']],
 // tuiWorkspaces 服务可选化回归（issue #183）：代码层 inject 不含
@@ -471,6 +504,12 @@ const GROUPS = {
   'channel-ui': [
 // L4 composition boundary plus report/metadata lifetime fences.
     ["verify-channel-composition", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-composition.ts']],
+// 状态行的读侧：会话键控、变更通知、宿主发布值的防御性收窄、绑定时的基线读取
+// （投影只在变化时推送，恢复/重连的会话必须自己读一次当前值）。
+    ["verify-activity-store", ['node', '--import', 'tsx/esm', 'scripts/verify-activity-store.ts']],
+// 状态行的渲染面：投影值经 hook 到达屏幕、后台会话不得抢当前行、清空即消失、
+// 两个接缝同时有值时以投影为准（读侧迁移对显示是零变化）。
+    ["verify-activity-store-render", ['node', '--import', 'tsx/esm', 'scripts/verify-activity-store-render.tsx']],
     ["verify-channel-owner-lifecycle", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-owner-lifecycle.ts']],
     ["verify-channel-router-lifecycle", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-router-lifecycle.ts']],
     ["verify-reports-metadata",  ['node', '--import', 'tsx/esm', 'scripts/verify-reports-metadata.ts']],
@@ -491,6 +530,7 @@ const GROUPS = {
     ['verify-message-compat', ['node', 'scripts/verify-message-compat.mjs']],
     ['verify-settings-compat', ['node', '--import', 'tsx/esm', 'scripts/verify-settings-compat.mjs']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
+    ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],
     ["verify-context-warning", ['node', '--import', 'tsx/esm', 'scripts/verify-context-warning.mjs']],
     ["verify-channel-goal-todo", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-goal-todo.mjs']],
 // IDE 选区通道回归（PR #562）：纯函数（env 直连/lock 扫描与 workspace
@@ -499,6 +539,10 @@ const GROUPS = {
 // 选区消费（text 优先/磁盘回退/截断计数/replay 指示回扫）。
     ["verify-ide-channel", ['node', '--import', 'tsx/esm', 'scripts/verify-ide-channel.tsx']],
     ["verify-whale-toggle", ['node', '--import', 'tsx/esm', 'scripts/verify-whale-toggle.mjs']],
+// 开屏大字字体设置（splashFont）：每个 id 解析到自己那款、daily 交回按天轮换、
+// 非法值回落 daily、channel 往返、/settings 选项覆盖全部取值、Config 默认值，
+// 以及 fontId 缝真的换脸（经典款上屏/方板款不在场）。
+    ["verify-splash-font-setting", ['node', '--import', 'tsx/esm', 'scripts/verify-splash-font-setting.mjs']],
 // 开屏鲸鱼三选一（classic 组合开场/heart/sleep）：帧表完整性（22 帧
 // 含 heart/sleep 新调色）、序列合法性（standard 起止/纯自家行为帧、
 // classic 仍捆绑眨眼+喷水+摆尾）、随机选取 API 覆盖/钳制/每次挂载
@@ -537,6 +581,10 @@ const GROUPS = {
 // 丢上下文"事故根因）；persistence 类失败与通用失败分开提示。
     ["verify-compact-switch", ['node', '--import', 'tsx/esm', 'scripts/verify-compact-switch.tsx']],
     ["verify-live-session", ['node', '--import', 'tsx/esm', 'scripts/verify-live-session.ts']],
+// 血缘 × 自动标题回归：/model 在还没有人说过话的会话上不得写 parentSession
+// （上游 first-prompt 标题 provider 只为无 parent 的会话生成标题，fork 永不
+// 重试）；已有对话的源仍必须保留分支血缘，既有 /model 语义不得被削掉。
+    ["verify-session-title-lineage", ['node', '--import', 'tsx/esm', 'scripts/verify-session-title-lineage.ts']],
     ["verify-session-v3", ['node', '--import', 'tsx/esm', 'scripts/verify-session-v3.ts']],
     ["verify-session-tree-generations", ['node', '--import', 'tsx/esm', 'scripts/verify-session-tree-generations.ts']],
 // 裸 ● 空行回归：纯思考/纯工具步骤（无文本块）的 assistant/message
@@ -655,6 +703,9 @@ const GROUPS = {
 // 树内每个测量所依据的宽度失效，而没有任何节点被标脏，文本节点会沿用
 // 旧宽度的测量结果，靠 flex 仲裁的行因此由两套布局拼成。
     ["verify-resize-reflow", ['node', '--import', 'tsx/esm', 'scripts/verify-resize-reflow.tsx']],
+// 上下文进度条右对齐回归（#922）：页脚根 Box paddingX={1} ⇒ 内容区实宽
+// columns - 2，bar 也必须按 columns - 2 取宽——右端与状态行右缘逐格比对。
+    ["verify-context-bar-alignment", ['node', '--import', 'tsx/esm', 'scripts/verify-context-bar-alignment.tsx']],
 // Ctrl+T 归属回归：启动上下文面板在屏时该键属于面板（它自己在屏幕上
 // 印着「Ctrl+T 展开」），转录有行之后才归轨迹场景。两者永不同屏——
 // 面板只在首条消息前出现，而那正是轨迹为空的窗口。
@@ -805,12 +856,28 @@ for (const entry of group) {
   console.log('\n===== ' + name + ' =====')
   const renderLog = join(RENDER_LOG_DIR, name + '.log')
   rmSync(renderLog, { force: true })
+  // One throwaway HOME per script: fixtures used to share the machine's real
+  // home, so a script that submits text left entries in
+  // `~/.dsh-tui/history.jsonl` for whatever ran next — and `↑` walks that file
+  // (#986), which turned one script's leftovers into the next script's
+  // assertion failure. A local group run must also never write the runner's
+  // own history. `HOME`/`USERPROFILE` sit after `env` (which carries the real
+  // ones) so the real home can never win; an entry may still override them
+  // through its own `extraEnv`.
+  const scriptHome = mkdtempSync(join(tmpdir(), 'dsh-tui-group-home-'))
   const startedAt = performance.now()
   const r = spawnSync(argv[0], argv.slice(1), {
-    env: { DSH_TUI_RENDER_LOG: renderLog, ...env, ...(extraEnv ?? {}) },
+    env: {
+      DSH_TUI_RENDER_LOG: renderLog,
+      ...env,
+      HOME: scriptHome,
+      USERPROFILE: scriptHome,
+      ...(extraEnv ?? {}),
+    },
     stdio: 'inherit',
     shell: false,
   })
+  rmSync(scriptHome, { recursive: true, force: true })
   const seconds = (performance.now() - startedAt) / 1000
   const failed = r.status !== 0
   results.push({ name, failed, status: r.status, seconds })
