@@ -25,6 +25,10 @@ import type { SessionSummary } from '../dsh-adapter/sessions/index.js'
 import type { TuiWorkspaceEntry, TuiWorkspaceTarget } from '../workspaces.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import { useSessionSupervisor } from './sessionSupervisor/useSessionSupervisor.js'
+import { DSH_TAB, useForeignSessions } from './sessionSupervisor/useForeignSessions.js'
+import { ForeignSessionPanes } from './sessionSupervisor/ForeignSessionPanes.js'
+import { SourceTabs, layoutSourceTabs, sourceTabsWidth, type SourceTab } from '../components/sessions/SourceTabs.js'
+import { stringWidth } from '../ink/stringWidth.js'
 import { RAIL_CHROME_ROWS, WORKSPACE_ROW_LINES, RAIL_MIN_TOTAL_COLUMNS, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, SESSION_ROW_LINES, SESSION_PANE_CHROME_ROWS, MenuAction, MENU_ACTIONS, MENU_WIDTH, MENU_HEIGHT, MENU_LABEL_KEYS, SupervisorLiveState, RailEntry, UNREGISTERED_RAIL_ID, message, samePath, sessionMatchesQuery } from './sessionSupervisor/model.js'
 export { sessionMatchesQuery }
 
@@ -150,6 +154,56 @@ export function SessionSupervisor({
     focusedSession,
   } = useSessionSupervisor({ channel, home, onOpenSession, onNewSession, onStopSession, liveStateOf, columns, rows })
 
+  /**
+   * The source tab: this screen's own sessions ({@link DSH_TAB}) or another
+   * coding agent's, by agent id. Every open starts on DSH — the screen is
+   * where you manage your sessions first, and a foreign tab is a place you
+   * visit.
+   */
+  const [tab, setTab] = useState<string>(DSH_TAB)
+  /** The `+N` dropdown of folded tabs, anchored where it was clicked. */
+  const [tabMenu, setTabMenu] = useState<{ col: number; row: number; item: number } | undefined>(undefined)
+  const tabMenuRef = useRef(tabMenu)
+  tabMenuRef.current = tabMenu
+  const foreign = useForeignSessions({ channel, tab, registry: entries, query, setNotice, onOpenSession })
+
+  /**
+   * Only sources with data get a tab, after DSH, in a fixed order: ranking
+   * them by recency would mean stat-ing every conversation of every source
+   * each time this screen opens.
+   */
+  const tabs = useMemo<readonly SourceTab[]>(() => {
+    if (foreign.sources.length === 0) return []
+    return [{ id: DSH_TAB, label: 'DSH' }, ...foreign.sources.map(source => ({ id: source.agentId, label: source.label }))]
+  }, [foreign.sources])
+  const activeSource = foreign.sources.find(source => source.agentId === tab)
+
+  // A source that vanished on refresh takes its tab with it; land on DSH
+  // rather than on a tab the strip no longer draws.
+  React.useEffect(() => {
+    if (tab !== DSH_TAB && activeSource === undefined) setTab(DSH_TAB)
+  }, [tab, activeSource])
+
+  const closeTabMenu = useCallback((): void => {
+    tabMenuRef.current = undefined
+    setTabMenu(undefined)
+  }, [])
+
+  /** Switch source. The query and notice belong to the tab they were made on. */
+  const switchTab = useCallback((id: string): void => {
+    closeMenu()
+    closeTabMenu()
+    setQuery('')
+    setNotice(undefined)
+    setTab(id)
+  }, [closeMenu, closeTabMenu, setQuery, setNotice])
+
+  const cycleTab = useCallback((by: 1 | -1): void => {
+    if (tabs.length < 2) return
+    const index = Math.max(0, tabs.findIndex(candidate => candidate.id === tab))
+    switchTab(tabs[(index + by + tabs.length) % tabs.length]!.id)
+  }, [tabs, tab, switchTab])
+
   useInput((input, key) => {
     // Modal layers own the keyboard, in the same order they render.
     if (rename !== undefined) {
@@ -203,6 +257,22 @@ export function SessionSupervisor({
       }
       return
     }
+    if (tabMenuRef.current !== undefined) {
+      const current = tabMenuRef.current
+      const count = Math.max(1, tabLayout.hidden.length)
+      if (key.upArrow || key.downArrow) {
+        const next = { ...current, item: (current.item + (key.upArrow ? count - 1 : 1)) % count }
+        tabMenuRef.current = next
+        setTabMenu(next)
+      } else if (isPlainReturn(key)) {
+        const target = tabLayout.hidden[current.item]
+        if (target !== undefined) switchTab(target.id)
+        else closeTabMenu()
+      } else {
+        closeTabMenu()
+      }
+      return
+    }
 
     if (key.escape) {
       if (notice !== undefined) {
@@ -217,17 +287,14 @@ export function SessionSupervisor({
       return
     }
     if (key.tab) {
-      // Shift+Tab keeps the keyboard route to the focused workspace's action
-      // menu. Plain Tab does nothing here: panes are chosen with ←/→ now, and
-      // Tab is the composer's business.
-      if (key.shift && activePane === 'rail') {
-        const entry = railEntries[railRef.current]
-        if (entry !== undefined) {
-          const next = { path: entry.path, ...keyboardMenuAnchor, item: 0 }
-          menuRef.current = next
-          setMenu(next)
-        }
-      }
+      // Tab / Shift+Tab walk the source tabs. Shift+Tab used to open the
+      // focused workspace's menu, which Enter on the rail already does, so
+      // the route was given up to the tabs.
+      cycleTab(key.shift ? -1 : 1)
+      return
+    }
+    if (tab !== DSH_TAB) {
+      foreignKey(input, key)
       return
     }
     // ←/→ choose the column. There is exactly one `❯` on screen because exactly
@@ -322,6 +389,63 @@ export function SessionSupervisor({
   const [, spinnerTime] = useAnimationFrame(workingCount > 0 ? 120 : null)
   const spinnerFrame = Math.floor(spinnerTime / 120)
 
+  /**
+   * Keys on a source tab: the same pane model as DSH (←/→ pick the column,
+   * ↑/↓ move, typing filters), with what a foreign source cannot do left out —
+   * no workspace menu, no new session, no stop — and Ctrl+L rescanning the
+   * source instead of re-listing.
+   */
+  function foreignKey(input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]): void {
+    if (key.leftArrow) {
+      foreign.activateRail()
+      return
+    }
+    if (key.rightArrow) {
+      foreign.activateList()
+      return
+    }
+    const by = key.upArrow || key.wheelUp || key.pageUp ? -1 : key.downArrow || key.wheelDown || key.pageDown ? 1 : 0
+    if (by !== 0) {
+      if (foreign.pane === 'rail') foreign.moveRail(by)
+      else foreign.moveList(by)
+      return
+    }
+    if (key.backspace || key.delete) {
+      setQuery(text => text.slice(0, -1))
+      return
+    }
+    if (isMod(key) && input === 'l') {
+      foreign.rescan()
+      return
+    }
+    if (isMod(key)) return
+    if (isPlainReturn(key)) {
+      // The rail has no menu here, so Enter on it steps into the list.
+      if (foreign.pane === 'rail') foreign.activateList()
+      else if (foreign.focusedRow !== undefined) foreign.openRow(foreign.focusedRow)
+      return
+    }
+    if (!key.meta && !key.super && input && !key.return) {
+      const typed = input.replace(/\p{Cc}/gu, '')
+      if (typed.length > 0) setQuery(text => text + typed)
+    }
+  }
+
+  // Header: title, subtitle, and the source strip on the right. Width runs
+  // out in a fixed order — the subtitle goes first, then trailing tabs fold
+  // into `+N`; the active tab never folds.
+  const titleText = ` ▣ ${t('supervisor-title')}`
+  const subtitleText = `  ${t('supervisor-subtitle')}`
+  /** One column between title and strip, one after the strip. */
+  const HEADER_GAPS = 2
+  const fullStrip = tabs.length === 0 ? 0 : sourceTabsWidth(tabs, 0, DSH_TAB)
+  const showSubtitle = tabs.length === 0
+    || stringWidth(titleText) + stringWidth(subtitleText) + HEADER_GAPS + fullStrip <= columns
+  const tabBudget = columns - stringWidth(titleText) - (showSubtitle ? stringWidth(subtitleText) : 0) - HEADER_GAPS
+  const tabLayout = layoutSourceTabs(tabs, tab, tabBudget)
+  const tabMenuWidth = Math.max(12, ...tabLayout.hidden.map(hidden => stringWidth(hidden.label) + 6))
+  const withTabHint = (text: string): string => (tabs.length === 0 ? text : `${text} · ${t('supervisor-hint-tabs')}`)
+
   const railHint = rename !== undefined
     ? t('home-hint-rename')
     : confirmRemove !== undefined
@@ -329,8 +453,8 @@ export function SessionSupervisor({
       : menu !== undefined
         ? t('home-hint-menu')
         : activePane === 'rail'
-          ? t('home-hint-list')
-          : t('supervisor-hint-list')
+          ? withTabHint(t('home-hint-list'))
+          : withTabHint(t('supervisor-hint-list'))
 
   const railWindowTopIndex = railWindowTop(railFocus, railEntries.length, railEntryCapacity)
   const visibleRailRows = railEntries.slice(railWindowTopIndex, railWindowTopIndex + railEntryCapacity)
@@ -361,13 +485,48 @@ export function SessionSupervisor({
       flexDirection="column"
       width={columns}
       height={rows}
-      onClick={menu !== undefined ? closeMenu : undefined}
+      onClick={menu !== undefined ? closeMenu : tabMenu !== undefined ? closeTabMenu : undefined}
     >
       <Box height={1} flexShrink={0} overflow="hidden">
-        <Text color="remember" bold>{` ▣ ${t('supervisor-title')}`}</Text>
-        <Text dimColor>{`  ${t('supervisor-subtitle')}`}</Text>
+        <Box flexGrow={1} flexShrink={1} overflow="hidden">
+          <Text color="remember" bold>{titleText}</Text>
+          {showSubtitle && <Text dimColor>{subtitleText}</Text>}
+        </Box>
+        {tabs.length > 0 && (
+          <Box flexShrink={0} marginRight={1}>
+            <SourceTabs
+              layout={tabLayout}
+              active={tab}
+              leadId={DSH_TAB}
+              onSelect={switchTab}
+              onOverflow={(event): void => {
+                closeMenu()
+                const next = { col: event.col, row: event.row, item: 0 }
+                tabMenuRef.current = next
+                setTabMenu(next)
+              }}
+            />
+          </Box>
+        )}
       </Box>
       <Divider bleed />
+      {tab !== DSH_TAB && (
+        <ForeignSessionPanes
+          model={foreign}
+          sourceLabel={activeSource?.label ?? tab}
+          home={home}
+          now={now}
+          query={query}
+          notice={notice}
+          railVisible={railVisible}
+          railWidth={railWidth}
+          railEntryCapacity={railEntryCapacity}
+          sessionWidth={sessionWidth}
+          rows={rows}
+          isTerminalFocused={isTerminalFocused}
+        />
+      )}
+      {tab === DSH_TAB && (
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         {railVisible && (
           <ink-box
@@ -546,11 +705,12 @@ export function SessionSupervisor({
           </Box>
           <Box flexShrink={0}>
             <Text dimColor italic>
-              <HintLine text={filtered ? t('supervisor-hint-filter') : t('supervisor-hint-list')} />
+              <HintLine text={filtered ? t('supervisor-hint-filter') : withTabHint(t('supervisor-hint-list'))} />
             </Text>
           </Box>
         </Box>
       </Box>
+      )}
 
       {rename !== undefined && (
         <Box height={1} flexShrink={0}>
@@ -609,6 +769,37 @@ export function SessionSupervisor({
               <Text color={action === 'remove' ? 'error' : undefined}>
                 {` ${index === menu.item ? '❯' : ' '} ${t(MENU_LABEL_KEYS[action])}`}
               </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {tabMenu !== undefined && tabLayout.hidden.length > 0 && (
+        <Box
+          position="absolute"
+          left={Math.max(0, Math.min(tabMenu.col - inset.x - tabMenuWidth + 2, Math.max(0, columns - tabMenuWidth)))}
+          top={Math.max(0, Math.min(tabMenu.row - inset.y + 1, Math.max(0, rows - tabLayout.hidden.length - 2)))}
+          width={tabMenuWidth}
+          height={tabLayout.hidden.length + 2}
+          flexDirection="column"
+          flexShrink={0}
+          borderStyle="round"
+          borderColor="permission"
+          backgroundColor="toolCardBackground"
+        >
+          {tabLayout.hidden.map((hidden, index) => (
+            <Box
+              key={hidden.id}
+              height={1}
+              flexShrink={0}
+              backgroundColor={index === tabMenu.item ? 'userMessageBackgroundHover' : undefined}
+              onMouseEnter={(): void => setTabMenu(current => (current === undefined ? current : { ...current, item: index }))}
+              onClick={(event): void => {
+                event.stopImmediatePropagation()
+                switchTab(hidden.id)
+              }}
+            >
+              <Text>{truncateWidth(` ${index === tabMenu.item ? '❯' : ' '} ${hidden.label}`, tabMenuWidth - 2)}</Text>
             </Box>
           ))}
         </Box>
