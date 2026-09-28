@@ -465,7 +465,7 @@ const dict = {
   'supervisor-stopped': { zh: '已停止会话「{{name}}」', en: 'Stopped session {{name}}' },
   'supervisor-stop-failed': { zh: '无法停止该会话', en: 'Could not stop that session' },
   'supervisor-stop-current': { zh: '不能停止当前正在使用的会话', en: 'The session you are attached to cannot be stopped' },
-  'supervisor-open-failed': { zh: '无法进入会话「{{name}}」· 原因见下方通知', en: 'Could not enter {{name}} · the reason is in the notification below' },
+  'supervisor-open-failed': { zh: '无法进入会话「{{name}}」· {{reason}}', en: 'Could not enter {{name}} · {{reason}}' },
   'cost-cache-rate': { zh: '缓存率 {{rate}}% · {{read}} 读 / {{write}} 写', en: 'Cache rate {{rate}}% · {{read}} read / {{write}} write' },
   'cost-context': { zh: '上下文 {{pct}}%', en: 'Context {{pct}}%' },
   'status-title': { zh: '标题   {{title}}', en: 'Title   {{title}}' },
