@@ -549,6 +549,12 @@ export const TIPS: readonly Tip[] = [
     en: 'Typing on a question row submits option + custom text',
   },
   {
+    id: 'flow-question-arrows',
+    group: 'workflow',
+    zh: '多题问卷用 ←/→ 换题，不提交；输入行要先把光标移到行首或行尾',
+    en: 'In a multi-question ask, ←/→ switches questions without submitting; on the input row the caret must already be at the edge',
+  },
+  {
     id: 'flow-question-fold',
     group: 'workflow',
     zh: '问卷面板 Ctrl+K 或点标题行折叠；挂起时 Esc/Ctrl+C 先展开，不直接取消',

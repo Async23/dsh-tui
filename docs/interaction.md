@@ -556,6 +556,7 @@ Windows `dsh-tui.cmd --resume` 使用 `~/.dsh-tui/resume.txt` 中最后选择的
 | `Space` | 多选题勾选或取消 |
 | `Tab` | 切换到自定义文本回答 |
 | `Enter` | 提交当前题 |
+| `Left` / `Right` | 在题目之间切换并保留当前草稿（不提交）。自由输入行里方向键仍移动光标，只有光标已在行首/行尾时才换题 |
 | `Esc`（第 2 题起） | 返回上一题并保留当前草稿 |
 | `Esc`（第 1 题） | 取消整批提问，模型收到 `ASK_CANCELLED` |
 | `Ctrl+C` | 从任意题取消整批提问，模型收到 `ASK_CANCELLED`（harness 侧中止仍报 `ASK_ABORTED`） |

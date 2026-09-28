@@ -4123,10 +4123,41 @@ export function Chat({
       total={questionSnapshot.total}
       answered={questionSnapshot.answered}
       initialDraft={questionSnapshot.draft}
-      onAnswer={selection => questionStore.answerCurrent(selection)}
+      onAnswer={selection => {
+        if (!questionStore.stillCurrent(questionSnapshot.key)) return
+        questionStore.answerCurrent(selection)
+      }}
       onCancel={() => questionStore.cancelCurrent()}
+      onEscape={draft => {
+        // Esc means "back" once a later question is showing, including when
+        // → and Esc share one stdin batch and this panel was mounted for
+        // question 1 (no onBack). Ctrl+C stays on onCancel: it cancels the
+        // whole ask from any question, so a same-batch → must not swallow it.
+        const live = questionStore.getSnapshot()
+        if (live?.canGoBack) {
+          // A same-batch → already saved this panel's draft on the question
+          // it left. Passing that draft into backCurrent would write it onto
+          // the question → just opened.
+          questionStore.backCurrent(
+            questionStore.stillCurrent(questionSnapshot.key) ? draft : undefined,
+          )
+          return
+        }
+        if (live !== null && questionStore.stillCurrent(questionSnapshot.key)) {
+          questionStore.cancelCurrent()
+        }
+      }}
       onBack={questionSnapshot.canGoBack
-        ? draft => questionStore.backCurrent(draft)
+        ? draft => {
+            if (!questionStore.stillCurrent(questionSnapshot.key)) return
+            questionStore.backCurrent(draft)
+          }
+        : undefined}
+      onForward={questionSnapshot.canGoForward
+        ? draft => {
+            if (!questionStore.stillCurrent(questionSnapshot.key)) return
+            questionStore.forwardCurrent(draft)
+          }
         : undefined}
       collapsed={questionMinimized}
       onExpand={() => setMinimizedQuestionKey(null)}
