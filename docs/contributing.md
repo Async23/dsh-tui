@@ -45,6 +45,21 @@ Discussions。人不能用「私下批准」、关联 issue 或粘贴维护者�
 新开（或被 reopen）的 PR 生效。在此之前开着的 PR 按旧规则处理，不会被追溯关闭，
 也不需要补 Discussion 或跟踪 issue。
 
+### 合并队列（Merge Queue）
+
+`main` 上的合并由 [Mergify](https://mergify.com) 的合并队列执行，配置在
+[`.mergify.yml`](../.mergify.yml)。两条车道互斥，由 `merge-queue` 标签分流：
+
+- **approved**：PR 拿到 1 个 approving review 后自动入队。队列把它更新到最新
+  `main`、在临时 PR 上重跑 CI，绿了自动合并。合并条件由 base 分支上的 ruleset
+  注入（批准、`ci-gate`、评论已解决、批准最后一次推送），与手动合并同一把尺。
+- **manual**：维护者给 PR 打 `merge-queue` 标签即入队，不校验 GitHub 的批准
+  要求，等价于 `gh pr merge --admin`。合并后标签自动摘掉。
+
+两条车道都要求 base 指向 `main`：stacked PR 在 retarget 到 `main` 之前不会入队。
+`on hold` 标签把 PR 挡在队列外。队列创建的临时 PR（`mergify/merge-queue/*`）是
+draft、只跑一次 CI 就关，`pr-gate` 与 `issue-link` 都按机器人放行。
+
 ## 范围（Scope）
 
 本文件适用于整个仓库。它是 `@deepseek-harness-tui/dsh-tui` 的共享开发契约，
@@ -434,7 +449,7 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 | 渲染器/布局行为 | `src/ink/` 或 Yoga 源、编译产物、CI 回归、聚焦滚动/resize/PTY 探针 |
 | 技能发现或呈现 | DSH adapter、slash 命令合并、`/skills` 与相关回归；项目维护技能放 `.agents/skills/` 且不得加入 npm 包 |
 | 用户可见的文档化行为 | 中英文 README，外加适用的配置注释/帮助文本 |
-| 贡献入口或 PR 门禁 | `docs/contributing.md`、`docs/contributing.en.md`、`.github/workflows/pr-gate.yml`、`.github/scripts/pr-intake/`、`.github/APPROVED_CONTRIBUTORS` |
+| 贡献入口或 PR 门禁 | `.mergify.yml`、`docs/contributing.md`、`docs/contributing.en.md`、`.github/workflows/pr-gate.yml`、`.github/scripts/pr-intake/`、`.github/APPROVED_CONTRIBUTORS` |
 | 包版本或依赖 | `package.json`、`pnpm-lock.yaml`、适用时的生成/发布产物；不要顺手搅动旧 npm 锁文件 |
 | 上游验证线 bump | `src/dsh-adapter/contract.ts`、`package.json` peer+dev 两组范围、随包内置的 `dsh-auth/package.json` 与 `dsh-auth/pnpm-lock.yaml`、`pnpm-workspace.yaml`、`.github/workflows/ci.yml` alpha-compat 的上游 SHA、`scripts/verify-{alpha-source,patch-surface,web-coexistence,upstream-contract}` 内的版本常量、`patch-surface.snapshot.json`、`ADAPTER.md`、`docs/user-guide.md`；步骤见 [ADAPTER.md](../ADAPTER.md) 升级流程 |
 
