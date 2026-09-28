@@ -348,6 +348,13 @@ export const SETTING_DEFINITIONS = {
 
 export type SettingKey = keyof typeof SETTING_DEFINITIONS
 
+/** /settings subpages; fields without a group sit on the main page ("general"). */
+export const SETTING_GROUPS = [
+  { id: 'status-bar', title: 'Status bar', descriptions: { zh: '底栏设置' } },
+  { id: 'shortcuts', title: 'Shortcuts', descriptions: { zh: '快捷键' } },
+  { id: 'session', title: 'Session', descriptions: { zh: '会话' } },
+] as const
+
 /**
  * Top-level Config keys the settings service may edit at runtime: every
  * defined setting's root, plus the shortcut remaps. Keys without a Config

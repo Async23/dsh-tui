@@ -19,7 +19,7 @@ const check = process.argv.includes('--check')
 const output = new URL('../lib/settings.json', import.meta.url)
 
 // URLs, not paths: a Windows path (C:\...) is not a valid import specifier.
-const { SETTING_DEFINITIONS, SHORTCUT_FIELD_META } = await import(new URL('../lib/types/settings/definitions.js', import.meta.url).href)
+const { SETTING_DEFINITIONS, SETTING_GROUPS, SHORTCUT_FIELD_META } = await import(new URL('../lib/types/settings/definitions.js', import.meta.url).href)
 const { SHORTCUT_ACTIONS } = await import(new URL('../lib/types/utils/keymap.js', import.meta.url).href)
 const { Config } = await import(new URL('../lib/types/dsh-adapter/index.js', import.meta.url).href)
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -84,6 +84,8 @@ for (const action of SHORTCUT_ACTIONS) {
   })
 }
 settings.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+const groupIds = new Set(['general', ...SETTING_GROUPS.map(group => group.id)])
+for (const setting of settings) if (!groupIds.has(setting.group)) problems.push(`${setting.key}: unknown group ${setting.group}`)
 
 if (problems.length > 0) {
   console.error(`settings.json: ${problems.length} problem(s):\n  ${problems.join('\n  ')}`)
@@ -95,6 +97,11 @@ const document = {
   package: pkg.name,
   packageVersion: pkg.version,
   namespace: 'dsh-tui',
+  // Section titles for the groups settings name; "general" is the main page.
+  groups: [
+    { id: 'general', label: { en: 'General', zh: '通用' } },
+    ...SETTING_GROUPS.map(group => ({ id: group.id, label: { en: group.title, zh: group.descriptions.zh } })),
+  ],
   settings,
 }
 const text = `${JSON.stringify(document, null, 2)}\n`

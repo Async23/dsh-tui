@@ -67,7 +67,7 @@ import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
 import { PageMargin } from '../components/PageMargin.js'
 import { normalizeSplashFont } from '../components/splashFonts.js'
-import { SHORTCUT_FIELD_META, settingField } from '../settings/definitions.js'
+import { SETTING_GROUPS, SHORTCUT_FIELD_META, settingField } from '../settings/definitions.js'
 import instances from '../ink/instances.js'
 import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from '../ink/termio/csi.js'
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, EXIT_ALT_SCREEN, SHOW_CURSOR } from '../ink/termio/dec.js'
@@ -953,11 +953,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     const unregister = settingsSections.register({
       ns: tuiSettingsNs,
       title: 'dsh-tui',
-      groups: [
-        { id: 'status-bar', title: 'Status bar', descriptions: { zh: '底栏设置' } },
-        { id: 'shortcuts', title: 'Shortcuts', descriptions: { zh: '快捷键' } },
-        { id: 'session', title: 'Session', descriptions: { zh: '会话' } },
-      ],
+      groups: [...SETTING_GROUPS],
       fields: [
         {
           ...settingField('lang'),
