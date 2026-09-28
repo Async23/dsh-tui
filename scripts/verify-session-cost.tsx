@@ -230,6 +230,37 @@ function makeProjector(state: Record<string, unknown>): { renderEvent: (event: u
   })())
 }
 
+// ═════════════════════ AC-A3b：同一条 durable 事件重投不重复计费 ═════════════════════
+// 重放/回放会把同一批 durable 事件再投一次；若按事件逐笔累加，金额会随重投
+// 线性膨胀（#1089 的目标是"算对"，双计比漏计更糟）。这里钉住按 seq 去重。
+
+{
+  const store = new SubagentActivityStore()
+  store.onSpawned('child-replay', 'deepseek-official', 'deepseek-v4-flash')
+  const usage = { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+  const first = durableMessage(7, PEAK, usage)
+  store.onSessionEvent('child-replay', first)
+  const once = store.costSnapshot()
+  // 同一个对象再投一次，以及同 seq 的等价事件再投一次：都不得再计。
+  store.onSessionEvent('child-replay', first)
+  store.onSessionEvent('child-replay', durableMessage(7, PEAK, usage))
+  const replayed = store.costSnapshot()
+  check('AC-A3b 同 seq 重投只计一次', replayed.entries[0]?.buckets.peak.input === once.entries[0]?.buckets.peak.input
+    && replayed.entries[0]?.buckets.peak.input === 1_000_000, JSON.stringify(replayed.entries))
+  check('AC-A3b 重投后金额仍是 ¥2.00', close(
+    estimateCostFromBucketsCny(replayed.entries.map(entry => ({ ...entry, scope: 'subagent' as const })))?.total ?? -1, 2.0))
+  // 新 seq 是真的又发生了一笔用量，必须照常累计。
+  store.onSessionEvent('child-replay', durableMessage(8, PEAK, usage))
+  check('AC-A3b 新 seq 照常累计', store.costSnapshot().entries[0]?.buckets.peak.input === 2_000_000,
+    JSON.stringify(store.costSnapshot().entries))
+  check('AC-A3b reset 清掉去重水位（更小的 seq 不被旧水位挡住）', (() => {
+    store.reset()
+    store.onSpawned('child-replay', 'deepseek-official', 'deepseek-v4-flash')
+    store.onSessionEvent('child-replay', durableMessage(3, PEAK, { inputTokens: 5, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }))
+    return store.costSnapshot().entries[0]?.buckets.peak.input === 5
+  })())
+}
+
 // ═════════════════════ AC-A4：主会话按模型分桶（换模型不重估） ═════════════════════
 
 {

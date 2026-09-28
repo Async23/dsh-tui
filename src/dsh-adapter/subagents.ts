@@ -35,6 +35,8 @@ export class SubagentActivityStore {
   private costByModel = new Map<string, SubagentCostEntry>()
   /** 非官方 provider / 未收录模型的用量副本（只展示 token，不计金额）。 */
   private costUnpriced = emptyCostBuckets()
+  /** 每个 agent 已消费的最大 durable 事件 seq（同一事件重投不重复计费）。 */
+  private costSeq = new Map<string, number>()
 
   private commitLine(agentId: string, kind: SubagentOutputKind, text: string): void {
     const state = this.states.get(agentId)
@@ -256,7 +258,7 @@ export class SubagentActivityStore {
           this.setTokens(agentId, data.usage)
           // durable usage 才进费用累计：live assistant/chunk 的 usage 只更新
           // 展示 token（见 setTokens 调用点），两路同时到达也只计这一路。
-          this.accumulateCost(agentId, data.usage, ev.time)
+          this.accumulateCost(agentId, data.usage, ev.time, ev.seq)
         }
         break
       }
@@ -355,11 +357,21 @@ export class SubagentActivityStore {
   }
 
   /** 一笔 durable usage 按发生时刻落 peak/idle 桶，model/provider 取事件
-   *  发生时的子代理身份；非官方/未收录同时进 unpriced 副本。 */
-  private accumulateCost(agentId: string, usage: unknown, time: unknown): void {
+   *  发生时的子代理身份；非官方/未收录同时进 unpriced 副本。
+   *
+   *  `seq` 是同一 binding 内的事件序号：重放/回放把同一条 durable 事件再投
+   *  一次时只计第一笔（重投即双计会让"并入子代理"的估算凭空变大）。判据与
+   *  `settleAssistant` 的 `settledSeq` 同源但**各自独立**——两处都要消费
+   *  同一个 seq，共用字段会让后消费的那处被前一处挡掉。 */
+  private accumulateCost(agentId: string, usage: unknown, time: unknown, seq?: unknown): void {
     const state = this.states.get(agentId)
     const delta = this.costDeltaOf(usage)
     if (state === undefined || delta === undefined) return
+    if (typeof seq === 'number') {
+      const consumed = this.costSeq.get(agentId)
+      if (consumed !== undefined && seq <= consumed) return
+      this.costSeq.set(agentId, seq)
+    }
     const provider = state.provider ?? 'subagent'
     const model = state.model ?? provider
     const key = `${provider}\u0000${model}`
@@ -425,6 +437,7 @@ export class SubagentActivityStore {
     this.streams.clear()
     this.costByModel.clear()
     this.costUnpriced = emptyCostBuckets()
+    this.costSeq.clear()
     this.notify()
   }
 
