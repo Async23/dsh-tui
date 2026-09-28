@@ -129,7 +129,15 @@ source builds, and troubleshooting, including migration from the former
 | `dsh-tui safe` | Read-only diagnostics, plugin inventory and repair guidance; `safe --rescue` builds a clean rescue profile |
 | `dsh-tui version` · `dsh-tui help` | Launcher and profile versions and usage; both work even without a `dsh` install |
 
-Other arguments go to `dsh --profile dsh-tui`. Safe mode: [Getting started](docs/getting-started.en.md).
+Leading DSH options such as `--dump-config` and `--patch <path>` are forwarded
+unchanged; other arguments go to the app in `dsh --profile dsh-tui`. Use
+`dsh-tui -- --resume=sid-1 ./notes` to send `--resume=sid-1 ./notes` as literal
+prompt text, without selecting a session or workspace. When invoking DSH
+directly, use `dsh --profile dsh-tui -- -- --resume=sid-1 ./notes`: the first
+`--` belongs to DSH, the second to the app. Host options can precede a literal
+prompt: `dsh-tui --patch ./overlay.yml -- --resume=sid-1` applies the overlay
+and sends `--resume=sid-1` as prompt text without resuming that session.
+Safe mode: [Getting started](docs/getting-started.en.md).
 
 ### Importing conversations from other agents (`dsh-tui migrate`)
 
