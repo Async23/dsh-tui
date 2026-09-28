@@ -458,6 +458,7 @@ export function Chat({
   const [timeline, setTimeline] = React.useState<TimelineSnapshot>({
     turns: [],
     activeId: null,
+    pinnedId: null,
     upId: null,
     downId: null,
   })
@@ -4408,11 +4409,13 @@ export function Chat({
   }) && !(overlay.kind === 'permission'
     && (approvalSnapshot !== null || questionSnapshot !== null || dialogSnapshot !== null))
 
-  // The sticky header pins the turn owning the viewport top row
-  // (timeline.activeId, reported by MessageList) — scrolled up to an old
-  // turn, it carries THAT turn's prompt, not the latest one.
+  // The sticky header pins the turn owning the viewport top row once its
+  // prompt has scrolled out above it (timeline.pinnedId, reported by
+  // MessageList) — scrolled up to an old turn, it carries THAT turn's
+  // prompt, not the latest one. The row stays while scrolled up and goes
+  // blank when nothing is pinned, so the viewport never shifts under it.
   // channel.rows is a live in-place array, so the lookup is per-render.
-  const anchorUserRowId = timeline.activeId
+  const anchorUserRowId = timeline.pinnedId
   const anchorUserText =
     anchorUserRowId === null
       ? null
@@ -4449,9 +4452,9 @@ export function Chat({
 
   return (
     <Box ref={wakeTickRef} flexDirection="column" flexGrow={1} width="100%">
-      {!isSticky && anchorUserText && (
+      {!isSticky && timeline.activeId !== null && (
         <PinnedTurnHeader
-          text={anchorUserText}
+          text={anchorUserText || null}
           onClick={() => {
             // Click snaps the pinned prompt to the viewport top. Jump by the
             // SAME content coordinate the
@@ -5191,20 +5194,22 @@ export function Chat({
 
 /**
  * The pinned prompt header shown above the ScrollBox while the user has
- * scrolled up. It pins the user message the transcript viewport is currently
- * showing — the topmost visible user message, or the nearest one above when only assistant
- * content fills the view — so it tracks which turn the user is reading
- * instead of always carrying the latest prompt. Fixed at 1 row so the
- * ScrollBox never shifts when the text changes.
+ * scrolled up. It pins the prompt of the turn the viewport top is showing
+ * once that prompt has scrolled out above it, so it tracks which turn the
+ * user is reading instead of always carrying the latest prompt. With no
+ * such prompt (it still sits on the top row, or the logo owns the top) the
+ * row renders blank rather than repeat on-screen text. Fixed at 1 row so
+ * the ScrollBox never shifts when the text changes or goes blank.
  */
 function PinnedTurnHeader({
   text,
   onClick,
 }: {
-  text: string
+  text: string | null
   onClick: () => void
 }): React.ReactNode {
   const { columns } = useTerminalSize()
+  if (text === null) return <Box flexShrink={0} width="100%" height={1} />
   // A one-row Box does not clip its children. Flatten hard line breaks before
   // truncating, otherwise later prompt lines paint down the transcript gutter.
   const label = cleanRenderText(`${POINTER} ${text}`, Math.max(1, columns - 1))
