@@ -835,7 +835,18 @@ export type KeyParseState = {
   mode: 'NORMAL' | 'IN_PASTE'
   incomplete: string
   pasteBuffer: string
-  /** Set by the terminal capability gate, or by a decoded win32 record. */
+  /**
+   * Host-injected platform gate: this machine MIGHT run the private win32
+   * input mode (`supportsWin32InputMode()`). Read-only — capability alone is
+   * not evidence and never lights anything by itself; only an explicit
+   * `false` closes the gate, and leaving the field absent keeps the parser's
+   * pre-gate behavior for direct callers.
+   */
+  win32Capable?: boolean
+  /**
+   * Lit by successfully decoding a win32 record. Only behind that evidence
+   * may a plain `ESC[` fragment extend the hold (see isRecordPrefix).
+   */
   win32InputMode?: boolean
   /** First capture of a buffered win32 record; never renewed by flushes. */
   win32InputStartedAt?: number
@@ -938,18 +949,24 @@ export function parseMultipleKeypresses(
   })
 
   // Keep record framing in the tokenizer, rather than converting a timed-out
-  // prefix into a key and trying to scrub its text later (#827). On Windows
-  // even the first record can split at ESC[; elsewhere require a recognizable
-  // record body before extending the timeout. A lone ESC retains its 50ms
-  // behavior, and bracketed-paste payloads remain literal.
+  // prefix into a key and trying to scrub its text later (#827). The host
+  // capability flag only says the platform MIGHT run the private mode; only a
+  // decoded record proves it does, so the two stay separate: a frame whose
+  // own shape is already record-specific holds on its own (that is how even
+  // the first record survives a split), and anything else needs an open gate
+  // plus a lit parser. A lone ESC therefore keeps its 50ms behavior on hosts
+  // that ignore DECSET 9001, and bracketed-paste payloads remain literal.
   let win32InputMode = prevState.win32InputMode ?? false
   let win32InputStartedAt = prevState.win32InputStartedAt
   let win32EscFlushedAt = prevState.win32EscFlushedAt
   let inPaste = prevState.mode === 'IN_PASTE'
   const now = Date.now()
+  // Gate × evidence. The nullish default keeps direct callers that never
+  // inject the flag on the pre-gate behavior.
+  const win32HoldAllowed = (prevState.win32Capable ?? true) && win32InputMode
   const isRecordPrefix = (value: string): boolean =>
     !inPaste && WIN32_INPUT_PREFIX_RE.test(value) &&
-    (win32InputMode || WIN32_INPUT_BODY_PREFIX_RE.test(value))
+    (WIN32_INPUT_BODY_PREFIX_RE.test(value) || win32HoldAllowed)
 
   if (win32InputStartedAt !== undefined && now - win32InputStartedAt >= WIN32_INPUT_GRACE_MS) {
     tokenizer.reset()
@@ -964,7 +981,7 @@ export function parseMultipleKeypresses(
     if (
       prevState.mode !== 'IN_PASTE' && tokenizer.buffer() === '' &&
       /^\[(?:[\d;]|$)/.test(inputString) &&
-      (win32InputMode || WIN32_INPUT_BODY_PREFIX_RE.test('\x1b' + inputString))
+      (WIN32_INPUT_BODY_PREFIX_RE.test('\x1b' + inputString) || win32HoldAllowed)
     ) inputString = '\x1b' + inputString
     win32EscFlushedAt = undefined
   }
@@ -1330,6 +1347,9 @@ export function parseMultipleKeypresses(
         ? '\x1b'
         : ''),
     pasteBuffer,
+    // The host gate rides along: App replaces its state with this object on
+    // every read, and the hold must stay closed for the whole session.
+    win32Capable: prevState.win32Capable,
     win32InputMode,
     win32InputStartedAt,
     win32EscFlushedAt,

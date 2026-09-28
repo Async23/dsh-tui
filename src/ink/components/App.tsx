@@ -220,7 +220,8 @@ export default class App extends PureComponent<Props, State> {
 	internal_eventEmitter = new EventEmitter();
 	keyParseState: KeyParseState = {
 		...INITIAL_STATE,
-		win32InputMode: supportsWin32InputMode(),
+		// Capability gate only — the parser lights up once it decodes a record.
+		win32Capable: supportsWin32InputMode(),
 	};
 	// Timer for flushing incomplete escape sequences
 	incompleteEscapeTimer: NodeJS.Timeout | null = null;
