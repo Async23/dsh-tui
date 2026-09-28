@@ -882,14 +882,14 @@ export function Chat({
    * renders with stale folds/expansion/selection — the "entered a freshly
    * dispatched session and it renders wrong" bug. Reset the same set `/new`
    * resets, plus the search overlay and the side question, and repaint the
-   * transcript from the top.
+   * transcript pinned to the bottom so rewinds and model switches can continue.
    */
   const repaintTranscript = (): void => {
     const ink = instances.get(process.stdout) ?? instances.values().next().value
     // Wait one task so React commits the new session's tree before the
     // scrollback clear repaints (same pattern as `/new`).
     setTimeout(() => {
-      handle?.scrollTo(0)
+      handle?.scrollToBottom()
       ink?.clearScrollbackAndRedraw()
     }, 0)
   }

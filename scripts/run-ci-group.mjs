@@ -435,6 +435,10 @@ const GROUPS = {
 // 日志、标题来源判定、revision 命中/失效（钉住 revision 改写日志作
 // 判据）、索引自愈与剪枝、**终态等价**（增量索引 == 全新构建）。
     ["verify-session-index", ['node', 'scripts/verify-session-index.mjs']],
+// 真 JSONL 混合版本库：无关追加不重读旧会话摘要，文件改写/替换仍须失效。
+    ["verify-session-artifact-cache", ['node', 'scripts/verify-session-artifact-cache.mjs']],
+// 跨进程首屏快照：不等慢枚举、来源隔离、失败保留、空库清空与迟到守卫。
+    ["verify-session-list-snapshot", ['node', 'scripts/verify-session-list-snapshot.mjs']],
 // 空会话须完整读取后才能判定：截断/损坏、帧数上限、纯图片输入与旧缓存
 // 不得隐藏真实历史或进入清理名单；真实 JSONL 重开验证落盘后的可见性。
     ['verify-session-emptiness', ['node', '--import', 'tsx/esm', 'scripts/verify-session-emptiness.ts']],
@@ -720,7 +724,9 @@ const GROUPS = {
     ["repro-collapse-shrink", ['node', '--import', 'tsx/esm', 'scripts/repro-collapse-shrink.tsx']],
 // /provider 向导回归：catalog/custom 两分支的 profile 形状、凭据回滚
 // （覆盖时恢复旧 key 而非误删）、env shadow 跳过、rc.6 兼容守卫、
-// hideCustomInput 逐题标记。
+// hideCustomInput 逐题标记；模型列表编辑的双通道发现（内置目录 + 无
+// provider 字段的端点实拉）合并、线上新增标记、目录外 id 容量写入、
+// 实拉失败降级与匿名探测请求形状。
     ["verify-provider-wizard", ['node', 'scripts/verify-provider-wizard.mjs']],
 // /login 凭据状态回归（issue #213）：只通过 credentials.describe()
 // 展示 configured/source/writable，managed key 不得误报或泄露值。

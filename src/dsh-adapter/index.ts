@@ -9,10 +9,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { SessionModeSpec } from '../sessionModes.js'
-import { DEFAULT_STATUS_BAR, normalizePageMargin, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { DEFAULT_STATUS_BAR, normalizePageMargin, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SHORTCUT_ACTIONS, type ShortcutActionId } from '../utils/keymap.js'
 import { normalizeSplashFont, type SplashFontSetting } from '../components/splashFonts.js'
 import { editableConfig, type RuntimeConfig } from './compat/settings.js'
+import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
 
 export const name = 'dsh-tui'
 // `tuiWorkspaces` must stay OUT of this code-level inject (issue #183): the
@@ -144,12 +145,14 @@ export interface Config {
    *  than the viewport or of an unsupported type keeps the fenced source.
    *  On by default; off always shows the source. */
   mermaidDiagrams?: boolean
-  /** LaTeX math (settings `dsh-tui.latexMath`): `$…$` / `\(…\)` inline and
-   *  `$$…$$` / `\[…\]` blocks in replies render as Unicode text — Greek and
-   *  operator symbols, scripts, fractions and operator limits stacked in
-   *  display blocks, matrices, cases. No TeX install or image protocol.
-   *  Unsupported, still-streaming, or too-wide formulas keep their source.
-   *  On by default; off always shows the source. */
+  /** LaTeX math (settings `dsh-tui.mathRendering`): `$…$` / `\(…\)` inline
+   *  and `$$…$$` / `\[…\]` blocks in replies. `auto` (default) uses the best
+   *  available renderer — today Unicode text: Greek and operator symbols,
+   *  scripts, fractions and operator limits stacked in display blocks,
+   *  matrices, cases; `unicode` pins it; `source` always shows the TeX.
+   *  Unsupported, still-streaming, or too-wide formulas keep their source. */
+  mathRendering?: MathRendering
+  /** @deprecated Use `mathRendering`; `false` still means `source`. */
   latexMath?: boolean
   /** Auto recap on open (settings `dsh-tui.recapOnOpen`): opening or resuming a
    *  session summarizes its recent activity into a dim line at the bottom of
@@ -220,7 +223,8 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
   expandEditor: Schema.boolean().default(true),
   smoothStreaming: Schema.boolean().default(true),
   mermaidDiagrams: Schema.boolean().default(true),
-  latexMath: Schema.boolean().default(true),
+  mathRendering: Schema.union(['auto', 'image', 'unicode', 'source']),
+  latexMath: Schema.boolean(),
   // No `.default()` on purpose (the volatile wrapper swallows it; same rule as
   // splashFont): an unset key must stay distinguishable from an explicit
   // `false`, and the read site already treats undefined as on
@@ -260,12 +264,7 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
       permission: Schema.string().required(false),
     }),
   ).required(false),
-}), [
-  'diffLayout', 'thinkingFold', 'toolBackground', 'scrollGutter', 'pageMargin',
-  'foldTerminalCommand', 'promptSessionLabel', 'expandEditor', 'smoothStreaming',
-  'mermaidDiagrams', 'latexMath', 'recapOnOpen', 'effortDefault', 'statusBar', 'whale', 'whaleIdle', 'whaleGirl', 'splashFont', 'minimal',
-  'lang', 'fullscreen', 'terminalImages', 'shortcuts',
-])
+}), EDITABLE_CONFIG_KEYS as readonly (keyof Config)[])
 
 /**
  * Start the interactive TUI front door, delegating to the JSX implementation
