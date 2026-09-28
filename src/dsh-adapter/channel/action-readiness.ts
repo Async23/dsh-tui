@@ -43,6 +43,9 @@ export type ChannelActionDelegates = Pick<ChannelState,
   | 'listFiles'
   | 'listSessions'
   | 'previewSession'
+  | 'listForeignSources'
+  | 'listForeignSessions'
+  | 'importForeignSession'
   | 'bindApprovalStore'
   | 'agentViewRows'
   | 'subscribeAgentView'
@@ -121,6 +124,9 @@ export function createChannelActionMethods(
     listFiles: () => getReadyActions().listFiles(),
     listSessions: onEnriched => getReadyActions().listSessions(onEnriched),
     previewSession: sessionId => getReadyActions().previewSession(sessionId),
+    listForeignSources: () => getReadyActions().listForeignSources(),
+    listForeignSessions: (agentId, onRow) => getReadyActions().listForeignSessions(agentId, onRow),
+    importForeignSession: (agentId, key) => getReadyActions().importForeignSession(agentId, key),
     bindApprovalStore: store => getReadyActions().bindApprovalStore(store),
     agentViewRows: () => getReadyActions().agentViewRows(),
     subscribeAgentView: listener => getReadyActions().subscribeAgentView(listener),

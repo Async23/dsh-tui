@@ -24,6 +24,7 @@ import { createModeActions } from './channel/mode-actions.js'
 import { createFileActions } from './channel/file-actions.js'
 import { createReportActions } from './channel/reports.js'
 import { createSessionMetadataActions } from './channel/session-metadata.js'
+import { createForeignBrowser } from './migrate/browse.js'
 import { markChannelReadDirty } from '../adapter/channel/read-view.js'
 import { createAgentViewProjection } from './channel/agent-view-projection.js'
 import { createJobProjection } from './channel/job-projection.js'
@@ -639,6 +640,7 @@ function createChannelWithOwner(
     runtime: adapterRuntime,
     grantStore: currentGrantStore,
   })
+  const foreignBrowser = createForeignBrowser(() => ctx.get('sessionPersistence'), owner.signal)
   sessionMetadataActions = createSessionMetadataActions(ctx, {
     owner,
     binding,
@@ -977,6 +979,9 @@ function createChannelWithOwner(
     listFiles: fileActions.listFiles,
     listSessions: sessionMetadataActions.listSessions,
     previewSession: sessionMetadataActions.previewSession,
+    listForeignSources: foreignBrowser.listSources,
+    listForeignSessions: foreignBrowser.listSessions,
+    importForeignSession: foreignBrowser.importSession,
     bindApprovalStore: agentView.bindApprovalStore,
     agentViewRows: agentView.rows,
     subscribeAgentView: agentView.subscribe,
