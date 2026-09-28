@@ -222,7 +222,7 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
   expandEditor: Schema.boolean().default(true),
   smoothStreaming: Schema.boolean().default(true),
   mermaidDiagrams: Schema.boolean().default(true),
-  mathRendering: Schema.union(['auto', 'unicode', 'source']),
+  mathRendering: Schema.union(['auto', 'image', 'unicode', 'source']),
   latexMath: Schema.boolean(),
   // No `.default()` on purpose (the volatile wrapper swallows it; same rule as
   // splashFont): an unset key must stay distinguishable from an explicit

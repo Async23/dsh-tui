@@ -191,6 +191,7 @@
     "verify:mermaid-diagram": "node --import tsx/esm scripts/verify-mermaid-diagram.tsx",
     "verify:latex-math": "node --import tsx/esm scripts/verify-latex-math.tsx",
     "verify:math-renderer": "node --import tsx/esm scripts/verify-math-renderer.tsx",
+    "verify:math-block-image": "node --import tsx/esm scripts/verify-math-block-image.tsx",
     "verify:btw": "node --import tsx/esm scripts/verify-btw.tsx",
     "verify:adapter-skeleton": "node --import tsx/esm scripts/verify-adapter-skeleton.ts",
     "verify:adapter-ports": "node --import tsx/esm scripts/verify-adapter-ports.ts",

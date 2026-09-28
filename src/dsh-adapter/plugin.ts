@@ -683,7 +683,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         // Same no-default rule: applyDisplay resolves `?? config.mermaidDiagrams ?? true`.
         mermaidDiagrams: Schema.boolean(),
         // Same no-default rule: resolveMathRendering falls back to cordis.yml.
-        mathRendering: Schema.union(['auto', 'unicode', 'source']),
+        mathRendering: Schema.union(['auto', 'image', 'unicode', 'source']),
         // Pre-`mathRendering` user layers; `false` still resolves to `source`.
         latexMath: Schema.boolean(),
         // No default on purpose: unset keeps the boot chain decisive
@@ -1242,11 +1242,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           path: ['mathRendering'],
           label: 'LaTeX math',
           descriptions: { zh: 'LaTeX 公式' },
-          hint: 'How LaTeX math in replies ($…$, \\(…\\), $$…$$, \\[…\\]) renders. Auto: the best available renderer — today Unicode text with symbols, sub/superscripts, stacked fractions and limits, matrices, cases. Unicode: always that. Source: keep the TeX as written. Unsupported, still-streaming, or too-wide formulas keep their source. Applies immediately.',
-          hintDescriptions: { zh: '回复中的 LaTeX 公式（$…$、\\(…\\)、$$…$$、\\[…\\]）怎么显示。自动：用当前最好的渲染方式——目前是 Unicode 文本（符号、上下标、竖排的分数与上下限、矩阵、分段函数）。Unicode：固定用它。源码：保留原始 TeX。不支持、仍在流式输出或比终端宽的公式保留源码。立即生效。' },
+          hint: 'How LaTeX math in replies ($…$, \\(…\\), $$…$$, \\[…\\]) renders. Auto: the best available renderer — today Unicode text with symbols, sub/superscripts, stacked fractions and limits, matrices, cases. Image: typeset block formulas as images in terminals with graphics support (Kitty, Ghostty, WezTerm, iTerm2…); Unicode elsewhere and for inline math. Unicode: always Unicode text. Source: keep the TeX as written. Unsupported, still-streaming, or too-wide formulas keep their source. Applies immediately.',
+          hintDescriptions: { zh: '回复中的 LaTeX 公式（$…$、\\(…\\)、$$…$$、\\[…\\]）怎么显示。自动：用当前最好的渲染方式——目前是 Unicode 文本（符号、上下标、竖排的分数与上下限、矩阵、分段函数）。图片：在支持图形的终端（Kitty、Ghostty、WezTerm、iTerm2 等）里把块级公式排版成图片，其他终端与行内公式仍用 Unicode。Unicode：固定用 Unicode 文本。源码：保留原始 TeX。不支持、仍在流式输出或比终端宽的公式保留源码。立即生效。' },
           kind: 'select',
           options: [
             { value: 'auto', label: 'Auto', descriptions: { zh: '自动' } },
+            { value: 'image', label: 'Image', descriptions: { zh: '图片' } },
             { value: 'unicode', label: 'Unicode', descriptions: { zh: 'Unicode' } },
             { value: 'source', label: 'Source', descriptions: { zh: '源码' } },
           ],
