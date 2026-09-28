@@ -4135,7 +4135,12 @@ export function Chat({
         // whole ask from any question, so a same-batch → must not swallow it.
         const live = questionStore.getSnapshot()
         if (live?.canGoBack) {
-          questionStore.backCurrent(draft)
+          // A same-batch → already saved this panel's draft on the question
+          // it left. Passing that draft into backCurrent would write it onto
+          // the question → just opened.
+          questionStore.backCurrent(
+            questionStore.stillCurrent(questionSnapshot.key) ? draft : undefined,
+          )
           return
         }
         if (live !== null && questionStore.stillCurrent(questionSnapshot.key)) {

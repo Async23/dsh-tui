@@ -334,7 +334,7 @@ const escKey = escStore.getSnapshot()?.key ?? ''
 const escapeLikeChat = (draft: { selected: string[] }): void => {
   const live = escStore.getSnapshot()
   if (live?.canGoBack) {
-    escStore.backCurrent(draft)
+    escStore.backCurrent(escStore.stillCurrent(escKey) ? draft : undefined)
     return
   }
   if (live !== null && escStore.stillCurrent(escKey)) escStore.cancelCurrent()
@@ -356,10 +356,17 @@ const escApp = await render(React.createElement(AskUserQuestionPanel, {
   },
 }), { stdout, stdin, stderr: new FakeStdout(), exitOnCtrlC: false, patchConsole: false })
 await settle(() => screen().includes('第一题取消'))
-stdin.write('\x1b[C\x1b')
-await settle(() => escStore.getSnapshot()?.position === 1)
+stdin.write('hi\x1b[C\x1b')
+assert.ok(await settled(() => {
+  const snap = escStore.getSnapshot()
+  return snap?.position === 1 && snap.draft?.custom === 'hi'
+}))
 assert.equal(escCancelled, false)
-assert.equal(escStore.getSnapshot()?.question.question, '第一题取消')
+assert.deepEqual(escStore.getSnapshot()?.draft, { selected: ['Alpha'], custom: 'hi' })
+escStore.forwardCurrent()
+assert.equal(escStore.getSnapshot()?.position, 2)
+assert.equal(escStore.getSnapshot()?.draft, undefined)
+escStore.backCurrent()
 let escRejected = false
 void escPromise.catch(() => { escRejected = true })
 await sleep(40) // 固定窗:探针 → 后的 Esc 不得把整批问券取消掉
