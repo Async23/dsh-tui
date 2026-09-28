@@ -227,13 +227,15 @@ node --import tsx/esm scripts/verify-askpanel-layout.tsx
 node --import tsx/esm scripts/repro-toolcards.tsx
 ```
 
-CI 的测试 job 设置 `DSH_TUI_LANG=zh` 作为兜底，但独立执行的回归不能依赖它。
-UI 语言在 import 时按 `DSH_TUI_LANG` → `~/.dsh-tui/lang.json` → 系统 locale
-解析。断言或定位界面文案的脚本（包括「不出现某文案」的否定断言）必须自行固定
-与断言一致的语言：动态 import 前写 `process.env.DSH_TUI_LANG = 'zh'` / `'en'`；
-静态 import 的中文脚本把 `import './lib/default-lang-zh.mjs'` 放在其他 import 前。
-不要用 `??=` 保留宿主值，也不要按宿主语言选择不同断言。已逐场景调用 `setLang`
-的双语回归和仅用中文作输入数据的宽度/剪贴板等测试不需要重复设置。
+CI 的测试 job 设置 `DSH_TUI_LANG=zh` 作为兜底，但独立执行的回归不能依赖它；
+本地跑尚未固定语言的脚本时，带上 `DSH_TUI_LANG=zh`，否则 lang.json 为 en 或
+locale 为 `en_US` 的机器会误报失败。UI 语言在 import 时按 `DSH_TUI_LANG` →
+`~/.dsh-tui/lang.json` → 系统 locale 解析。断言或定位界面文案的脚本（包括
+「不出现某文案」的否定断言）必须自行固定与断言一致的语言：动态 import 前写
+`process.env.DSH_TUI_LANG = 'zh'` / `'en'`；静态 import 的中文脚本把
+`import './lib/default-lang-zh.mjs'` 放在其他 import 前。不要用 `??=` 保留宿主值，
+也不要按宿主语言选择不同断言。已逐场景调用 `setLang` 的双语回归和仅用中文作
+输入数据的宽度/剪贴板等测试不需要重复设置。
 `node scripts/verify-regression-language.mjs`（先构建，已接入 `channel-ui` CI 组）
 在临时 HOME 下覆盖与脚本预期语言相反的 locale、持久化偏好和环境变量三种启动条件，
 同时保护中文正向断言和英文否定断言。`verify-ime-cursor`、`repro-suggestion-click`
@@ -447,10 +449,18 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 - 发布由 tag 驱动：`.github/workflows/publish.yml` 要求 `v*` tag 与
   `package.json` 版本完全一致，随后构建、跑聚焦回归并发布 npm。版本变更与
   tag 是发布操作，不是日常清理。
-- Release note 带贡献者署名：建 GitHub Release 用
-  `gh release create vX.Y.Z --notes-file notes.md --generate-notes`。
-  - 手写摘要在前，GitHub 在后自动追加 What's Changed（PR 标题 + 作者 + 链接）、
-    New Contributors 与 Full Changelog；`.github/release.yml` 从自动清单里排除 bot。
+- Release note 带贡献者署名，GitHub Release 不手建：`publish.yml` 发布 npm 后
+  自动创建该 tag 的 Release，正文用 GitHub Release Notes API 生成 What's Changed
+  （PR 标题 + 作者 + 链接）、New Contributors 与 Full Changelog；
+  `.github/release.yml` 从自动清单里排除 bot。Release 缺 `SHA256SUMS` 所列任一资产时，
+  同一 run 构建并上传整合包（重跑也会补齐）。
+  - 可选手写摘要：打 tag 前提交 `.github/release-notes/vX.Y.Z.md`，自动清单接在它后面；
+    没有该文件就只有自动清单。
+  - 自动清单前有 `<!-- dsh-tui:generated-notes -->` 标记。Release 已存在（重跑、或维护者
+    先手建）时只更新不失败：有该标记或 `## What's Changed` 就不动；否则把自动清单追加
+    在原正文后面，绝不覆盖。
+  - 补发已有 tag 的 Release note：Actions → Publish → Run workflow → 填 tag，
+    只处理正文，不发布 npm、不构建整合包。
   - 手写摘要中来自外部贡献者的条目在末尾标 `（#PR号 by @用户名）`，
     维护者自己的条目不标；裸写 `#123` 与 `@user`，GitHub 渲染成链接。
 - 移交代码改动前检查 `git diff --check`、源码 diff、生成 diff 与 `git status`，
