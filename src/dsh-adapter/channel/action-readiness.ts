@@ -59,6 +59,7 @@ export type ChannelActionDelegates = Pick<ChannelState,
   | 'deleteSession'
   | 'renameSessionTo'
   | 'compact'
+  | 'cancelCompact'
   | 'runExternalCommand'
   | 'runExternalCommandOutcome'
   | 'pushLocal'
@@ -119,7 +120,7 @@ export function createChannelActionMethods(
     sideQuestion: (question, options) => getReadyActions().sideQuestion(question, options),
     listFileCandidates: (query, options) => getReadyActions().listFileCandidates(query, options),
     listFiles: () => getReadyActions().listFiles(),
-    listSessions: () => getReadyActions().listSessions(),
+    listSessions: onEnriched => getReadyActions().listSessions(onEnriched),
     previewSession: sessionId => getReadyActions().previewSession(sessionId),
     bindApprovalStore: store => getReadyActions().bindApprovalStore(store),
     agentViewRows: () => getReadyActions().agentViewRows(),
@@ -137,6 +138,7 @@ export function createChannelActionMethods(
     deleteSession: sessionId => getReadyActions().deleteSession(sessionId),
     renameSessionTo: (sessionId, title) => getReadyActions().renameSessionTo(sessionId, title),
     compact: () => getReadyActions().compact(),
+    cancelCompact: () => getReadyActions().cancelCompact(),
     runExternalCommand: (name, rawInput) => getReadyActions().runExternalCommand(name, rawInput),
     runExternalCommandOutcome: (name, rawInput, images) => getReadyActions().runExternalCommandOutcome(name, rawInput, images),
     pushLocal: (title, lines) => getReadyActions().pushLocal(title, lines),

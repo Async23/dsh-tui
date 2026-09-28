@@ -4,6 +4,7 @@ import type { InputConvergence } from './input-actions.js'
 import type { ChannelBinding } from './binding.js'
 import type { ChannelOwner } from './owner.js'
 import { type createChannelProjection } from './projection.js'
+import { isTokenDelta, tokenDeltaChars } from './usage.js'
 import type { ChannelState } from './types.js'
 
 /**
@@ -17,12 +18,12 @@ export function createBindingEvents(ctx: Context, deps: {
   owner: ChannelOwner
   binding: ChannelBinding
   state: ChannelState
-  activity: {
-    start(agent: ChannelBinding['agent']): void
-    stop(): void
-    onAgentStatus(status: ChannelBinding['agent']['status']): unknown
-    onSessionEvent(event: unknown): unknown
-  }
+  /** Read the activity projection's current value for a freshly bound session.
+   *  A projection value only arrives when it changes, so a resumed or
+   *  reattached session needs this read to show its line before the next event.
+   *  The line's semantics live in the working-activity plugin: this app folds
+   *  nothing itself and forwards no events. */
+  seedActivity?(session: unknown): void
   inputConvergence: InputConvergence
   selection: ModelSelectionRef
   modelActions: { applyPreferredEffort(): Promise<void>; selection: ModelSelectionRef }
@@ -53,7 +54,7 @@ export function createBindingEvents(ctx: Context, deps: {
       deps.state.agentBindingGeneration = deps.binding.bind()
       deps.inputConvergence.cancelInFlight = false
       deps.inputConvergence.interruptSeq += 1
-      deps.activity.start(deps.binding.agent)
+      deps.seedActivity?.(deps.binding.agent.session)
       deps.modelActions.selection.current = undefined
       deps.modelActions.selection.assembled = undefined
       if (deps.binding.agent.options?.model === undefined && deps.state.provider !== '' && deps.state.model !== '') {
@@ -107,14 +108,12 @@ export function createBindingEvents(ctx: Context, deps: {
       on('agent/status', ({ agent: subject, status }) => {
         if (!current() || subject !== capture.agent) return
         deps.state.status = status
-        deps.activity.onAgentStatus(status)
         if (status === 'idle') reconcileRetiredProjection('idle')
         deps.state.emit()
       })
       on('agent/disposed', ({ agent: subject }) => {
         if (!current() || subject !== capture.agent) return
         deps.state.status = 'disposed'
-        deps.activity.stop()
         reconcileRetiredProjection('disposed')
         deps.state.emit()
       })
@@ -147,7 +146,6 @@ export function createBindingEvents(ctx: Context, deps: {
         // edges) reach the dashboard through the same firehose; they are not
         // transcript rows and render below remains untouched by them.
         deps.subagents.onParentEvent?.(event)
-        deps.activity.onSessionEvent(event)
         deps.modeActions.onSessionEvent(subject, event)
         deps.projector.renderEvent(event)
         if (event.type === 'assistant/chunk') deps.state.emitStream()
@@ -174,6 +172,35 @@ export function createBindingEvents(ctx: Context, deps: {
       on('subagent/end' as never, (info: { id: string; stopReason: string; lastAssistantMessage?: unknown[] }) => {
         if (current()) deps.subagents.onEnd(info)
       })
+      /**
+       * Live compaction progress. The summarizer is one `ctx.llm.stream()`
+       * call, so its chunks are the only work signal a compaction has between
+       * `compaction/start` and `compaction/end` (dsh-llm tags the call
+       * `purpose: 'compaction'`, and a manual one runs while the session is
+       * idle, so it cannot be confused with the foreground turn's stream).
+       * Everything else passes through untouched: the original iterable is
+       * returned for any other purpose or session.
+       */
+      const disposeCompactionStream = ctx.on('llm/stream', (options, next) => {
+        const stream = next()
+        if (options.purpose !== 'compaction') return stream
+        if (options.sessionId === undefined || String(options.sessionId) !== String(session.id)) return stream
+        return (async function* compactionStream() {
+          for await (const chunk of stream) {
+            const compaction = deps.state.compaction
+            if (compaction !== undefined && isTokenDelta(chunk)) {
+              deps.state.compaction = {
+                ...compaction,
+                phase: 'summary',
+                outputChars: compaction.outputChars + tokenDeltaChars(chunk),
+              }
+              deps.state.emitStream()
+            }
+            yield chunk
+          }
+        })()
+      })
+      register(disposeCompactionStream)
     } catch (error) {
       deps.owner.dispose()
       throw error
