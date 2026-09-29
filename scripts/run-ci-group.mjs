@@ -316,6 +316,16 @@ const GROUPS = {
 // 且有提示、已被本轮取走时如实报「撤不回来」且副本留在队列、文本不匹配的排队
 // 项一律不动。
     ["verify-prompt-history-queue-retract", ['node', 'scripts/verify-prompt-history-queue-retract.mjs']],
+// Shift+Tab 会话模式回归（真实 PromptInput + `\x1b[Z`）：一次按键恰好一次
+// cycleMode、不吃发送/排队；并钉住按键入口的失败契约——桩返回 rejected
+// promise 时入口必须自己兜住（通知 + 无 unhandledRejection + 处理器仍活），
+// 这条在缺 `.catch` 时必红。
+    ["verify-shift-tab-mode", ['node', 'scripts/verify-shift-tab-mode.mjs']],
+// 权限模式（Shift+Tab 循环 / `/permission`）真实 channel 回归：快照冻结、
+// 动态 preset 进循环、异步确认窗口、未确认 fail-closed、plan 往返身份记忆、
+// 不安全身份剔除，以及被内核拒绝的写入必须"报错不 reject"（否则按键入口
+// 丢弃的 promise 会变成 unhandledRejection 把进程带走）。
+    ["verify-permission-modes", ['node', 'scripts/verify-permission-modes.mjs']],
   ],
   'session-workspace': [
 // 跨代理会话迁移回归（claude-code/codex/omp/zcode/grok-build → DSH sessions）：
