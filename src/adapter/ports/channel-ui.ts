@@ -175,7 +175,18 @@ export interface ChannelUi {
   readonly minimalUi: boolean
   /** @deprecated Pre-rename alias of {@link minimalUi}; reads the same flag.
    *  Kept because plugin scenes receive this port through
-   *  `TuiSceneProps.channel` (a published surface). Use `minimalUi`. */
+   *  `TuiSceneProps.channel` (a published surface). Use `minimalUi`.
+   *
+   *  REMOVAL: v0.12 — the first minor after the rename shipped in v0.11.2,
+   *  which is the one-minor deprecation window `docs/plugins.md` promises for
+   *  a frozen seam. Delete `minimal` (and `setMinimal()` below, plus the
+   *  `'setMinimal': 'mutate'` row in `adapter/channel/ui-policy.ts`) in
+   *  v0.12, gated on one concrete audit: scan the scene-plugin consumption
+   *  surface — this repo's `src/**` re-exports and every plugin reached
+   *  through `TuiSceneProps.channel` on the dsh-tui-ecosystem org — for a
+   *  read of `.minimal` or a call to `.setMinimal(`. Zero consumer hits →
+   *  delete in v0.12; a hit found at that cut is migrated in the same
+   *  release instead of pushing the removal out again. */
   readonly minimal: boolean
   /** Whether the working-activity line is shown (config.activity); the line
    * itself is read from the plugin's session projection, not this port. */
@@ -623,6 +634,10 @@ export interface ChannelUi {
   /** Apply a minimal-UI change (see the public Channel type). */
   setMinimalUi(enabled: boolean): void
   /** @deprecated Pre-rename alias of {@link setMinimalUi}. Kept for plugin
-   *  scenes that call `channel.setMinimal()`; use `setMinimalUi`. */
+   *  scenes that call `channel.setMinimal()`; use `setMinimalUi`.
+   *
+   *  REMOVAL: v0.12, under the same audit as `minimal` above — a scene-plugin
+   *  consumption scan of `.minimal` / `.setMinimal(` with zero remaining
+   *  callers. */
   setMinimal(enabled: boolean): void
 }

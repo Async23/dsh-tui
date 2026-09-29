@@ -99,6 +99,23 @@ if (!/setMinimal\(enabled: boolean\): void/.test(portSource)) fail('ChannelUi �
 if ((portSource.match(/@deprecated/g) ?? []).length < 2) fail('ChannelUi 的 minimal / setMinimal 别名缺少 @deprecated 标注')
 if (!/@deprecated[^\n]*minimalUi/i.test(portSource)) fail('ChannelUi 的别名注释没有指向 minimalUi')
 if (!/@deprecated[^\n]*setMinimalUi/.test(portSource)) fail('ChannelUi 的别名注释没有指向 setMinimalUi')
+// 只说"deprecated"不够：没有可判定的移除条件（版本 + 何时算安全）别名就会
+// 一直留着，场景插件也就永远没有收敛的那一天。两个别名的注释都必须写明。
+// 按行回溯到最近的 `/**`：别名注释的正文里可能自带 `/**`（路径 glob），
+// 用 lastIndexOf 定位会被它带偏。
+function precedingDocComment(source: string, declaration: RegExp): string {
+  const lines = source.split('\n')
+  const at = lines.findIndex(line => declaration.test(line))
+  if (at < 0) return ''
+  let start = at
+  while (start > 0 && !lines[start]!.trimStart().startsWith('/**')) start -= 1
+  return lines.slice(start, at + 1).join('\n')
+}
+for (const declaration of [/readonly minimal: boolean/, /setMinimal\(enabled: boolean\): void/]) {
+  const comment = precedingDocComment(portSource, declaration)
+  if (!/REMOVAL/.test(comment)) fail('ChannelUi 的 deprecated 别名注释缺少 REMOVAL 移除条件（"以后再看"不可判定）')
+  if (!/v\d+\.\d+/.test(comment)) fail('ChannelUi 的 deprecated 别名注释没有写明移除条件的目标版本（如 v0.12）')
+}
 // 只看类型的别名断言管不住实现：shadow 模式下的写守卫由 ui-policy 的效果分级决定。
 // 旧名一旦被降级成 'read-only'，场景插件就能在 passive/replay shadow 下真的改状态
 // （verify-channel-ui 那一档是 `if (effect !== 'mutate') continue`，会静默跳过）。
