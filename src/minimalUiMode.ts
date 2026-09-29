@@ -8,8 +8,9 @@
  *
  * This is the INTERFACE switch only. It is unrelated to the kernel's agent
  * preset `minimal` (极简模式 / "Minimal"), which changes the model-facing
- * world (two tools, no compaction, no plan mode). Renamed from `minimalMode`
- * so the two concepts cannot be read as one.
+ * world (a single persistent-shell tool — bash on POSIX, pwsh on Windows —
+ * with no compaction, no plan mode and no runtime context). Renamed from
+ * `minimalMode` so the two concepts cannot be read as one.
  */
 
 let minimalUi = false
