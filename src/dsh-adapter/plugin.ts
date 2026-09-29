@@ -317,10 +317,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const userQuestions = ctx.get('userQuestions') ?? new UserQuestionService(ctx)
   ctx.plugin(toolAskUser)
   // The host-level tool mount above is intentional for the TUI and for user
-  // presets, but the official Minimal preset is a strict two-tool trajectory
-  // (persistent bash + str_replace_editor). Filter only that preset at the
-  // final assembly boundary. Reading the session on every assembly also makes
-  // blank-session /preset switches and resumed sessions behave correctly.
+  // presets, but the official Minimal preset is a single-tool trajectory (one
+  // persistent shell: bash on POSIX, pwsh on Windows). Filter only that preset
+  // at the final assembly boundary. Reading the session on every assembly also
+  // makes blank-session /preset switches and resumed sessions behave correctly.
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
     const assembled = await next()
     const presetId = context.agent === undefined ? undefined : runningPresetOf(context.agent.session)
@@ -740,8 +740,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         // (undefined → daily), so cordis.yml stays decisive and junk lands on
         // daily.
         splashFont: Schema.string(),
-        // Minimal mode: strips the header splash, emoji glyphs, and
-        // decorative colors; code highlight and tool colors stay.
+        // Minimal UI (极简界面, settings key `minimal` — never renamed): strips
+        // the header splash, emoji glyphs, and decorative colors; code highlight
+        // and tool colors stay. Unrelated to the kernel agent preset `minimal`.
         minimal: Schema.boolean().default(false),
         // No default on purpose: an unset `lang` keeps the field showing
         // the effective language (see the section's format below) and lets
@@ -815,9 +816,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       if (shadow) return
       channel.setSplashFont(normalizeSplashFont(value.splashFont ?? config.splashFont))
     }
-    const applyMinimal = (value: { minimal?: boolean }): void => {
+    const applyMinimalUi = (value: { minimal?: boolean }): void => {
       if (shadow) return
-      channel.setMinimal(value.minimal ?? false)
+      // `value.minimal` is the persisted settings key (never renamed); the
+      // channel member is the minimal-UI flag, NOT the kernel preset.
+      channel.setMinimalUi(value.minimal ?? false)
     }
     // Renderer settings are resolved before mount; later edits wait for restart.
     const applyRendererSettings = (value: SettingsValue): void => {
@@ -898,7 +901,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       applyWhaleIdle(next)
       applyWhaleGirl(next)
       applySplashFont(next)
-      applyMinimal(next)
+      applyMinimalUi(next)
       applyLang(next)
       applyDisplay(next)
       applyEffortDefault(next)
