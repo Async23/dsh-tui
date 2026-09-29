@@ -77,6 +77,8 @@ export const UPSTREAM_BLESSED_PACKAGES = [
   '@deepseek-ai/dsh-ptc-runtime-node',
   '@deepseek-ai/dsh-commands',
   '@deepseek-ai/dsh-cordis-host-runner',
+  '@deepseek-ai/dsh-deepseek-account',
+  '@deepseek-ai/dsh-host-webserver',
   '@deepseek-ai/dsh-llm',
   '@deepseek-ai/dsh-llm-pi-ai',
   '@deepseek-ai/dsh-persona',
@@ -111,6 +113,8 @@ export interface UpstreamDriftEntry {
 const OPTIONAL_RUNTIME_PACKAGES = new Set<string>([
   '@deepseek-ai/dsh-agent-preset-registry',
   '@deepseek-ai/dsh-ptc-runtime-node',
+  '@deepseek-ai/dsh-deepseek-account',
+  '@deepseek-ai/dsh-host-webserver',
   '@deepseek-ai/dsh-web-app',
 ])
 

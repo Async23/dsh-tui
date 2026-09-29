@@ -15,6 +15,7 @@
     "dsh-tui-agent-presets",
     "dsh-tui-agent-preset-registry",
     "dsh-tui-cordis-host-runner",
+    "dsh-tui-webserver",
     "dsh-tui-auth",
     "dsh-tui",
     "working-activity"

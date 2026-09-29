@@ -35,6 +35,7 @@
 - **Session workflow** — `/new` `/compact` `/export` `/btw`, model hot-switch, fork, rewind, vim, fullscreen draft editor.
 - **IDE selection channel** — a VS Code selection lands in the prompt.
 - **DSH integrations** — presets, skills, MCP, goals, todos, subagents, questionnaires.
+- **Account sign-in** — the standard profile offers pi-ai OAuth for ChatGPT/Codex, Claude, and Grok (plus OpenAI direct and Meta Muse when available), and Host-owned DeepSeek browser sign-in as `deepseek-account` on DSH 0.2.0-rc.1+. Use `/provider` or `/auth` without another plugin.
 - **Extensions** — browser interaction, computer use and more.
 - **Built for long sessions** — event-driven projection, virtualization, bounded caches.
 
@@ -80,8 +81,11 @@ daily** (TypeScript).
 ## Quick Start
 
 Prerequisites: [Node.js](https://nodejs.org/en) and
-[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness), with
-`DEEPSEEK_API_KEY` configured.
+[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness).
+The `deepseek-official` API-key route needs `DEEPSEEK_API_KEY`. On DSH
+0.2.0-rc.1+, the standard profile can instead use `/auth login deepseek-account`
+and select the separate account route through `/model`. Other supported
+accounts can sign in through `/provider` or `/auth` after startup.
 
 The primary compatibility target is DSH `0.2.0-rc.2`. This adapter supports its
 Shell API, V4 session messages, declarative presets, and profile-backed settings;
@@ -191,7 +195,7 @@ Full reference: [Interaction and commands](docs/interaction.en.md).
 
 ## Built-in Commands
 
-`/resume` · `/home` · `/agentview` · `/bg` · `⌸` open the same session manager: workspace rail, live state, filter, ★ pins. Also `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/status` `/cost` `/jobs` `/skills` `/mcp` `/login` `/update`.
+`/resume` · `/home` · `/agentview` · `/bg` · `⌸` open the same session manager: workspace rail, live state, filter, ★ pins. Also `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/status` `/cost` `/jobs` `/skills` `/mcp` `/provider` `/auth` `/login` `/update`.
 
 The session manager paints the last successful list immediately while it checks the persistence store for changes. Titles that require a deeper log scan appear first with a fallback name and update in place when recovery finishes.
 

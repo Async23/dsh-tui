@@ -2633,7 +2633,9 @@ export function Chat({
                     ...oauth.map(row => t('login-oauth-row', {
                       provider: row.provider,
                       state: row.signedIn
-                        ? t('login-oauth-in', { time: new Date(row.expiresAt ?? 0).toISOString() })
+                        ? row.expiresAt === undefined
+                          ? t('login-oauth-in-no-expiry')
+                          : t('login-oauth-in', { time: new Date(row.expiresAt).toISOString() })
                         : row.expired
                           ? t('login-oauth-expired')
                           : t('login-oauth-signed-out'),

@@ -28,11 +28,13 @@ UI 层(`screens/`、`components/`、`ink/`、`hooks/`、`utils/`、`terminal-uti
   服务由 base 提供，模型可见的工具仍由 preset 控制；与 web-app 的差异见快照。
 - **config overrides**:8 行(原有 6 行加 session-telemetry-otel /
   plugin-package-inventory-deepseek),后两行保持 TUI 的隐私默认
-- **inserts**:18 行(dsh-tui、working-activity、dsh-tui-auth、六个插件互通行,以及
+- **inserts**:19 行(dsh-tui、working-activity、内置 OAuth 入口 dsh-tui-auth、DeepSeek 账号回调的 dsh-tui-webserver、六个插件互通行,以及
   dsh-tui-storage、dsh-tui-storage-json、dsh-tui-storage-domain、
   dsh-tui-workspace、dsh-tui-code-runtime、dsh-tui-subagent-model-selection-settings、
   dsh-tui-agent-presets、dsh-tui-agent-preset-registry、dsh-tui-cordis-host-runner)。这些 host-plane 行使用 dsh-tui 作用域 id,
   并在检测到官方同 id/name 行已存在时自行 disabled,因此可安全共存。
+  `dsh-tui-webserver` 会探测 webserver 包及已启用的宿主账号服务行；缺少账号服务的旧宿主禁用该行，
+  新宿主在 TUI-only profile 下监听 loopback 动态端口，并在 Web 混合 profile 中让位官方 `webserver`。
   `dsh-tui-subagent-model-selection-settings` 还直接探测自己的包子路径,
   不依赖可被用户禁用的 inventory 行;预设 roster 在 rc.2 显式恢复 dsh CLI
   roots,0.1.2 线则省略 roots 并使用包内 `includeShippedRoot`

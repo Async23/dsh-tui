@@ -37,9 +37,11 @@ overrides:
   '@deepseek-ai/dsh-compaction-basic': 0.2.0-rc.2
   '@deepseek-ai/dsh-compaction-tool-result-pruner': 0.2.0-rc.2
   '@deepseek-ai/dsh-cordis-host-runner': 0.2.0-rc.2
+  '@deepseek-ai/dsh-deepseek-account': 0.2.0-rc.2
   '@deepseek-ai/dsh-fs': 0.2.0-rc.2
   '@deepseek-ai/dsh-fs-local': 0.2.0-rc.2
   '@deepseek-ai/dsh-home-paths': 0.2.0-rc.2
+  '@deepseek-ai/dsh-host-webserver': 0.2.0-rc.2
   '@deepseek-ai/dsh-invariants': 0.2.0-rc.2
   '@deepseek-ai/dsh-llm': 0.2.0-rc.2
   '@deepseek-ai/dsh-llm-pi-ai': 0.2.0-rc.2

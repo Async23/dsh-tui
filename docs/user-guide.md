@@ -29,7 +29,7 @@ dsh-tui
 - `dsh-tui --resume`：恢复上次会话；Windows 可用仓库里的 `dsh-tui.cmd`（等价）。
 - `dsh-tui safe`：安全模式——只读查看环境、列出 profile 插件并给出修复建议，还能创建干净的救援 profile（见 §5.5）。
 - `dsh --profile dsh-tui`：与 `dsh-tui` 等价的手工启动方式（`/update` 仅此方式可用）。
-- 运行模型需要 `DEEPSEEK_API_KEY`；环境自检用 `/doctor`。
+- `deepseek-official` 路由需要 `DEEPSEEK_API_KEY`；DSH 0.2.0-rc.1+ 可用标准 profile 的 `deepseek-account` 浏览器授权路由。其他支持的订阅模型可用内置 OAuth 登录。环境自检用 `/doctor`。
 - 主验证 dsh 引擎版本 `0.2.0-rc.2`；兼容列表以 `ADAPTER.md` 为准，列表之外的版本在 logo 页提示版本漂移与对齐命令。
 - 如果 logo 页出现 ⚠ 版本漂移警告，按提示执行 `npm i -g @deepseek-ai/dsh@<版本>` 对齐 dsh 引擎。
 
@@ -270,8 +270,9 @@ dsh-tui
 
 | 命令 | 参数 | 作用 |
 |---|---|---|
-| `/provider` | 无 | 交互式管理模型提供方（添加 / 编辑 / 删除；捆绑 dsh-auth 时可 **OAuth 订阅登录** ChatGPT / Claude / Grok，免 API key） |
-| `/login` | 无 | 凭证状态（来源、存储可写性、base URL） |
+| `/provider` | 无 | 交互式管理模型提供方（添加 / 编辑 / 删除；标准 profile 的账号登录含 DSH 0.2.0-rc.1+ 的 DeepSeek，以及 ChatGPT/Codex / Claude / Grok；宿主 pi-ai 支持时还有 OpenAI 直连 / Meta Muse） |
+| `/auth` | `status` / `login [provider]` / `logout <provider>` | 查看账号状态、登录或登出（DeepSeek 用 `deepseek-account`；pi-ai 订阅用 `openai-codex` / `anthropic` / `xai`，较新 pi-ai 另有 `openai` / `meta`） |
+| `/login` | 无 | 凭证状态（来源、存储可写性、base URL；OAuth 模块挂载时另列账号状态） |
 | `/logout` | 无 | 登出说明（env 来源需删环境变量并重启） |
 | `/permission` | 无 / `<preset>` / `status` | 查看/切换权限预设与策略（无参打开选择器） |
 | `/add-dir` | 无 | 文件策略范围说明（以工作目录为根） |
@@ -384,8 +385,9 @@ dsh-TUI 不预装通用技能；`/skills` 浏览 DSH 发现的技能，可直调
 - `dsh-tui <路径>` 同样接受工作区目标。
 - `/doctor` 自检：Node/平台、API key、模型路由、cwd、上下文窗口、会话存储、插件宿主。
 - `/provider` 交互向导管理模型提供方：添加 / 编辑 / 删除。
-  - 捆绑 dsh-auth 时提供 **OAuth 订阅登录**（ChatGPT / Claude / Grok，免 API key）。
-- 非环境变量密钥写入 `~/.dsh/.credentials.yaml`（0600），界面只显示 `••••••`。
+  - 标准 profile 的内置 OAuth 模块提供 **订阅账号登录**（ChatGPT/Codex / Claude / Grok；较新 pi-ai 另有 OpenAI 直连 / Meta Muse，免 API key）；也可用 `/auth login <provider>`，`/auth logout <provider>` 删除保存的 OAuth 凭据。
+  - DSH 0.2.0-rc.1+ 的 DeepSeek 账号经宿主浏览器授权：`/auth login deepseek-account`，随后用 `/model` 选独立的 `deepseek-account` 路由；`/auth logout deepseek-account` 由宿主退登。它不修改 `deepseek-official` 的 API key。
+- 非环境变量 API key 写入 `~/.dsh/.credentials.yaml`（0600），界面只显示 `••••••`；pi-ai 订阅 OAuth 凭据另存于 `$DSH_HOME/dsh-auth/credentials.json`（未设置 DSH_HOME 时为 `~/.dsh/dsh-auth/credentials.json`）。DeepSeek 账号授权记录由宿主凭据服务持有，不写入此 OAuth 文件。
   - 自定义端点需填路由名、API key、baseURL 与协议（`openai-completions` / `openai-responses` /
   `anthropic-messages`）。
 - 添加/编辑后运行 `/model` 切换到新路由。

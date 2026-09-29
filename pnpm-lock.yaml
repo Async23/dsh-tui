@@ -21,9 +21,11 @@ overrides:
   '@deepseek-ai/dsh-compaction-basic': 0.2.0-rc.2
   '@deepseek-ai/dsh-compaction-tool-result-pruner': 0.2.0-rc.2
   '@deepseek-ai/dsh-cordis-host-runner': 0.2.0-rc.2
+  '@deepseek-ai/dsh-deepseek-account': 0.2.0-rc.2
   '@deepseek-ai/dsh-fs': 0.2.0-rc.2
   '@deepseek-ai/dsh-fs-local': 0.2.0-rc.2
   '@deepseek-ai/dsh-home-paths': 0.2.0-rc.2
+  '@deepseek-ai/dsh-host-webserver': 0.2.0-rc.2
   '@deepseek-ai/dsh-invariants': 0.2.0-rc.2
   '@deepseek-ai/dsh-llm': 0.2.0-rc.2
   '@deepseek-ai/dsh-llm-pi-ai': 0.2.0-rc.2
@@ -85,9 +87,6 @@ importers:
       '@alcalzone/ansi-tokenize':
         specifier: ^0.3.0
         version: 0.3.1
-      '@deepseek-harness-tui/dsh-auth':
-        specifier: link:./dsh-auth
-        version: link:dsh-auth
       '@dsh-std/command':
         specifier: workspace:*
         version: link:vendor/dsh-std/packages/command
@@ -251,6 +250,9 @@ importers:
       '@deepseek-ai/dsh-cordis-host-runner':
         specifier: 0.2.0-rc.2
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-agent@0.2.0-rc.2(fee0e653b72a3883e0f0da2d9a46bb50))(@deepseek-ai/dsh-brand@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-scope@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)))(@deepseek-ai/dsh-session@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-scope@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))))(@deepseek-ai/dsh-tools@0.2.0-rc.2(52b5a8ab481be2b3d891c22a71641755))(@deepseek-ai/dsh-typert-protocol@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))
+      '@deepseek-ai/dsh-deepseek-account':
+        specifier: 0.2.0-rc.2
+        version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-agent@0.2.0-rc.2(fee0e653b72a3883e0f0da2d9a46bb50))(@deepseek-ai/dsh-brand@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))
       '@deepseek-ai/dsh-fs':
         specifier: 0.2.0-rc.2
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-brand@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-sandbox@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-session@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-scope@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)))))
@@ -260,6 +262,9 @@ importers:
       '@deepseek-ai/dsh-home-paths':
         specifier: 0.2.0-rc.2
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.2.0-rc.2
+        version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(supports-color@7.2.0)
       '@deepseek-ai/dsh-invariants':
         specifier: 0.2.0-rc.2
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)

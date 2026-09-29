@@ -141,7 +141,6 @@ if (process.platform === 'win32' && parse(sourceRoot).root !== typeRoot) {
 }
 const projects = [
   { label: 'dsh-tui', config: join(tuiRoot, 'tsconfig.json') },
-  { label: 'dsh-auth', config: join(tuiRoot, 'dsh-auth/tsconfig.json') },
 ]
 for (const project of projects) {
   const tempRoot = mkdtempSync(join(tmpdir(), `dsh-tui-alpha-tsc-${project.label}-`))
