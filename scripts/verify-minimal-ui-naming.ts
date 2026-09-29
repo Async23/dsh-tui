@@ -14,7 +14,9 @@
  *      内核 Agent 预设，与界面开关可区分；
  *   3. 持久化配置键仍然是 `minimal`（Config / settings.yaml / cordis.yml 依赖它）；
  *   4. 源码里不再有 `minimalMode` 一代的标识符，且发布面（TuiSceneProps.channel
- *      收到的 ChannelUi）上的 `minimal` / `setMinimal()` 仍作为 deprecated 别名存在。
+ *      收到的 ChannelUi）上的 `minimal` / `setMinimal()` 仍作为 deprecated 别名存在；
+ *   5. 界面侧的用户可见文案（`/tips` 池、i18n 字典的非 preset 键）不得把内核
+ *      预设的名字借回来：裸用「极简模式」即失败，提到该开关处必须叫「极简界面」。
  *
  * 运行：node --import tsx/esm scripts/verify-minimal-ui-naming.ts
  */
@@ -23,6 +25,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { i18nDict } from '../src/i18n.js'
 import { SETTING_DEFINITIONS } from '../src/settings/definitions.js'
+import { TIPS } from '../src/tips.js'
 
 const TUI_NAME_ZH = '极简界面'
 const KERNEL_NAME_ZH = '极简模式'
@@ -106,8 +109,72 @@ for (const name of ['setMinimalUi', 'setMinimal']) {
   }
 }
 
+// ── 5：界面侧的用户可见文案不得把内核预设的名字借回来 ────────────────────
+// 第 1 节只钉住了 /settings 里的设置项文案，挡不住另一条用户可见通道：
+// `/tips` 面板（src/tips.ts）。红队实证——把那条同时点出两个概念的提示改回
+// 裸「极简模式」后，verify:tips 红在无关的既有失败（tips: en too long
+// (flow-question-arrows)）且根本不在 CI 执行面上，没有任何门禁拦得住这次重
+// 碰撞。所以这一节直接扫界面侧的文案集合。
+//
+// 白名单规则（内核 preset 语义的「极简模式」必须继续合法）：
+//   - `src/i18n.ts` 里 key 含 `preset` 的条目是白名单：preset-name-minimal /
+//     preset-desc-minimal 描述的就是内核 agent preset，「极简模式」是它的
+//     正确名字，preset-desc-liangshen 甚至裸用了这个名字；
+//   - `presets/**`（随包分发的内核 preset 组合）、`/preset` 选择器与本门禁
+//     自身不在扫描面内：本节只覆盖「界面侧用户可见文案」——tips 池与 i18n
+//     字典的非 preset 键（设置项自身的 label/description/hint 由第 1 节
+//     覆盖，且更严：一处「极简模式」都不许出现）。
+// 判据不是"禁止出现「极简模式」"，而是"它出现在界面侧时必须先自证这是内核
+// preset"：同一字符串里每处「极简模式」之前都要有 `内核` / `preset` 限定，
+// 裸用就是在给界面开关起名；旧英文名 `Minimal mode` 同理，界面侧一处都不许留。
+const KERNEL_QUALIFIER = /内核|[Pp]reset/
+
+/** 界面文案里是否裸用了内核预设的中文名（该处之前没有内核/preset 限定）。 */
+function hasBareKernelName(text: string): boolean {
+  for (let hit = text.indexOf(KERNEL_NAME_ZH); hit >= 0; hit = text.indexOf(KERNEL_NAME_ZH, hit + KERNEL_NAME_ZH.length)) {
+    if (!KERNEL_QUALIFIER.test(text.slice(0, hit))) return true
+  }
+  return false
+}
+
+/** i18n 的值可能是复数形 `{ one, other }`；取出其中所有可读文本。 */
+function i18nTexts(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  if (value === null || typeof value !== 'object') return []
+  const plural = value as { one?: unknown; other?: unknown }
+  return [plural.one, plural.other].filter((text): text is string => typeof text === 'string')
+}
+
+const interfaceCopy: Array<{ source: string; key: string; lang: 'zh' | 'en'; text: string }> = []
+for (const tip of TIPS) {
+  interfaceCopy.push({ source: 'src/tips.ts', key: tip.id, lang: 'zh', text: tip.zh })
+  interfaceCopy.push({ source: 'src/tips.ts', key: tip.id, lang: 'en', text: tip.en })
+}
+for (const [i18nKey, entry] of Object.entries(i18nDict)) {
+  if (/preset/i.test(i18nKey)) continue
+  for (const lang of ['zh', 'en'] as const) {
+    for (const text of i18nTexts(entry[lang])) interfaceCopy.push({ source: 'src/i18n.ts', key: i18nKey, lang, text })
+  }
+}
+for (const { source, key, lang, text } of interfaceCopy) {
+  if (hasBareKernelName(text)) {
+    fail(`${source}:${key}.${lang} 裸用了「${KERNEL_NAME_ZH}」——界面侧文案不得借用内核预设的名字（白名单只放行 i18n 里 key 含 preset 的条目）`)
+  }
+  if (/Minimal mode/.test(text)) fail(`${source}:${key}.${lang} 仍有界面开关的旧名 Minimal mode`)
+}
+
+// 提到该开关的 /tips 条目必须用新名自证（红队点名的 disp-* / pit-* 一类）。
+// id 里含 `preset` 的条目按白名单豁免：那是只讲内核预设的提示，不负责点名
+// 界面开关（与 i18n 的 key 含 preset 白名单同一条规则）。
+const switchTips = TIPS.filter(tip => /minimal/i.test(tip.id) && !/preset/i.test(tip.id))
+if (switchTips.length === 0) fail('src/tips.ts 里没有 id 含 minimal 的条目——界面开关在 /tips 面板上失去自证（条目被改名？）')
+for (const tip of switchTips) {
+  if (!tip.zh.includes(TUI_NAME_ZH)) fail(`src/tips.ts:${tip.id}.zh 没有出现「${TUI_NAME_ZH}」——提到该开关的条目不得用内核预设的名字「${KERNEL_NAME_ZH}」`)
+  if (!tip.en.includes('Minimal UI')) fail(`src/tips.ts:${tip.id}.en 没有出现 Minimal UI——提到该开关的条目不得用旧名 Minimal mode`)
+}
+
 if (failures > 0) {
   console.error(`verify-minimal-ui-naming: ${failures} 处失败`)
   process.exit(1)
 }
-console.log(`✓ verify-minimal-ui-naming: TUI 设置=${setting.label}/${setting.descriptions?.zh}，内核 preset=${kernelName.en}/${kernelName.zh}，持久化键 minimal 未变`)
+console.log(`✓ verify-minimal-ui-naming: TUI 设置=${setting.label}/${setting.descriptions?.zh}，内核 preset=${kernelName.en}/${kernelName.zh}，持久化键 minimal 未变，界面侧文案无重碰撞`)
