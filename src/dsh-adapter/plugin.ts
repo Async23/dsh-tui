@@ -72,7 +72,7 @@ import instances from '../ink/instances.js'
 import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from '../ink/termio/csi.js'
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, EXIT_ALT_SCREEN, SHOW_CURSOR } from '../ink/termio/dec.js'
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMultiplexer } from '../ink/termio/osc.js'
-import { registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
+import { fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
 
 /**
  * Interactive TUI front door for DeepSeek Harness agents.
@@ -1397,8 +1397,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // DSH_TUI_NO_185_PROCESS_GUARD=1 skips the guard entirely, leaving process
   // error policy to the host exactly as before.
   registerProcessGuardFatalSink((error, origin) => {
-    ctx.logger.error(`dsh-tui: fatal ${origin}: ${error instanceof Error ? error.message : String(error)}`)
-    return handleExit(error)
+    // An undefined reason (`Promise.reject()`, `throw undefined`) must not reach
+    // the funnel as-is: `error !== undefined` is what selects the crash path, so
+    // a bare undefined would exit 0 while this sink claims the process.
+    const fatal = fatalReasonForExit(error, origin)
+    ctx.logger.error(`dsh-tui: fatal ${origin}: ${fatal instanceof Error ? fatal.message : String(fatal)}`)
+    return handleExit(fatal)
   })
 
   // External injection controller: Chat fills it with `{ append, submit }`

@@ -175,6 +175,18 @@ export function registerProcessGuardFatalSink(sink: ProcessGuardFatalSink | unde
 }
 
 /**
+ * Normalize the reason handed to a fatal sink so the exit funnel can never
+ * mistake a fatal error for a clean user exit. `Promise.reject()` and
+ * `throw undefined` deliver `undefined`, and the funnel selects its crash path
+ * with `error !== undefined` — passing the raw reason through would run the
+ * zero-exit path while the sink reported that it owned the process. Defined
+ * reasons (including non-Error values) are returned unchanged.
+ */
+export function fatalReasonForExit(error: unknown, origin: ProcessGuardOrigin): unknown {
+  return error === undefined ? new Error(`${origin} with undefined reason`) : error
+}
+
+/**
  * Process-level backstop for the overflow error. The hotspot guards above
  * cover the known enqueue sites (clock tick, reveal tick, channel emit,
  * scroll/selection notify), but the throw surfaces from whichever timer or
