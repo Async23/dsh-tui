@@ -494,7 +494,20 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // reads the same records. There is deliberately no rail-side "add a
     // workspace" control any more: a terminal's launch directory is the whole
     // registration story.
-    const attached = await attachSessionToWorkspace(ctx, meta.cwd, agent.session.id)
+    //
+    // A RESUMED session is accounted where its OWN header cwd lives, never
+    // where this terminal was launched. The launch directory can be an
+    // ANCESTOR of the resumed session's: launching in `~/projects` and
+    // resuming a session recorded in `~/projects/app` accounts the same
+    // session in both workspaces, and the next boot dies inside
+    // `validateStoredState` ("session ... is accounted by both workspace
+    // ..."), which leaves `workspaceRegistry` unactivated and the whole TUI
+    // pending forever. Ownership must therefore agree with the `cwd:` handed
+    // to `createChannel` below, which already prefers the persisted header.
+    // Fresh sessions record `meta.cwd` at creation, so the launch directory
+    // still registers through them.
+    const ownershipCwd = agent.session.header.cwd ?? meta.cwd
+    const attached = await attachSessionToWorkspace(ctx, ownershipCwd, agent.session.id)
     if (!attached) {
       ctx.logger.warn(
         `dsh-tui: session "${agent.session.id}" has no workspace ownership because workspaceRegistry is not mounted`,
