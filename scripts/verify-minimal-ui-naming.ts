@@ -96,6 +96,15 @@ if (!/setMinimal\(enabled: boolean\): void/.test(portSource)) fail('ChannelUi �
 if ((portSource.match(/@deprecated/g) ?? []).length < 2) fail('ChannelUi 的 minimal / setMinimal 别名缺少 @deprecated 标注')
 if (!/@deprecated[^\n]*minimalUi/i.test(portSource)) fail('ChannelUi 的别名注释没有指向 minimalUi')
 if (!/@deprecated[^\n]*setMinimalUi/.test(portSource)) fail('ChannelUi 的别名注释没有指向 setMinimalUi')
+// 只看类型的别名断言管不住实现：shadow 模式下的写守卫由 ui-policy 的效果分级决定。
+// 旧名一旦被降级成 'read-only'，场景插件就能在 passive/replay shadow 下真的改状态
+// （verify-channel-ui 那一档是 `if (effect !== 'mutate') continue`，会静默跳过）。
+const policySource = readFileSync(new URL('../src/adapter/channel/ui-policy.ts', import.meta.url), 'utf8')
+for (const name of ['setMinimalUi', 'setMinimal']) {
+  if (!new RegExp(`'${name}':\\s*'mutate'`).test(policySource)) {
+    fail(`ui-policy 里 ${name} 的效果类必须是 'mutate'（降级成 read-only 会绕过 shadow 写守卫）`)
+  }
+}
 
 if (failures > 0) {
   console.error(`verify-minimal-ui-naming: ${failures} 处失败`)
