@@ -18,6 +18,7 @@ export const DEEPSEEK_ACCOUNT_PROVIDER = 'deepseek-account'
 
 /** Only the account operations this interaction surface consumes. */
 export type DeepSeekAccountAuth = Pick<DeepSeekAccount, 'getState' | 'startSignIn' | 'cancelSignIn' | 'signOut' | 'watch'>
+  & Partial<Pick<DeepSeekAccount, 'getUnnotifiedBonuses' | 'ackBonusNotified'>>
 
 /** Resolve late: the account provider is absent on older DSH hosts. */
 export function deepSeekAccountFrom(ctx: Context): DeepSeekAccountAuth | undefined {
@@ -80,7 +81,8 @@ export async function loginDeepSeekAccount(
   let active = false
   try {
     runAbort.signal.throwIfAborted()
-    const initial = await account.startSignIn(deepSeekClientMetadata(), callbackOrigin, 'web')
+    // Match Desktop's login_source for Platform-side promotion eligibility.
+    const initial = await account.startSignIn(deepSeekClientMetadata(), callbackOrigin, 'desktop')
     id = initial.attempt?.id
     if (id === undefined) throw new Error('DeepSeek sign-in returned no attempt')
     active = true

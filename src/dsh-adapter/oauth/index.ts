@@ -55,6 +55,7 @@ import { createDshAuthApi, DshAuthService } from './service.js'
 import { createAuthCommandHandler } from './command.js'
 import type { PiAiAuthContext } from './pi-ai.js'
 import { deepSeekAccountFrom, deepSeekCallbackOrigin } from './deepseek.js'
+import { WhaleCouponStore } from './bonus.js'
 
 export const name = 'dsh-auth'
 /**
@@ -115,6 +116,7 @@ export { copyToClipboard, openInBrowser, openerFor } from './opener.js'
 export { CredentialFile, defaultCredentialsFile } from './credentials.js'
 export { OAUTH_PROVIDER_IDS, availableOAuthProviderIds, buildOAuthProfile, type ModelOverride } from './profiles.js'
 export { DEEPSEEK_ACCOUNT_PROVIDER, deepSeekAccountFrom, deepSeekCallbackOrigin, deepSeekClientMetadata, loginDeepSeekAccount } from './deepseek.js'
+export { WhaleCouponStore } from './bonus.js'
 
 /**
  * The ambient auth context providers may consult while resolving their own
@@ -221,6 +223,7 @@ export function apply(ctx: Context, config: Config): void {
     profiles,
     store,
     resolveDeepSeekAccount: () => deepSeekAccountFrom(ctx),
+    coupons: service.coupons,
     resolveCallbackOrigin: () => deepSeekCallbackOrigin(ctx),
     resolveAsk: () => {
       const questions = ctx.get('userQuestions')

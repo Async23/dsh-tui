@@ -605,6 +605,7 @@ The command menu merges local commands with the DSH command registry. Type `/` t
 **Account and policy**
 
 - `/provider`, `/login`, `/logout`, `/permission`, `/add-dir`, `/hooks`, `/mcp`, `/plugins` — `check <path>` validates a plugin manifest.
+- After `/auth login deepseek-account` or `/provider` signs in, a Platform-confirmed, unshown login bonus appears with its amount and expiry as a “Whale coupon” in the whale-maid dialog; Enter/Esc closes it.
 
 **Skills**
 

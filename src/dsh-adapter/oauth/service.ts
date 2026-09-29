@@ -21,6 +21,7 @@ import {
   loginDeepSeekAccount,
   type DeepSeekAccountAuth,
 } from './deepseek.js'
+import { WhaleCouponStore } from './bonus.js'
 
 /**
  * The constructed catalog provider one mounted route carries. 0.1.5 made
@@ -77,6 +78,7 @@ export interface DshAuthApi {
 /** Cordis service holder; `api` is set by the plugin's apply. */
 export class DshAuthService extends Service {
   api: DshAuthApi | undefined
+  readonly coupons = new WhaleCouponStore()
 
   constructor(ctx: Context) {
     super(ctx, 'dshAuth')
@@ -93,6 +95,7 @@ export interface DshAuthApiDeps {
   resolveDeepSeekAccount?: () => DeepSeekAccountAuth | undefined
   /** The active Host callback listener's browser-accessible loopback origin. */
   resolveCallbackOrigin?: () => string
+  coupons?: WhaleCouponStore
 }
 
 /** Select a provider interactively among `candidates`. */
@@ -230,6 +233,12 @@ export function createDshAuthApi(deps: DshAuthApiDeps): DshAuthApi {
             throw new Error('DeepSeek sign-in needs an active Host webServer for the browser callback')
           }
           await loginDeepSeekAccount(account, callbackOrigin, ask, runSignal)
+          deps.coupons?.clear()
+          const getUnnotifiedBonuses = account.getUnnotifiedBonuses?.bind(account)
+          const ackBonusNotified = account.ackBonusNotified?.bind(account)
+          if (getUnnotifiedBonuses !== undefined && ackBonusNotified !== undefined) {
+            void deps.coupons?.refresh({ getUnnotifiedBonuses, ackBonusNotified })
+          }
           return { provider: target, oauthLabel: 'DeepSeek', expiresAt: undefined }
         })()
       ).finally(() => { inflight.delete(target) })
@@ -241,6 +250,7 @@ export function createDshAuthApi(deps: DshAuthApiDeps): DshAuthApi {
         if (account !== undefined) {
           const existed = (await account.getState()).status === 'credential-stored'
           await account.signOut(deepSeekClientMetadata())
+          deps.coupons?.clear()
           return existed
         }
       }

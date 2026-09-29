@@ -779,6 +779,10 @@ const dict = {
   'star-modal-thanks-3': { zh: '这颗 Star 会变成 dshTUI 继续成长的动力。', en: 'This Star becomes fuel for dsh-TUI to keep growing.' },
   'star-modal-thanks-4': { zh: '希望以后，它也能继续陪你走很久。', en: 'May it keep you company for a long time to come.' },
   'star-modal-thanks-hint': { zh: '**Enter** / **Esc** 关闭', en: '**Enter** / **Esc** to close' },
+  'coupon-modal-title': { zh: '鲸鱼券', en: 'Whale coupon' },
+  'coupon-modal-received': { zh: 'DeepSeek 送你的 {{amount}} {{unit}}鲸鱼券到账啦～', en: 'Your {{amount}} {{unit}} whale coupon from DeepSeek is here ~' },
+  'coupon-modal-expiry': { zh: 'Deepy提醒：这张券 {{month}} 月 {{day}} 日 {{time}} 就要过期啦，别忘记用掉哦～', en: 'Deepy says: this coupon expires on {{month}}/{{day}} at {{time}}. Do not forget to use it ~' },
+  'coupon-modal-hint': { zh: '**Enter** / **Esc** 收好鲸鱼券', en: '**Enter** / **Esc** to tuck it away' },
   'logo-tip-prefix': { zh: '提示：', en: 'Tip: ' },
   'logo-tip-more': { zh: '更多技巧', en: 'more tips' },
   // Upstream-drift notice (merged one-liner under the tip; copy explains

@@ -38,6 +38,7 @@ const {
   deepSeekCallbackOrigin,
   deepSeekClientMetadata,
   loginDeepSeekAccount,
+  WhaleCouponStore,
 } = oauthModule
 const { Context } = await import('@deepseek-ai/cordis')
 const { QuestionStore } = await import('../lib/types/dsh-adapter/questions.js')
@@ -735,8 +736,8 @@ try {
     })
   ok(await settled(() => account.calls.starts.length === 1)
     && account.calls.starts[0].origin === callbackOrigin
-    && account.calls.starts[0].source === 'web',
-  'DeepSeek authorization starts through the Host with its loopback callback origin')
+    && account.calls.starts[0].source === 'desktop',
+  'DeepSeek authorization requests Desktop promotion through the Host with its loopback callback origin')
   account.update({ ...account.current(), attempt: { id: 'account-attempt-1', phase: 'waiting-browser', authorizeUrl: accountUrl } })
   ok(await settled(() => accountQuestions.getSnapshot()?.question.id === 'dsh-auth-waiting')
     && accountOpened[0] === accountUrl
@@ -771,6 +772,13 @@ try {
     'Host failure surfaces its safe code without cancelling a settled attempt')
 
   const facadeAccount = fakeDeepSeekAccount()
+  const coupons = new WhaleCouponStore()
+  const couponEvents = []
+  const stopCoupons = coupons.subscribe(() => couponEvents.push(coupons.getSnapshot()))
+  const granted = { orderId: 'coupon-order-1', campaign: 'dsh_login_bonus', amount: '5.00', currency: 'CNY', expiresAt: '2099-01-01T00:00:00Z' }
+  const acknowledgements = []
+  facadeAccount.getUnnotifiedBonuses = async () => ({ accountId: 'coupon-account-1', bonuses: [granted] })
+  facadeAccount.ackBonusNotified = async (...args) => { acknowledgements.push(args); return true }
   facadeAccount.startSignIn = async (client, origin, source) => {
     facadeAccount.calls.starts.push({ client, origin, source })
     facadeAccount.update({ ...facadeAccount.current(), status: 'credential-stored',
@@ -782,6 +790,7 @@ try {
     resolveAsk: () => fakeAsk,
     resolveDeepSeekAccount: () => facadeAccount,
     resolveCallbackOrigin: () => callbackOrigin,
+    coupons,
   })
   const accountRows = await accountApi.providers()
   ok(accountRows.length === 2 && accountRows[0].provider === DEEPSEEK_ACCOUNT_PROVIDER
@@ -790,12 +799,40 @@ try {
   'the facade lists the Host account first without registering a second pi-ai route')
   const accountResult = await accountApi.login(DEEPSEEK_ACCOUNT_PROVIDER)
   ok(accountResult.expiresAt === undefined && facadeAccount.calls.starts[0].origin === callbackOrigin
+    && facadeAccount.calls.starts[0].source === 'desktop'
     && (await accountApi.providers())[0].signedIn === true,
-  'facade login delegates to the Host and reports a non-expiring account grant')
+  'facade login delegates with the Desktop source and reports a non-expiring account grant')
+  ok(await settled(() => coupons.getSnapshot()?.orderId === granted.orderId)
+    && coupons.getSnapshot()?.amount === '5.00' && acknowledgements.length === 0,
+  'a Platform-confirmed login bonus is offered without acknowledging an unseen card')
+  coupons.shown(granted.orderId)
+  coupons.shown(granted.orderId)
+  ok(await settled(() => acknowledgements.length === 1)
+    && acknowledgements[0][0] === 'coupon-account-1' && acknowledgements[0][1] === granted.orderId,
+  'the displayed order is acknowledged once with its account identity')
+  coupons.dismiss(granted.orderId)
+  ok(await settled(() => coupons.getSnapshot() === null)
+    && couponEvents.filter(event => event?.orderId === granted.orderId).length === 1,
+  'dismissing the card does not re-offer the same unnotified order')
   ok(await accountApi.logout(DEEPSEEK_ACCOUNT_PROVIDER)
     && facadeAccount.calls.signOuts.length === 1
     && (await apiStore.read(DEEPSEEK_ACCOUNT_PROVIDER)) === undefined,
   'facade logout calls Host signOut and never stores the account grant in pi-ai credentials')
+  stopCoupons()
+
+  const otherCoupons = new WhaleCouponStore()
+  const stopOtherCoupons = otherCoupons.subscribe(() => undefined)
+  await otherCoupons.refresh({
+    getUnnotifiedBonuses: async () => ({ accountId: 'coupon-account-2', bonuses: [{ ...granted, campaign: 'unrelated' }] }),
+    ackBonusNotified: async () => true,
+  })
+  ok(otherCoupons.getSnapshot() === null, 'unrelated bonus campaigns do not masquerade as login coupons')
+  await otherCoupons.refresh({
+    getUnnotifiedBonuses: async () => { throw new Error('offline') },
+    ackBonusNotified: async () => true,
+  })
+  ok(otherCoupons.getSnapshot() === null, 'a failed bonus read does not fabricate a coupon')
+  stopOtherCoupons()
 
   // ── public Cordis entry ──────────────────────────────────────────────────
   console.log('Cordis mount')

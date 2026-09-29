@@ -664,6 +664,7 @@ Windows `dsh-tui.cmd --resume` 使用 `~/.dsh-tui/resume.txt` 中最后选择的
 **账号与策略**
 
 - `/provider`、`/login`、`/logout`、`/permission`、`/add-dir`、`/hooks`、`/mcp`。
+- `/auth login deepseek-account` 或 `/provider` 完成 DeepSeek 登录后，若 Platform 返回尚未展示的登录赠金，鲸鱼女仆娘弹窗会显示“鲸鱼券”的金额与到期时间；按 Enter/Esc 关闭。
 - `/plugins`：`check <路径>` 校验插件清单。
 
 **Skills**
