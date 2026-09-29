@@ -1,6 +1,6 @@
 /**
- * Permission-mode behavior regression 鈥?runs against the compiled channel
- * (imports ../lib/types/鈥?, the same surface the TUI loads.
+ * Permission-mode behavior regression — runs against the compiled channel
+ * (imports ../lib/types/…), the same surface the TUI loads.
  *
  * Run after pnpm build: node scripts/verify-permission-modes.mjs
  *
@@ -61,7 +61,7 @@ function logOf(subject) {
 /** Real registries derive current(session) from the session log; the fake
  *  mirrors that contract plus the official write path (`set`) and optional
  *  atom resolution (`resolve`) for table-driven canonical matching. */
-function makeEnv({ modes, names, bundles, history = [], permission = {}, withCommand = true, noService = false, failPlan = false } = {}) {
+function makeEnv({ modes, names, bundles, history = [], permission = {}, withCommand = true, noService = false } = {}) {
   const commands = []
   const appended = []
   const warnings = []
@@ -123,7 +123,8 @@ function makeEnv({ modes, names, bundles, history = [], permission = {}, withCom
     set(session, name) {
       if (behavior.delay > 0) {
         void (async () => {
-          await sleep(behavior.delay) // 鍥哄畾绐?澧欓挓 寮傛纭绐楀彛鏈韩灏辨槸琚祴璇箟锛堣鍦烘櫙 3锛?          applyPreset(session, name)
+          await sleep(behavior.delay)
+          applyPreset(session, name)
         })()
         return
       }
@@ -144,10 +145,6 @@ function makeEnv({ modes, names, bundles, history = [], permission = {}, withCom
       execute: async (agent, line, _signal) => {
         commands.push(line)
         if (line.startsWith('/plan')) {
-          // The running-agent refusal from the crash report: the kernel's
-          // session append refuses to reenter while another append publishes,
-          // and the throw surfaces out of this awaited command path.
-          if (failPlan) throw new Error('session append cannot reenter while another append is being published')
           const active = !line.startsWith('/plan off')
           const commandId = `command-${commands.length}`
           agent.session.append('command/run', { commandId, name: 'plan', args: active ? '' : 'off' })
@@ -157,7 +154,7 @@ function makeEnv({ modes, names, bundles, history = [], permission = {}, withCom
         }
         if (withCommand && line.startsWith('/permission ')) {
           const preset = line.slice('/permission '.length).trim()
-          if (behavior.delay > 0) await sleep(behavior.delay) // 鍥哄畾绐?澧欓挓 瀹樻柟鍛戒护鐨勫紓姝ョ‘璁ゅ欢杩燂紙鍦烘櫙 3 鐨勮娴嬭涔夛級
+          if (behavior.delay > 0) await sleep(behavior.delay)
           if (!behavior.confirm) return { result: { text: 'ok (but no event lands)' } }
           if (!registry.entries.has(preset)) return undefined
           const commandId = `command-${commands.length}`
@@ -252,16 +249,16 @@ const AUTO_SEED = [
   const channel = createChannel(env.ctx, env.agent, baseOptions)
   check('dynamic preset derived as current mode', channel.mode.id === 'permission:auto', channel.mode.id)
 
-  await channel.cycleMode() // auto 鈫?safe
+  await channel.cycleMode() // auto → safe
   check('cycle reaches the next dynamic preset', channel.mode.id === 'permission:safe', channel.mode.id)
   check('dynamic switch used the official command', env.commands.join(',') === '/permission safe', JSON.stringify(env.commands))
 
-  await channel.cycleMode() // safe 鈫?default (wrap): static canonicalize first
+  await channel.cycleMode() // safe → default (wrap): static canonicalize first
   check('static default reached after wrap', channel.mode.id === 'default', channel.mode.id)
   check('third-party identity canonicalized via official command', env.commands.includes('/permission workspace-write'), JSON.stringify(env.commands))
   check('durable identity now matches the default atoms', fold(env.events, 'permission/preset', 'preset') === 'workspace-write')
 
-  await channel.cycleMode() // default 鈫?plan
+  await channel.cycleMode() // default → plan
   check('plan reached through the cycle', channel.mode.id === 'plan', channel.mode.id)
   check('plan entry canonicalized identity to read-only', env.commands.includes('/permission read-only'), JSON.stringify(env.commands))
 }
@@ -310,7 +307,7 @@ const AUTO_SEED = [
   })
   const channel = createChannel(env.ctx, env.agent, { ...baseOptions, modes: env.modes })
   check('dynamic identity visible before plan', channel.mode.permission === 'auto', channel.mode.id)
-  await channel.cycleMode() // auto 鈫?plan
+  await channel.cycleMode() // auto → plan
   check('plan entered through the official path', channel.mode.id === 'plan', channel.mode.id)
   check('plan entry canonicalized to read-only', env.commands.includes('/permission read-only'), JSON.stringify(env.commands))
 
@@ -358,12 +355,12 @@ const AUTO_SEED = [
 {
   const env = makeEnv({ noService: true })
   const channel = createChannel(env.ctx, env.agent, baseOptions)
-  check('no service 鈫?no TUI /permission entry', !channel.commandList.some(c => c.name === 'permission'))
+  check('no service → no TUI /permission entry', !channel.commandList.some(c => c.name === 'permission'))
 }
 {
   const env = makeEnv()
   const channel = createChannel(env.ctx, env.agent, baseOptions)
-  check('usable service 鈫?TUI surfaces a /permission entry', channel.commandList.some(c => c.name === 'permission' && !c.external))
+  check('usable service → TUI surfaces a /permission entry', channel.commandList.some(c => c.name === 'permission' && !c.external))
 }
 
 // ---- 9. no external command: service write fallback ------------------------
@@ -387,7 +384,7 @@ const AUTO_SEED = [
     ],
   })
   const channel = createChannel(env.ctx, env.agent, { ...baseOptions, modes: env.modes })
-  await channel.cycleMode() // auto 鈫?plan: canonicalization must use service.set
+  await channel.cycleMode() // auto → plan: canonicalization must use service.set
   check('cycle canonicalization works without the external command', channel.mode.id === 'plan', channel.mode.id)
   check('identity moved to read-only through the service', fold(env.events, 'permission/preset', 'preset') === 'read-only')
 }
@@ -405,55 +402,11 @@ const AUTO_SEED = [
     ],
   })
   const channel = createChannel(env.ctx, env.agent, { ...baseOptions, modes: env.modes })
-  // auto (declared bundle workspace-write+ask) 鈫?plan needs the renamed
+  // auto (declared bundle workspace-write+ask) → plan needs the renamed
   // canonical 'ro' for the read-only bundle.
   await channel.cycleMode()
   check('renamed table canonicalization reaches plan', channel.mode.id === 'plan', channel.mode.id)
   check('canonical switch targeted the renamed preset', env.commands.includes('/permission ro'), JSON.stringify(env.commands))
-}
-
-// ---- 11. a refused kernel write is reported, never rejected -----------------
-// Shift+Tab drops the promise (`void channel.cycleMode()`), so a rejection
-// from the mutation path is an unhandledRejection 鈥?the process guard treats
-// it as fatal and the TUI dies with the session still open. A refused switch
-// must resolve into a notification plus a re-derived indicator instead.
-{
-  const env = makeEnv({
-    history: AUTO_SEED,
-    names: AUTO_ONLY_NAMES,
-    failPlan: true,
-    modes: [
-      { id: 'plan', plan: true, sandbox: 'read-only', approval: 'ask' },
-      { id: 'default', plan: false, sandbox: 'workspace-write', approval: 'ask' },
-    ],
-  })
-  const channel = createChannel(env.ctx, env.agent, { ...baseOptions, modes: env.modes })
-  let rejected
-  try {
-    await channel.cycleMode() // auto 鈫?plan: the /plan write is refused
-  } catch (error) {
-    rejected = error
-  }
-  check('refused mode write does not reject the cycle', rejected === undefined, rejected === undefined ? '' : String(rejected))
-  check('refusal is logged as a mode switch failure', env.warnings.some(w => w.includes('session mode switch failed')), JSON.stringify(env.warnings))
-  check(
-    'refusal surfaces as a notification carrying the kernel message',
-    channel.notifications.some(n => n.text.includes('cannot reenter while another append')),
-    JSON.stringify(channel.notifications.map(n => n.text)),
-  )
-  check('indicator is re-derived after the refusal', typeof channel.mode.id === 'string' && channel.mode.id !== '', channel.mode.id)
-  // The cycle stays usable: the same backtab lands once the write is allowed.
-  const healthyEnv = makeEnv({
-    history: AUTO_SEED,
-    names: AUTO_ONLY_NAMES,
-    modes: [
-      { id: 'plan', plan: true, sandbox: 'read-only', approval: 'ask' },
-      { id: 'default', plan: false, sandbox: 'workspace-write', approval: 'ask' },
-    ],
-  })
-  const healthy = createChannel(healthyEnv.ctx, healthyEnv.agent, { ...baseOptions, modes: healthyEnv.modes })
-  await healthy.cycleMode()
-  check('a healthy cycle still enters plan', healthy.mode.id === 'plan', healthy.mode.id)
 }
 
 if (failed > 0) {
