@@ -39,6 +39,10 @@
 - `@deepseek-harness-tui/dsh-tui/test-utils` 子路径与
   `ctx.tuiPluginHost.grants.corrupt` 已随 adapter 分层重构（#705）移除。
 - `grants` 收窄为 `HostGrantFacade`，迁移细节见该 PR。
+- `TuiSceneProps.channel`（`ChannelUi`）上的 `minimal` / `setMinimal()` 已更名为
+  `minimalUi` / `setMinimalUi()`；旧名保留为 **deprecated 别名**，读写同一个
+  「极简界面」开关，既有全屏场景插件不受影响。该开关只精简界面装饰，与内核
+  Agent preset `minimal`（极简模式）无关。
 
 核心仓库保持独立，社区插件各居其位。
 生态组织只维护收录与准入规则——不对社区插件的功能、质量或安全性

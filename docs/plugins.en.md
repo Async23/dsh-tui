@@ -44,6 +44,12 @@ Also an experimental public surface:
   refactor (#705).
 - `grants` is now the narrower `HostGrantFacade`; see that PR for migration
   details.
+- On `TuiSceneProps.channel` (`ChannelUi`), `minimal` / `setMinimal()` were
+  renamed to `minimalUi` / `setMinimalUi()`; the old names stay as
+  **deprecated aliases** reading and writing the same Minimal UI switch, so
+  existing full-screen scene plugins keep working. That switch only trims
+  interface decoration and is unrelated to the kernel `minimal` agent preset
+  (极简模式).
 
 - The core repository remains independent; community plugins live in their own
   repos.
