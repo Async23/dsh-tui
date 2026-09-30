@@ -311,10 +311,14 @@ DeepSeek 账号授权没有 pi-ai 的 token 到期/刷新时间；状态界面�
 
 浏览器回调由宿主 `webServer` 服务提供。TUI-only profile 的
 `dsh-tui-webserver` 行默认监听 `127.0.0.1` 的系统分配端口；与 Web 同时挂载时复用
-官方 `webserver` 行，不打开第二个监听器。授权链接会尝试在浏览器打开，问卷同时
-显示完整链接和复制、重开、取消操作。DeepSeek 流程必须经回调完成，**没有**手动
-粘贴授权码的回退。远程 SSH 使用本地浏览器时，把 `dsh-tui-webserver` 的 `port`
-覆盖为固定端口，并转发同一端口（例如 `ssh -L 43123:127.0.0.1:43123 ...`）：
+官方 `webserver` 行，不打开第二个监听器。如果仅更新 profile，旧全局 TUI 补丁已有
+`dsh-tui-auth` 但尚无 `dsh-tui-webserver` 行，内置 OAuth 入口会在首次 DeepSeek 登录时
+按需挂载同一个官方宿主服务，监听 `127.0.0.1` 的系统分配端口；已有监听器仍会复用，
+模块卸载时只清理自己挂载的兜底；已声明但禁用或启动失败的 webserver 行不会被绕过。
+授权链接会尝试在浏览器打开，问卷同时显示完整链接和复制、重开、取消操作。
+DeepSeek 流程必须经回调完成，**没有**手动粘贴授权码的回退。远程 SSH 使用本地浏览器时，
+把 `dsh-tui-webserver` 的 `port` 覆盖为固定端口，并转发同一端口
+（例如 `ssh -L 43123:127.0.0.1:43123 ...`）：
 
 ```yaml
 - id: dsh-tui-webserver
@@ -323,8 +327,9 @@ DeepSeek 账号授权没有 pi-ai 的 token 到期/刷新时间；状态界面�
     port: 43123
 ```
 
-混合 Web profile 则覆盖官方 `webserver` 行。没有可用回调监听器时登录会明确报错，
-其他 pi-ai OAuth 路由不受影响。
+混合 Web profile 则覆盖官方 `webserver` 行。旧全局补丁没有该行时，固定端口覆盖
+无法生效；SSH 用户仍需更新全局 TUI 包后再转发固定端口。回调监听器缺失或启动失败时，
+登录会明确报错，其他 pi-ai OAuth 路由不受影响。
 
 ## 组合约束
 

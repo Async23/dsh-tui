@@ -94,7 +94,7 @@ export interface DshAuthApiDeps {
   /** Optional upstream account service; older hosts have only pi-ai routes. */
   resolveDeepSeekAccount?: () => DeepSeekAccountAuth | undefined
   /** The active Host callback listener's browser-accessible loopback origin. */
-  resolveCallbackOrigin?: () => string
+  resolveCallbackOrigin?: () => string | Promise<string>
   coupons?: WhaleCouponStore
 }
 
@@ -228,7 +228,9 @@ export function createDshAuthApi(deps: DshAuthApiDeps): DshAuthApi {
       const run = (account === undefined
         ? loginOne(target, ask, runSignal)
         : (async (): Promise<DshAuthLoginResult> => {
-          const callbackOrigin = deps.resolveCallbackOrigin?.()
+          runSignal.throwIfAborted()
+          const callbackOrigin = await deps.resolveCallbackOrigin?.()
+          runSignal.throwIfAborted()
           if (callbackOrigin === undefined) {
             throw new Error('DeepSeek sign-in needs an active Host webServer for the browser callback')
           }
@@ -245,6 +247,9 @@ export function createDshAuthApi(deps: DshAuthApiDeps): DshAuthApi {
       return run
     },
     logout: async provider => {
+      // A DeepSeek login may still be awaiting its callback listener, before
+      // the Host has an attempt to cancel. Abort it before Host sign-out.
+      inflight.get(provider)?.abort(new Error('Login cancelled'))
       if (provider === DEEPSEEK_ACCOUNT_PROVIDER) {
         const account = deps.resolveDeepSeekAccount?.()
         if (account !== undefined) {
@@ -257,7 +262,6 @@ export function createDshAuthApi(deps: DshAuthApiDeps): DshAuthApi {
       if (!deps.profiles.has(provider)) {
         throw new Error(`dsh-auth: unknown provider "${provider}" (mounted: ${mountedIds().join(', ')})`)
       }
-      inflight.get(provider)?.abort(new Error('Login cancelled'))
       const existed = (await deps.store.read(provider)) !== undefined
       await deps.store.delete(provider)
       return existed

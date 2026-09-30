@@ -54,7 +54,7 @@ import { availableOAuthProviderIds, buildOAuthProfile, OAUTH_PROVIDER_IDS, type 
 import { createDshAuthApi, DshAuthService } from './service.js'
 import { createAuthCommandHandler } from './command.js'
 import type { PiAiAuthContext } from './pi-ai.js'
-import { deepSeekAccountFrom, deepSeekCallbackOrigin } from './deepseek.js'
+import { createDeepSeekCallbackOriginResolver, deepSeekAccountFrom } from './deepseek.js'
 import { WhaleCouponStore } from './bonus.js'
 
 export const name = 'dsh-auth'
@@ -219,12 +219,13 @@ export function apply(ctx: Context, config: Config): void {
   // the plugin module; the defensive get-then-create matches how the TUI
   // mounts userQuestions.
   const service = (ctx.get('dshAuth') as DshAuthService | undefined) ?? new DshAuthService(ctx)
+  const callbackOrigin = createDeepSeekCallbackOriginResolver(ctx)
   const api = createDshAuthApi({
     profiles,
     store,
     resolveDeepSeekAccount: () => deepSeekAccountFrom(ctx),
     coupons: service.coupons,
-    resolveCallbackOrigin: () => deepSeekCallbackOrigin(ctx),
+    resolveCallbackOrigin: callbackOrigin.resolve,
     resolveAsk: () => {
       const questions = ctx.get('userQuestions')
       return questions === undefined ? undefined : request => questions.ask(request)
@@ -233,6 +234,9 @@ export function apply(ctx: Context, config: Config): void {
   service.api = api
 
   ctx.effect(function* () {
+    // LIFO disposal: release command registration, drain started logins, then
+    // close a fallback callback listener only this module mounted.
+    yield () => callbackOrigin.dispose()
     const releases: (() => void)[] = []
     // Runtime service resolution (never a code-level inject — see `inject`):
     // absent services keep this plugin inert and logged, not the whole boot

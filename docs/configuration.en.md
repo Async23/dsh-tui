@@ -362,9 +362,15 @@ routes only; do not put `deepseek-account` in them.
 The browser callback uses the Host `webServer` service. A TUI-only profile's
 `dsh-tui-webserver` row listens on `127.0.0.1` with an OS-assigned port; a
 mixed Web+TUI profile reuses the official `webserver` row instead of opening a
-second listener. The question panel tries to open the authorization URL and
-offers the full link plus copy, reopen, and cancel actions. The DeepSeek flow
-**requires the callback**; it has no manual-code fallback. If a remote TUI
+second listener. If a profile-only update leaves an older global TUI patch
+that mounts `dsh-tui-auth` but lacks `dsh-tui-webserver`, the built-in OAuth
+entry starts the same official Host listener on `127.0.0.1` at the first
+DeepSeek sign-in, using an OS-assigned port. It reuses an existing listener
+and closes only its own fallback when the OAuth module unmounts; a declared
+but disabled or failed webserver row is not bypassed. The question
+panel tries to open the authorization URL and offers the full link plus copy,
+reopen, and cancel actions. The DeepSeek flow **requires the callback**; it
+has no manual-code fallback. If a remote TUI
 uses your local browser over SSH, override `dsh-tui-webserver.port` to a fixed
 port and forward that same port (for example,
 `ssh -L 43123:127.0.0.1:43123 ...`):
@@ -376,9 +382,11 @@ port and forward that same port (for example,
     port: 43123
 ```
 
-In a mixed Web profile, override the official `webserver` row. Missing
-callback listeners fail sign-in clearly without affecting the other pi-ai
-OAuth routes.
+In a mixed Web profile, override the official `webserver` row. A stale global
+patch cannot apply a fixed-port override to a row it lacks, so SSH users must
+also update the global TUI package before forwarding a fixed port. Missing or
+unstartable callback listeners fail sign-in clearly without affecting the
+other pi-ai OAuth routes.
 
 ## Composition constraints
 

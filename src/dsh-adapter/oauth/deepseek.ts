@@ -2,9 +2,10 @@
  * TUI interaction for the Host-owned DeepSeek account authorization flow.
  *
  * The Host owns PKCE, its callback route, credential persistence, and the
- * `deepseek-account` LLM route. This module only supplies a loopback callback
- * origin and displays the Host's safe attempt state through the existing
- * question panel. It never reads or writes the account grant.
+ * `deepseek-account` LLM route. This module supplies a loopback callback
+ * origin, mounts the official Host listener when an older bundle patch omits
+ * it, and displays the Host's safe attempt state through the existing question
+ * panel. It never reads or writes the account grant.
  */
 
 import { readFileSync } from 'node:fs'
@@ -25,7 +26,7 @@ export function deepSeekAccountFrom(ctx: Context): DeepSeekAccountAuth | undefin
   return ctx.get('deepseekAccount')
 }
 
-/** The Host webServer may be shared with dsh-web-app or owned by the TUI row. */
+/** The Host webServer may be shared, supplied by the TUI row, or mounted as a fallback. */
 export function deepSeekCallbackOrigin(ctx: Context): string {
   const server: WebServer | undefined = ctx.get('webServer')
   const port = server?.port
@@ -33,6 +34,75 @@ export function deepSeekCallbackOrigin(ctx: Context): string {
     throw new Error('DeepSeek sign-in needs an active Host webServer for the browser callback')
   }
   return `http://127.0.0.1:${port}`
+}
+
+/**
+ * Keep DeepSeek login usable after a profile-only update from a global TUI
+ * whose older bundle patch still mounts `dsh-tui-auth` but has no webserver
+ * row. The official Host listener is mounted only on the first login that
+ * needs it; an existing Web or user-owned listener is never replaced.
+ */
+export function createDeepSeekCallbackOriginResolver(ctx: Context): {
+  resolve(): Promise<string>
+  dispose(): Promise<void>
+} {
+  let fallback: { dispose(): Promise<void> } | undefined
+  let mounting: Promise<void> | undefined
+  let disposed = false
+
+  const mountFallback = async (): Promise<void> => {
+    const { WebServer } = await import('@deepseek-ai/dsh-host-webserver')
+    if (disposed) throw new Error('dsh-auth: callback listener owner was disposed')
+    // Another Host row may have become available while the import resolved.
+    if (ctx.get('webServer') !== undefined) return
+    const fiber = ctx.root.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    fallback = fiber
+    try {
+      await fiber
+    } catch (error) {
+      fallback = undefined
+      try {
+        await fiber.dispose()
+      } catch (disposeError) {
+        throw new AggregateError([error, disposeError], 'DeepSeek callback listener failed to start and dispose')
+      }
+      throw error
+    }
+  }
+
+  return {
+    resolve: async () => {
+      if (disposed) throw new Error('dsh-auth: callback listener owner was disposed')
+      if (ctx.get('webServer') === undefined) {
+        // A declared but unavailable listener is a composition decision or
+        // failure, not the missing row of an older global TUI patch.
+        const loader = ctx.get('loader') as {
+          entries(): Iterable<{ options: { id?: string; name?: string } }>
+        } | undefined
+        for (const entry of loader?.entries() ?? []) {
+          if (entry.options.id === 'dsh-tui-webserver'
+            || entry.options.name === '@deepseek-ai/dsh-host-webserver') {
+            return deepSeekCallbackOrigin(ctx)
+          }
+        }
+        mounting ??= mountFallback().finally(() => { mounting = undefined })
+        try {
+          await mounting
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          throw new Error(`DeepSeek sign-in could not start a Host webServer callback listener: ${message}`, { cause: error })
+        }
+      }
+      if (disposed) throw new Error('dsh-auth: callback listener owner was disposed')
+      return deepSeekCallbackOrigin(ctx)
+    },
+    dispose: async () => {
+      disposed = true
+      await mounting?.catch(() => undefined)
+      await fallback?.dispose()
+      fallback = undefined
+    },
+  }
 }
 
 const tuiVersion = (() => {

@@ -1,6 +1,7 @@
 /**
  * Headless smoke for the built-in OAuth entry — real Cordis registration,
- * but no Harness host, real credentials, or network.
+ * but no Harness host, real credentials, or external network. The legacy
+ * profile-update fixture binds the official webserver to a loopback port.
  *
  * Covers: the credential file as a pi-ai `CredentialStore` (write/read/
  * modify/delete, list metadata, the serialized modify pi-ai's refresh-under-
@@ -10,7 +11,9 @@
  * bridge (select/text mapping, browser callback/manual-input single surface,
  * waiting-panel cancel wiring), and the service api (status/login/logout
  * over a fabricated flow), the Host-owned DeepSeek account handoff (state,
- * callback origin, browser panel, cancellation, masked command results),
+ * callback origin, browser panel, cancellation including logout during
+ * pending callback resolution, masked command results,
+ * profile-only update fallback listener and cleanup),
  * plus the public ./oauth entry's
  * route/command/service mount and lifecycle cleanup.
  *
@@ -42,6 +45,7 @@ const {
 } = oauthModule
 const { Context } = await import('@deepseek-ai/cordis')
 const { QuestionStore } = await import('../lib/types/dsh-adapter/questions.js')
+const { createDeepSeekCallbackOriginResolver } = await import('../lib/types/dsh-adapter/oauth/deepseek.js')
 const { setLang } = await import('../lib/types/i18n.js')
 
 /** Adapter options over one profile — enough for listModels/resolveModel offline. */
@@ -708,12 +712,41 @@ try {
   try {
     let noListener = ''
     try { deepSeekCallbackOrigin(callbackContext) } catch (error) { noListener = error.message }
-    ok(noListener.includes('webServer'), 'DeepSeek sign-in refuses without a Host callback listener')
+    ok(noListener.includes('webServer'), 'a callback-origin lookup refuses without a Host listener')
     callbackContext.provide('webServer', { port: 43123 })
     ok(deepSeekCallbackOrigin(callbackContext) === 'http://127.0.0.1:43123',
       'the callback origin uses the active Host port and loopback address')
   } finally {
     await callbackContext.fiber.dispose()
+  }
+  const invalidCallbackContext = new Context()
+  const unreadyWebServer = { port: 0 }
+  invalidCallbackContext.provide('webServer', unreadyWebServer)
+  try {
+    const resolver = createDeepSeekCallbackOriginResolver(invalidCallbackContext)
+    let invalidListener = ''
+    try { await resolver.resolve() } catch (error) { invalidListener = error.message }
+    ok(invalidListener.includes('needs an active Host webServer')
+      && invalidCallbackContext.get('webServer') === unreadyWebServer,
+    'an existing but unready Host listener is not shadowed by a fallback')
+    await resolver.dispose()
+  } finally {
+    await invalidCallbackContext.fiber.dispose()
+  }
+  const declaredCallbackContext = new Context()
+  declaredCallbackContext.provide('loader', {
+    entries: () => [{ options: { id: 'dsh-tui-webserver', name: '@deepseek-ai/dsh-host-webserver' }, disabled: true }],
+  })
+  try {
+    const resolver = createDeepSeekCallbackOriginResolver(declaredCallbackContext)
+    let missingDeclaredListener = ''
+    try { await resolver.resolve() } catch (error) { missingDeclaredListener = error.message }
+    ok(missingDeclaredListener.includes('needs an active Host webServer')
+      && declaredCallbackContext.get('webServer') === undefined,
+    'a declared but disabled Host listener is not bypassed by the legacy fallback')
+    await resolver.dispose()
+  } finally {
+    await declaredCallbackContext.fiber.dispose()
   }
   const callbackOrigin = 'http://127.0.0.1:43123'
   const englishClient = deepSeekClientMetadata()
@@ -820,6 +853,34 @@ try {
   'facade logout calls Host signOut and never stores the account grant in pi-ai credentials')
   stopCoupons()
 
+  const pendingAccount = fakeDeepSeekAccount()
+  pendingAccount.startSignIn = async (...args) => {
+    pendingAccount.calls.starts.push(args)
+    throw new Error('late sign-in after logout')
+  }
+  let releaseCallbackOrigin
+  let callbackOriginRequested = false
+  const pendingCallbackOrigin = new Promise(resolve => { releaseCallbackOrigin = resolve })
+  const pendingAccountApi = createDshAuthApi({
+    profiles: new Map(), store: apiStore,
+    resolveAsk: () => fakeAsk,
+    resolveDeepSeekAccount: () => pendingAccount,
+    resolveCallbackOrigin: () => {
+      callbackOriginRequested = true
+      return pendingCallbackOrigin
+    },
+  })
+  const pendingLogin = pendingAccountApi.login(DEEPSEEK_ACCOUNT_PROVIDER)
+    .then(() => 'success', error => error instanceof Error ? error.message : String(error))
+  ok(await settled(() => callbackOriginRequested), 'DeepSeek login awaits callback listener startup')
+  await pendingAccountApi.logout(DEEPSEEK_ACCOUNT_PROVIDER)
+  releaseCallbackOrigin(callbackOrigin)
+  const pendingOutcome = await pendingLogin
+  ok(pendingAccount.calls.signOuts.length === 1
+    && pendingAccount.calls.starts.length === 0
+    && pendingOutcome.includes('Login cancelled'),
+  'logout completes before callback resolution and prevents a later Host sign-in attempt')
+
   const otherCoupons = new WhaleCouponStore()
   const stopOtherCoupons = otherCoupons.subscribe(() => undefined)
   await otherCoupons.refresh({
@@ -853,7 +914,8 @@ try {
     },
   })
   ctx.provide('deepseekAccount', facadeAccount)
-  ctx.provide('webServer', { port: 43123 })
+  const sharedWebServer = { port: 43123 }
+  ctx.provide('webServer', sharedWebServer)
   try {
     const fiber = await ctx.plugin(oauthModule, {
       providers: ['openai-codex'],
@@ -883,6 +945,8 @@ try {
     ok(accountCommand.kind === 'success' && accountCommand.text.includes('DeepSeek')
       && !accountCommand.text.includes('token expires') && !accountCommand.text.includes('1970'),
     '/auth login deepseek-account uses the Host flow and omits token-expiry copy')
+    ok(ctx.get('webServer') === sharedWebServer,
+      'DeepSeek sign-in reuses an existing Web callback listener')
     await fiber.dispose()
     ok(released.length === 2 && released.includes('llm') && released.includes('commands'),
       'Cordis teardown unregisters both the route and /auth')
@@ -895,6 +959,99 @@ try {
     await defaultFiber.dispose()
   } finally {
     await ctx.fiber.dispose()
+  }
+
+  // The v0.11.2 global patch still mounts ./oauth but lacks its new
+  // dsh-tui-webserver row. After /update, this new module must provide the
+  // missing Host listener without relying on the stale patch being replaced.
+  console.log('legacy global patch fallback')
+  const legacyCtx = new Context()
+  const legacyAccount = fakeDeepSeekAccount()
+  legacyCtx.provide('loader', {
+    entries: () => [{ options: { id: 'dsh-tui-auth', name: '@deepseek-harness-tui/dsh-tui/oauth' } }],
+  })
+  legacyCtx.provide('llm', { registerAdapter: () => () => {} })
+  legacyCtx.provide('commands', { register: () => () => {} })
+  legacyCtx.provide('deepseekAccount', legacyAccount)
+  legacyCtx.provide('userQuestions', { ask: fakeAsk })
+  try {
+    const fiber = await legacyCtx.plugin(oauthModule, {
+      providers: ['openai-codex'],
+      credentialsFile: join(root, 'legacy-global-patch', 'credentials.json'),
+    })
+    const api = legacyCtx.get('dshAuth')?.api
+    ok(legacyCtx.get('webServer') === undefined,
+      'a stale patch does not open a callback listener before DeepSeek sign-in')
+    const aborted = new AbortController()
+    aborted.abort()
+    let cancelledBeforeStart = false
+    try { await api.login(DEEPSEEK_ACCOUNT_PROVIDER, aborted.signal) } catch { cancelledBeforeStart = true }
+    ok(cancelledBeforeStart && legacyCtx.get('webServer') === undefined
+      && legacyAccount.calls.starts.length === 0,
+    'an already-cancelled login opens no fallback listener')
+    const login = api.login(DEEPSEEK_ACCOUNT_PROVIDER)
+    ok(await settled(() => legacyAccount.calls.starts.length === 1),
+      'DeepSeek login starts through the built-in OAuth module without a webserver patch row')
+    const fallback = legacyCtx.get('webServer')
+    ok(fallback?.host === '127.0.0.1' && Number.isInteger(fallback.port) && fallback.port > 0
+      && legacyAccount.calls.starts[0].origin === `http://127.0.0.1:${fallback.port}`,
+    'the fallback mounts the official Host webServer on an assigned loopback port')
+    let accountContext
+    const accountFiber = await legacyCtx.plugin({
+      name: 'account-callback-fixture',
+      apply(ctx) { accountContext = ctx },
+    })
+    try {
+      const releaseRoute = accountContext.get('webServer').register({
+        kind: 'exact', path: '/oauth/callback',
+        handler: (_request, response) => { response.writeHead(204); response.end() },
+      })
+      try {
+        const response = await fetch(`http://127.0.0.1:${fallback.port}/oauth/callback`, {
+          signal: AbortSignal.timeout(2000),
+        })
+        ok(response.status === 204,
+          'the Host account context can serve its browser callback through the fallback listener')
+      } finally {
+        releaseRoute()
+      }
+    } finally {
+      await accountFiber.dispose()
+    }
+    legacyAccount.update({ ...legacyAccount.current(), status: 'credential-stored',
+      attempt: { id: 'account-attempt-1', phase: 'succeeded' } })
+    await login
+
+    const secondLogin = api.login(DEEPSEEK_ACCOUNT_PROVIDER)
+    ok(await settled(() => legacyAccount.calls.starts.length === 2), 'a repeated account login starts')
+    ok(legacyCtx.get('webServer')?.port === fallback.port
+      && legacyAccount.calls.starts[1].origin === `http://127.0.0.1:${fallback.port}`,
+      'repeated account login reuses the one fallback listener')
+    legacyAccount.update({ ...legacyAccount.current(), status: 'credential-stored',
+      attempt: { id: 'account-attempt-1', phase: 'succeeded' } })
+    await secondLogin
+    await fiber.dispose()
+    ok(legacyCtx.get('webServer') === undefined,
+      'disposing built-in OAuth closes its fallback listener')
+  } finally {
+    await legacyCtx.fiber.dispose()
+  }
+
+  const oldHostCtx = new Context()
+  oldHostCtx.provide('llm', { registerAdapter: () => () => {} })
+  oldHostCtx.provide('commands', { register: () => () => {} })
+  try {
+    const fiber = await oldHostCtx.plugin(oauthModule, {
+      providers: ['openai-codex'],
+      credentialsFile: join(root, 'old-host', 'credentials.json'),
+    })
+    const rows = await oldHostCtx.get('dshAuth')?.api?.providers()
+    ok(!rows?.some(row => row.provider === DEEPSEEK_ACCOUNT_PROVIDER)
+      && oldHostCtx.get('webServer') === undefined,
+    'an older Host without deepseekAccount opens no fallback callback listener')
+    await fiber.dispose()
+  } finally {
+    await oldHostCtx.fiber.dispose()
   }
 } finally {
   rmSync(root, { recursive: true, force: true })
