@@ -237,6 +237,7 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
   const backlog: [readonly AgentEvent[], AgentEventMeta][] = []
   let status: AgentSessionStatus = 'starting'
   let disposing = false
+  let settlingPrompts = false
   let disposePromise: Promise<void> | undefined
   let cliVersion: string | undefined
   let cliCapabilities: readonly string[] = []
@@ -301,7 +302,8 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
     activityPublisher.fold(translator.activityState(), asking || dialogsOpen)
   }
 
-  const emit = (events: readonly AgentEvent[], wake: AgentEventMeta['wake'] = 'sync'): void => {
+  const emit = (events: readonly AgentEvent[], wake: AgentEventMeta['wake'] = 'sync', duringDispose = false): void => {
+    if (disposing && !duringDispose) return
     if (events.length === 0) return
     const meta: AgentEventMeta = { replay: false, wake }
     if (listeners.size === 0) { backlog.push([events, meta]); publishActivity(); return }
@@ -327,7 +329,7 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
   let asking = false
   const bridge = createClaudePermissionBridge({
     cwd: deps.cwd,
-    emit: events => emit(events),
+    emit: events => emit(events, 'sync', settlingPrompts),
     debug: deps.host.debug,
     closing: () => disposing,
     onPendingChange: count => {
@@ -343,7 +345,7 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
   /** MCP elicitation and user dialogs (dialogs.ts): parked like prompts. */
   let dialogsOpen = false
   const dialogs = createClaudeDialogBridge({
-    emit: events => emit(events),
+    emit: events => emit(events, 'sync', settlingPrompts),
     debug: deps.host.debug,
     closing: () => disposing,
     onPendingChange: count => {
@@ -435,9 +437,11 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
   /** Shut the session down; safe to call from any state. */
   const teardown = (): void => {
     clearForceTimer()
-    // Pending prompts are denied before the CLI goes.
+    // Pending prompt settlements must reach the channel before the query closes.
+    settlingPrompts = true
     bridge.settleAll()
     dialogs.settleAll()
+    settlingPrompts = false
     stopRun(run)
   }
 
@@ -454,7 +458,7 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
       { type: 'tasks.snapshot', taskIds: [] },
       { type: 'notice', level: 'error', text: t('claude-process-exited', { reason }) },
       { type: 'session.status', status: 'disposed' },
-    ])
+    ], 'sync', true)
     settleIdleWaiters(new Error(t('claude-session-closed')))
   }
 
@@ -1226,6 +1230,7 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
       // can drop them; a user cancel keeps them (they run as the next turn).
       // A CLI without the capability keeps its queue and runs it — the
       // cancel receipt's `still_queued` tells the channel, which un-docks.
+      translator.clearInterruptedCalls()
       const cancelQueued = cause !== 'user' && cliCapabilities.includes(CLI_CAPABILITY.interruptCancelQueued)
       // The queued inputs this cancel covers, taken before the request (an
       // input pushed meanwhile belongs to a newer batch). Without a
@@ -1266,7 +1271,7 @@ export async function openClaudeSession(input: ClaudeSessionDeps): Promise<Agent
           new Promise<void>(resolve => { timer = clock.setTimeout(resolve, deps.closeTimeoutMs ?? 5000) }),
         ])
         clock.clearTimeout(timer)
-        if (!wasDisposed) emit([{ type: 'session.status', status: 'disposed' }], 'none')
+        if (!wasDisposed) emit([{ type: 'session.status', status: 'disposed' }], 'none', true)
         settleIdleWaiters(new Error(t('claude-session-closed')))
         listeners.clear()
         backlog.length = 0
