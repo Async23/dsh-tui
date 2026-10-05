@@ -11,6 +11,8 @@ import type { Color } from '../ink/styles.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import type { ContextOccupancy } from '../adapter/ports/channel-view.js'
 import { resolveContextOccupancy } from '../dsh-adapter/context-occupancy.js'
+import { getActiveBrand } from '../branding.js'
+import { getActiveThemeName, isLightThemeActive } from '../theme.js'
 
 /**
  * The occupancy reading a screen renders.
@@ -52,6 +54,35 @@ export const USED_SEGMENTS = [
   { key: 'thinking', color: '#4D6BFE', labels: ['thinking', 'th'] }, // DeepSeek brand blue
   { key: 'tools', color: '#5A7CFF', labels: ['tools', 'tl'] }, // lighter blue
 ] as const
+
+/**
+ * claude 品牌（Claude 后端）的分段色——陶土橙明度阶梯，随品牌双主题分深浅
+ * 两表（与 `claude-dark`/`claude-paper` 的面板/强调色对应）。结构（key/labels）
+ * 不换，只换填充色：取色统一走 `usedSegmentColor`。
+ */
+const CLAUDE_SEGMENT_COLORS_DARK: Readonly<Record<string, Color>> = Object.freeze({
+  system: '#3A2720',
+  prompt: '#7A4A33',
+  assistant: '#B0623F',
+  thinking: '#D77757',
+  tools: '#E8A183',
+})
+const CLAUDE_SEGMENT_COLORS_PAPER: Readonly<Record<string, Color>> = Object.freeze({
+  system: '#F5DDD2',
+  prompt: '#E8C4B0',
+  assistant: '#D69877',
+  thinking: '#C96442',
+  tools: '#B85738',
+})
+
+/** 渲染期取一个已用分段的填充色（品牌档渲染时读取，见 `branding.ts`）。 */
+export function usedSegmentColor(segment: { key: string; color: Color }): Color {
+  if (getActiveBrand() !== 'claude') return segment.color
+  const table = isLightThemeActive(getActiveThemeName())
+    ? CLAUDE_SEGMENT_COLORS_PAPER
+    : CLAUDE_SEGMENT_COLORS_DARK
+  return table[segment.key] ?? segment.color
+}
 
 /** Used tokens per context content type (system, prompt, assistant, thinking, tools). */
 export type ContextSegments = Record<(typeof USED_SEGMENTS)[number]['key'], number>
@@ -216,7 +247,7 @@ export function contextBarBreakdown(
   for (const segment of USED_SEGMENTS) {
     const tokens = segments[segment.key]
     if (tokens > 0) {
-      raw.push({ key: segment.key, tokens, color: segment.color, labels: segment.labels })
+      raw.push({ key: segment.key, tokens, color: usedSegmentColor(segment), labels: segment.labels })
     }
   }
   if (freeTokens > 0) raw.push({ key: 'free', tokens: freeTokens, color: freeFill, labels: ['free'] })
@@ -328,7 +359,7 @@ export function renderContextBar(
   const values = [...USED_SEGMENTS.map(segment => segments[segment.key]), freeTokens]
   const columns = allocateBarColumns(values, width)
   const used = USED_SEGMENTS.map((segment, index) =>
-    renderUsedSegment(segment.color, columns[index] ?? 0),
+    renderUsedSegment(usedSegmentColor(segment), columns[index] ?? 0),
   ).join('')
   const freeWidth = columns[USED_SEGMENTS.length] ?? 0
   const pct = (usedTokens / contextWindow) * 100

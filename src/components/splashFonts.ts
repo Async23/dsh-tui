@@ -15,8 +15,9 @@
  * `normalizeSplashFont` 是唯一的归一化入口（非法值一律回落 `daily`）。面板选项
  * 由注册表直接推（含中英标签），所以加一款字体不需要第二份清单。
  *
- * 字形覆盖两层：正常词 `DEEPSEEK`/`HARNESS`，以及节日彩蛋词用到的 `I M Y W`
- * （`splashEggs.ts` 的日期表）。
+ * 字形覆盖三层：正常词 `DEEPSEEK`/`HARNESS`、节日彩蛋词用到的 `I M Y W`
+ * （`splashEggs.ts` 的日期表）、以及 claude 品牌词 `CLAUDE`/`CODE` 用到的
+ * `C L U O`（`branding.ts` 的按内核换品牌）。
  */
 import type { SplashFontId, SplashFontSetting } from '../adapter/ports/channel-display.js'
 import { bigTextWidth, paintedWidth } from './bigfont.js'
@@ -54,9 +55,10 @@ export interface SplashFont {
     readonly bottomIndent: number
   }
   /**
-   * 可选：这款字体自己的起止配色（不给就用主题的 `accent → activity`）。
-   * 半立体那款用它铺出左亮右暗的灰阶——字形本身已经是"亮面/暗面"两档字符，
-   * 再叠一层颜色渐变，才有金属受光的感觉。
+   * 可选：这款字体自己的起止配色（不给就由 `LogoV2` 按主题/品牌解析——
+   * 半立体款的金属明暗两档就是在那里随主题 accent 派生的）。内置款不再
+   * 静态设置；字段保留给运行时扩展（如 cc-bridge 类插件原地写 `palette`
+   * 接管两行渐变）。
    */
   readonly palette?: { readonly from: Rgb; readonly to: Rgb }
 }
@@ -77,6 +79,15 @@ const BOLD_GLYPHS: GlyphTable = {
   M: ['██··██', '██████', '██▀▀██', '██··██', '██··██'],
   Y: ['██··██', '██··██', '▀▀██▀▀', '··██··', '··██··'],
   W: ['██··██', '██··██', '██▄▄██', '██████', '██··██'],
+  // Claude 词字母（CLAUDE / CODE）：C 圆弧顶底（左角同 O 的 `·▄`/`·▀` 圆角）
+  // + 右侧上下钩各延续半格（行1 `▀▀` / 行3 `▄▄`，与顶底的 `▄▄`/`▀▀` 拼成
+  // 1 格厚的钩弧——ANSI Shadow 那种 `╗╔` 内钩弧的 5 行等效画法；只有顶底
+  // 半行的旧版弧臂厚 0.5 格，看着像 `[` 不够饱满）；O 保留 A 的圆拱（闭
+  // 圆环窄缘）；L 光杆 + E 的平底；U 是去掉 O 顶拱的开口版。
+  C: ['·▄▀▀▄▄', '██··▀▀', '██····', '██··▄▄', '·▀▄▄▀▀'],
+  L: ['██····', '██····', '██····', '██····', '██▄▄▄▄'],
+  U: ['██··██', '██··██', '██··██', '██··██', '·▀▄▄▀·'],
+  O: ['·▄▀▀▄·', '██··██', '██··██', '██··██', '·▀▄▄▀·'],
 }
 const BOLD_FALLBACK: GlyphRows = ['▄▄▄▄▄▄', '██··██', '██··██', '██··██', '▀▀▀▀▀▀']
 
@@ -96,6 +107,12 @@ const CLASSIC_GLYPHS: GlyphTable = {
   M: ['█···█', '██·██', '█·█·█', '█···█', '█···█'],
   Y: ['█···█', '█···█', '·█·█·', '··█··', '··█··'],
   W: ['█···█', '█···█', '█·█·█', '██·██', '█···█'],
+  // Claude 词字母（CLAUDE / CODE）：C 用 D 式顶底收角（右上下钩对称）；O
+  // 圆拱；L 光杆；U 开口底弧。
+  C: ['█▀▀▀▄', '█····', '█····', '█····', '█▄▄▄▀'],
+  L: ['█····', '█····', '█····', '█····', '█▄▄▄▄'],
+  U: ['█···█', '█···█', '█···█', '█···█', '·▀▄▀·'],
+  O: ['·▄▀▄·', '█···█', '█···█', '█···█', '·▀▄▀·'],
 }
 const CLASSIC_FALLBACK: GlyphRows = ['▄▄▄▄▄', '█···█', '█···█', '█···█', '▀▀▀▀▀']
 
@@ -115,8 +132,43 @@ const SLAB_GLYPHS: GlyphTable = {
   M: ['█···█', '██·██', '█·█·█', '█···█', '█···█'],
   Y: ['█···█', '█···█', '·█·█·', '··█··', '··█··'],
   W: ['█···█', '█···█', '█·█·█', '██·██', '█···█'],
+  // Claude 词字母（CLAUDE / CODE）：实心横笔 + 方角，与 `D`/`E` 同笔法。
+  C: ['████·', '█····', '█····', '█····', '████·'],
+  L: ['█····', '█····', '█····', '█····', '█████'],
+  U: ['█···█', '█···█', '█···█', '█···█', '·███·'],
+  O: ['·███·', '█···█', '█···█', '█···█', '·███·'],
 }
 const SLAB_FALLBACK: GlyphRows = ['▄▄▄▄▄', '█···█', '█···█', '█···█', '▀▀▀▀▀']
+
+/**
+ * ANSI Shadow（patorjk/figlet.js 收录的经典终端 banner 字体，10 列 × 5 行
+ * 压缩版）：`█` 主体 + `╗╔╚╝═║` 双线弧角收边，立体圆润。由
+ * `.local/figlet-fonts/convert-flf.mjs` 从原版 7 行压缩而来（剥首尾空行、
+ * 去中段重复行；**窄行左对齐字身左缘**——v0 按行独立居中，C/L/E/P/Y 的
+ * 竖笔全与顶底弧错位 1-2 列；超宽字形压最长空隙段）。唯一手工：M 行 2 取
+ * 原版 V 顶行 `██╔████╔██║` 删 1 格 `█`（转换器对无空隙超宽行只能居中裁，
+ * 会丢右杆收笔 `║`）。dsh / claude 两副词的字母全在内（含彩蛋 IMYW）。
+ */
+const SHADOW_GLYPHS: GlyphTable = {
+  D: ['·██████╗··', '·██╔══██╗·', '·██║··██║·', '·██████╔╝·', '·╚═════╝··'],
+  E: ['·███████╗·', '·██╔════╝·', '·██╔══╝···', '·███████╗·', '·╚══════╝·'],
+  P: ['·██████╗··', '·██╔══██╗·', '·██╔═══╝··', '·██║······', '·╚═╝······'],
+  S: ['·███████╗·', '·██╔════╝·', '·╚════██║·', '·███████║·', '·╚══════╝·'],
+  K: ['·██╗··██╗·', '·██║·██╔╝·', '·██╔═██╗··', '·██║··██╗·', '·╚═╝··╚═╝·'],
+  H: ['·██╗··██╗·', '·██║··██║·', '·██╔══██║·', '·██║··██║·', '·╚═╝··╚═╝·'],
+  A: ['··█████╗··', '·██╔══██╗·', '·██╔══██║·', '·██║··██║·', '·╚═╝··╚═╝·'],
+  R: ['·██████╗··', '·██╔══██╗·', '·██╔══██╗·', '·██║··██║·', '·╚═╝··╚═╝·'],
+  N: ['███╗···██╗', '████╗··██║', '██║╚██╗██║', '██║·╚████║', '╚═╝··╚═══╝'],
+  C: ['··██████╗·', '·██╔════╝·', '·██║······', '·╚██████╗·', '··╚═════╝·'],
+  L: ['·██╗······', '·██║······', '·██║······', '·███████╗·', '·╚══════╝·'],
+  U: ['██╗···██╗·', '██║···██║·', '██║···██║·', '╚██████╔╝·', '·╚═════╝··'],
+  O: ['·██████╗··', '██╔═══██╗·', '██║···██║·', '╚██████╔╝·', '·╚═════╝··'],
+  I: ['···██╗····', '···██║····', '···██║····', '···██║····', '···╚═╝····'],
+  M: ['███╗··███╗', '████╗████║', '██╔███╗██║', '██║·╚═╝██║', '╚═╝····╚═╝'],
+  W: ['██╗····██╗', '██║····██║', '██║███╗██║', '╚███╔███╔╝', '·╚══╝╚══╝·'],
+  Y: ['██╗···██╗·', '╚██╗·██╔╝·', '··╚██╔╝···', '···██║····', '···╚═╝····'],
+}
+const SHADOW_FALLBACK: GlyphRows = ['·▄▄▄▄▄▄▄▄·', '·█······█·', '·█······█·', '·█······█·', '·▀▀▀▀▀▀▀▀·']
 
 // ── 由基准款派生的笔画处理 ────────────────────────────────────────────────
 type RowTransform = (row: string, y: number, rows: GlyphRows) => string
@@ -155,10 +207,17 @@ const BEVEL: RowTransform = (row, y, rows) => {
     return right || !left ? '█' : '▓'
   }).join('')
 }
-/** 宽体：6 列最近邻拉到 8 列（竖笔 3 格、字腔 2 格）。 */
+/** 宽体：6 列最近邻拉到 8 列（竖笔 3 格、字腔 2 格）。采样按**像素中心
+ * 对齐**（`(x+0.5)·len/8−0.5` 再取整）——朴素的 floor 会把首列元素复制两
+ * 份、末列只一份，居中的窄拱字形（如 `A`/`O` 的 `·▄▀▀▄·`）拉伸后左空 2
+ * 列右空 1 列、拱整体偏右一列（用户实测"a 左边多了一列"）；中心对齐后
+ * 左右留白等量，拱保持居中。 */
 const WIDE: RowTransform = row => {
   const cells = [...row]
-  return Array.from({ length: 8 }, (_, x) => cells[Math.min(cells.length - 1, Math.floor(x * cells.length / 8))]).join('')
+  return Array.from({ length: 8 }, (_, x) => {
+    const source = Math.round((x + 0.5) * cells.length / 8 - 0.5)
+    return cells[Math.max(0, Math.min(cells.length - 1, source))]
+  }).join('')
 }
 /**
  * 镂空模板：中段那一行只在竖笔上留 1 列桥，其余挖空。
@@ -206,17 +265,46 @@ const MAX_KERNING = 8
  *   |ink(top, tk) − ink(bottom, bk) − 2·indent| ≤ 1        （下排墨迹居中）
  * 相减即 `|indent − (bk − tk)| ≤ 1`——所以缩进不是自由变量，字距才是。
  *
- * 选解顺序：先要求两行相邻字形之间都至少留 1 列（字身相接会糊成一片），再按
- * `tk + bk` 从小到大取第一个满足契约的解——字距最紧、画面最不松散。个别
- * (字身宽, 词长) 组合（如 8 列的 `wide` × 9 字的 `HAPPINESS`）只解得出下排零字距，
- * 那时才退到允许 0：契约（等宽 + 居中）优先于美观。
+ * 选解顺序（`tight`，默认）：先要求两行相邻字形之间都至少留 1 列（字身相接
+ * 会糊成一片），再按 `tk + bk` 从小到大取第一个满足契约的解——字距最紧、
+ * 画面最不松散。个别 (字身宽, 词长) 组合（如 8 列的 `wide` × 9 字的
+ * `HAPPINESS`）只解得出下排零字距，那时才退到允许 0：契约（等宽 + 居中）
+ * 优先于美观。
+ *
+ * `wide`（品牌词 CLAUDE/CODE 用）：两词字数差大（6 vs 4）时，紧解的上排
+ * 字距只有 1（挤），最宽解又到 4/8（空旷）——bold 家族的整数可行解恰好
+ * 三档 {1/4, 2/5, 4/8}，宽解取**中间档**（字距和最接近紧/宽两极的中点），
+ * 舒展而不散。下排字距天然大于上排是等宽契约的数学必然：字数差靠
+ * `bk − tk` 的墨迹差补齐；无解则退回 tight。
  * @param glyphWidth - 字身宽度（列）。
  * @param top - 上排词。
  * @param bottom - 下排词（可含空格，空格宽度由 `paintedWidth` 算）。
+ * @param mode - `tight`（默认，最紧解）或 `wide`（中间档解，品牌词用）。
  * @returns 两排字距与下排缩进。
  */
-function solveTagline(glyphWidth: number, top: string, bottom: string): TaglineKernings {
+function solveTagline(glyphWidth: number, top: string, bottom: string, mode: 'tight' | 'wide' = 'tight'): TaglineKernings {
   const metrics = { glyphWidth }
+  if (mode === 'wide') {
+    const feasible: (TaglineKernings & { sum: number })[] = []
+    for (let topKerning = 1; topKerning <= MAX_KERNING; topKerning++) {
+      for (let bottomKerning = 1; bottomKerning <= MAX_KERNING; bottomKerning++) {
+        const bottomIndent = paintedWidth(metrics, top, topKerning) - paintedWidth(metrics, bottom, bottomKerning)
+        if (bottomIndent < 0) continue
+        const error = Math.abs(
+          bigTextWidth(metrics, top, topKerning) - bigTextWidth(metrics, bottom, bottomKerning) - 2 * bottomIndent,
+        )
+        if (error > 1) continue
+        feasible.push({ topKerning, bottomKerning, bottomIndent, sum: topKerning + bottomKerning })
+      }
+    }
+    if (feasible.length > 0) {
+      const minSum = Math.min(...feasible.map(item => item.sum))
+      const maxSum = Math.max(...feasible.map(item => item.sum))
+      const target = (minSum + maxSum) / 2
+      return feasible.reduce((best, item) =>
+        Math.abs(item.sum - target) < Math.abs(best.sum - target) ? item : best)
+    }
+  }
   // 兜底：契约在字距上限内无解时，宁可居中差一点，也不让开屏抛错（当前词表不可达）。
   let closest: (TaglineKernings & { error: number }) | null = null
   for (const minKerning of [1, 0]) {
@@ -261,20 +349,27 @@ const font = (id: SplashFontId, face: FaceData): SplashFont => {
 }
 
 /**
- * 换一副标题词（节日彩蛋用）：字形、字身宽度、id 都不变，只按新词重解字距。
- * 布局阈值（`resolveSplashLayout`）与渲染都读字体自己的 `tagline`，所以派生对象
- * 可以直接顶替原字体——窄终端阶梯一行都不用改。
+ * 换一副标题词（品牌词/节日彩蛋用）：字形、字身宽度、id 都不变，只按新词
+ * 重解字距。布局阈值（`resolveSplashLayout`）与渲染都读字体自己的 `tagline`，
+ * 所以派生对象可以直接顶替原字体——窄终端阶梯一行都不用改。
  * @param font - 基准字体。
  * @param top - 上排词。
  * @param bottom - 下排词。
+ * @param options - `wide`：取中间档可行解（品牌词 CLAUDE/CODE 用——紧解挤、
+ *   最宽解空旷，中间档舒展而不散；见 `solveTagline` 的 wide 注释）。
  * @returns 换词后的字体描述符。
  */
-export function withTagline(font: SplashFont, top: string, bottom: string): SplashFont {
-  return { ...font, tagline: { top, bottom, ...solveTagline(font.glyphWidth, top, bottom) } }
+export function withTagline(
+  font: SplashFont,
+  top: string,
+  bottom: string,
+  options?: { readonly wide?: boolean },
+): SplashFont {
+  return { ...font, tagline: { top, bottom, ...solveTagline(font.glyphWidth, top, bottom, options?.wide === true ? 'wide' : 'tight') } }
 }
 
-/** 半立体的灰阶：左亮右暗——和字形的"亮面/暗面"共用同一套打光（光从左上来）。 */
-const BEVEL_PALETTE = { from: { r: 214, g: 214, b: 214 }, to: { r: 104, g: 104, b: 104 } }
+/** 半立体的配色不再静态写死：LogoV2 按主题 accent 派生亮/暗两档（金属受光），
+ * 蓝主题出蓝金属、橙主题出橙金属——静态灰阶在任何主题下都像没上色。 */
 
 /**
  * 字体表：键就是 id（`Record<SplashFontId, …>` 保证不多不少，加一款字体必须先
@@ -284,12 +379,13 @@ const BEVEL_PALETTE = { from: { r: 214, g: 214, b: 214 }, to: { r: 104, g: 104, 
 const SPLASH_FONT_TABLE: Record<SplashFontId, SplashFont> = {
   bold: font('bold', { zh: '加粗（基准款）', en: 'Bold (base)', glyphs: BOLD_GLYPHS, fallback: BOLD_FALLBACK }),
   square: font('square', { zh: '方角实心', en: 'Square solid', glyphs: applyTable(BOLD_GLYPHS, SQUARE), fallback: applyRows(BOLD_FALLBACK, SQUARE) }),
-  bevel: { ...font('bevel', { zh: '半立体', en: 'Bevel', glyphs: applyTable(BOLD_GLYPHS, BEVEL), fallback: applyRows(BOLD_FALLBACK, BEVEL) }), palette: BEVEL_PALETTE },
+  bevel: font('bevel', { zh: '半立体', en: 'Bevel', glyphs: applyTable(BOLD_GLYPHS, BEVEL), fallback: applyRows(BOLD_FALLBACK, BEVEL) }),
   wide: font('wide', { zh: '宽体', en: 'Wide', glyphs: applyTable(BOLD_GLYPHS, WIDE), fallback: applyRows(BOLD_FALLBACK, WIDE) }),
   dot: font('dot', { zh: '点阵灰度', en: 'Dot matrix', glyphs: applyTable(BOLD_GLYPHS, DOT), fallback: applyRows(BOLD_FALLBACK, DOT) }),
   stencil: font('stencil', { zh: '镂空模板', en: 'Stencil', glyphs: applyTable(BOLD_GLYPHS, STENCIL), fallback: applyRows(BOLD_FALLBACK, STENCIL) }),
   classic: font('classic', { zh: '细笔（经典）', en: 'Thin (classic)', glyphs: CLASSIC_GLYPHS, fallback: CLASSIC_FALLBACK }),
   slab: font('slab', { zh: '方板（实心横笔）', en: 'Slab (solid bars)', glyphs: SLAB_GLYPHS, fallback: SLAB_FALLBACK }),
+  shadow: font('shadow', { zh: '立体弧角（ANSI Shadow）', en: 'Shadow (ANSI)', glyphs: SHADOW_GLYPHS, fallback: SHADOW_FALLBACK }),
 }
 
 /** 轮换池（渲染侧只读这一份；表的书写顺序即轮换顺序）。 */

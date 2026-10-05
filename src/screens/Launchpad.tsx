@@ -4,6 +4,7 @@ import { SearchBox } from '../components/SearchBox.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { CommandSuggestions } from '../components/CommandSuggestions.js'
 import { LogoV2 } from '../components/LogoV2.js'
+import type { Brand } from '../branding.js'
 import { resolveLaunchpadLayout, type LaunchpadLayout } from '../components/launchpadLayout.js'
 import { type LaunchpadAction } from '../components/launchpadActions.js'
 import { kernelDisplayName, kernelSubtitle, type KernelOption } from '../components/kernelCatalog.js'
@@ -342,6 +343,7 @@ export function Launchpad({
   whale,
   whaleIdle,
   whaleGirl,
+  brand,
   fontId,
   starred,
   onStarClick,
@@ -385,6 +387,8 @@ export function Launchpad({
   whale: boolean
   whaleIdle: boolean
   whaleGirl: boolean
+  /** 品牌档（当前后端 → `resolveBrand`；见 `branding.ts`）。 */
+  brand?: Brand
   fontId?: string | undefined
   starred: boolean
   onStarClick?: () => void
@@ -851,6 +855,7 @@ export function Launchpad({
                       whale={layout.showWhale && whale}
                       whaleIdle={whaleIdle}
                       whaleGirl={layout.showWhale && whaleGirl}
+                      brand={brand}
                       starred={starred}
                       onStarClick={onStarClick}
                       skipIntro

@@ -5,6 +5,8 @@ import { formatTokens } from '../terminal-utils/format.js'
 import { t } from '../i18n.js'
 import { formatContextUsage, DEFAULT_STATUS_BAR, normalizeStatusBar, type StatusBarConfig } from '../tuiDisplayPrefs.js'
 import { estimateSessionCostSnapshotCny, isDeepSeekOfficialProvider, isPeakHour } from '../deepseekPricing.js'
+import { getActiveBrand } from '../branding.js'
+import { isLightThemeActive } from '../theme.js'
 import { ActivityLine, contextPressurePct, type ActivityLineValue } from '../components/ActivityLine.js'
 import { formatClock } from '../trajectory/format.js'
 import { GoalStatusChip } from '../components/GoalTodoPanel.js'
@@ -583,10 +585,14 @@ const selectionBadge = formatSelectionBadge(channel.selection)
   // arithmetic or its right edge falls 2 columns short of the status row's
   // (the v0.8.0 paddingX 2→1 tightening left the old `columns - 4` stale).
   const barWidth = columns - 2
+  // 空段的深色兜底：deepseek 档冷灰、claude 档暖墨（品牌档见 branding.ts）；
+  // 浅色主题（light 与 claude-paper）走 StatusMetrics 的浅灰默认。
   const barColors: { freeFill: Color; freeText: Color } | undefined =
-    themeName === 'light'
+    isLightThemeActive(themeName)
       ? undefined
-      : { freeFill: '#2E3440', freeText: '#8D95A6' }
+      : getActiveBrand() === 'claude'
+        ? { freeFill: '#24221F', freeText: '#B8B2A8' }
+        : { freeFill: '#2E3440', freeText: '#8D95A6' }
   const barVisible =
     statusBar.contextBar &&
     channel.contextBarEnabled &&

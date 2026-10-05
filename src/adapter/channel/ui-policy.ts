@@ -9,7 +9,7 @@ type MethodKeys<T> = { [K in keyof T]: T[K] extends (...args: never[]) => unknow
 export type ChannelPreferences = Pick<ChannelUi,
   | 'setDiffLayout' | 'setThinkingFold' | 'setJobGroupFold' | 'setToolBackground' | 'setScrollGutter'
   | 'setPageMargin' | 'setFoldTerminalCommand' | 'setPromptSessionLabel'
-  | 'setExpandEditor' | 'setSmoothStreaming' | 'setStatusBar' | 'setWhale' | 'setWhaleIdle' | 'setWhaleGirl' | 'setMinimalUi' | 'setMinimal' | 'setSplashFont'
+  | 'setExpandEditor' | 'setSmoothStreaming' | 'setStatusBar' | 'setWhale' | 'setWhaleIdle' | 'setWhaleGirl' | 'setMinimalUi' | 'setMinimal' | 'setSplashFont' | 'setBrand'
 >
 export const CHANNEL_UI_EFFECTS = Object.freeze({
   'setDiffLayout': 'mutate',
@@ -27,6 +27,7 @@ export const CHANNEL_UI_EFFECTS = Object.freeze({
   'setWhale': 'mutate',
   'setWhaleIdle': 'mutate',
   'setSplashFont': 'mutate',
+  'setBrand': 'mutate',
   'setWhaleGirl': 'mutate',
   'setMinimalUi': 'mutate',
   // Deprecated pre-rename alias of setMinimalUi (see the port's doc comment).
@@ -211,6 +212,7 @@ export const CHANNEL_UI_PROPERTIES = [
   'whale',
   'whaleIdle',
   'splashFont',
+  'brand',
   'whaleGirl',
   'minimalUi',
   // Deprecated pre-rename alias of minimalUi (see the port's doc comment).

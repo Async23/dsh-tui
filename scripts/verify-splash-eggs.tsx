@@ -118,9 +118,19 @@ for (const font of SPLASH_FONTS) {
       topWidth === bottomWidth && topRows.every((row, index) => columns(row) === columns(bottomRows[index] ?? '')),
       `${topWidth} vs ${bottomWidth}`,
     )
+    // 契约无解的组合（见下方 feasible 穷举）走 closest 兜底，居中允许超差
+    // ——等宽（上一条）仍是硬契约；有解的组合居中误差必须 ≤ 1。
+    const feasibleExists = (() => {
+      for (let tk = 0; tk <= KERNING_CAP; tk += 1) {
+        for (let bk = 0; bk <= KERNING_CAP; bk += 1) {
+          if (contractIndent(font, top, tk, bottom, bk) !== null) return true
+        }
+      }
+      return false
+    })()
     check(
       `[${font.id}] ${top}/${bottom} 下排墨迹居中（左右留白差 ≤ 1 列）`,
-      Math.abs(inkTop - inkBottom - 2 * bottomIndent) <= 1,
+      Math.abs(inkTop - inkBottom - 2 * bottomIndent) <= 1 || !feasibleExists,
       `ink ${inkTop}/${inkBottom} indent ${bottomIndent}`,
     )
     check(
@@ -138,7 +148,15 @@ for (const font of SPLASH_FONTS) {
         }
       }
     }
-    check(`[${font.id}] ${top}/${bottom} 有可行解`, feasible.length > 0)
+    // 个别（字身宽 × 词长差）组合契约在字距上限内**数学无解**（如 shadow 的
+    // 10 列字身 × DEEPSEEK/HAPPINESS：等宽方程推导出 indent 恒负）——那种
+    // 组合只断言兜底路径（closest）：不抛错、两行仍等宽（indent 按 painted
+    // 差求出），居中允许超差。
+    if (feasible.length === 0) {
+      const fallbackOk = topRows.every((row, index) => columns(row) === columns(bottomRows[index] ?? ''))
+      check(`[${font.id}] ${top}/${bottom} 契约无解时兜底仍等宽不抛错`, fallbackOk)
+      continue
+    }
     const gapped = feasible.filter(candidate => candidate.topKerning >= 1 && candidate.bottomKerning >= 1)
     const pool = gapped.length > 0 ? gapped : feasible
     const tightest = Math.min(...pool.map(candidate => candidate.sum))

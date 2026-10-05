@@ -10,6 +10,7 @@ import type { SessionModeSpec } from '../../sessionModes.js'
 import { normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeStatusBar, normalizeToolBackground, type JobGroupFoldMode, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../../tuiDisplayPrefs.js'
 import { normalizeActivityPreset } from '../../components/activityFrames.js'
 import { normalizeSplashFont, type SplashFontSetting } from '../../components/splashFonts.js'
+import { normalizeBrandSetting, type BrandSetting } from '../../branding.js'
 import type { ChannelState } from './types.js'
 
 /** The DSH backend's user-facing name (capability snapshot default). */
@@ -73,6 +74,9 @@ export interface ChannelLaunchOptions {
   /** Big-text face (settings `dsh-tui.splashFont`); absent → `daily`, the
    *  date rotation. Junk normalizes to `daily` (see `normalizeSplashFont`). */
   splashFont?: SplashFontSetting
+  /** Brand look (settings `dsh-tui.brand`); absent → `auto` (follow the
+   *  active backend). Junk normalizes to `auto` (see `normalizeBrandSetting`). */
+  brand?: BrandSetting
   /** Maid portrait for the header splash (settings `dsh-tui.whaleGirl`;
    * off by default). */
   whaleGirl?: boolean
@@ -152,7 +156,7 @@ export function createInitialChannelView(
   'configuredPreset' | 'configuredActivityFrames' | 'configuredLang' | 'diffLayout' |
   'thinkingFold' | 'jobGroupFold' | 'toolBackground' | 'scrollGutter' | 'pageMargin' |
   'foldTerminalCommand' | 'turnUsageRow' | 'promptSessionLabel' | 'expandEditor' | 'smoothStreaming' |
-  'statusBar' | 'whale' | 'whaleIdle' | 'splashFont' | 'minimalUi' | 'activityEnabled' | 'contextBarEnabled' |
+  'statusBar' | 'whale' | 'whaleIdle' | 'splashFont' | 'brand' | 'minimalUi' | 'activityEnabled' | 'contextBarEnabled' |
   'statusBar' | 'whale' | 'whaleIdle' | 'whaleGirl' | 'minimalUi' | 'activityEnabled' | 'contextBarEnabled' |
   'agentPreset' | 'goal' | 'todos' | 'loadedContext' | 'pending' | 'commandList' |
   'lastUsage' | 'turnUsage' | 'tps' | 'tpsSamples' | 'contextSegments' | 'mainCost' | 'subagentCost' | 'subagents' | 'backgroundJobs' | 'selection'
@@ -176,7 +180,7 @@ export function createInitialChannelView(
     turnUsageRow: options.turnUsageRow === true,
     promptSessionLabel: options.promptSessionLabel === true, expandEditor: options.expandEditor !== false,
     smoothStreaming: options.smoothStreaming !== false, statusBar: normalizeStatusBar(options.statusBar),
-    whale: options.whale !== false, whaleIdle: options.whaleIdle !== false, whaleGirl: options.whaleGirl === true, splashFont: normalizeSplashFont(options.splashFont), minimalUi: options.minimalUi === true, activityEnabled: options.activity !== false,
+    whale: options.whale !== false, whaleIdle: options.whaleIdle !== false, whaleGirl: options.whaleGirl === true, splashFont: normalizeSplashFont(options.splashFont), brand: normalizeBrandSetting(options.brand), minimalUi: options.minimalUi === true, activityEnabled: options.activity !== false,
     contextBarEnabled: options.contextBar !== false, agentPreset: options.agentPreset, goal: undefined,
     todos: [], loadedContext: undefined, pending: [], commandList: [], lastUsage: undefined, turnUsage: undefined,
     tps: undefined, tpsSamples: [], contextSegments: { system: 0, prompt: 0, assistant: 0, thinking: 0, tools: 0 },
