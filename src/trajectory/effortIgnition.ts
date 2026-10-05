@@ -23,6 +23,7 @@ export const IGNITION_TIMELINE = {
  */
 import type { RGBColor } from '../components/Spinner/spinnerUtils.js'
 import { rgbString } from './motion.js'
+import { getActiveBrand } from '../branding.js'
 
 /** 扫光全长（ms），仅用于把墙钟时间折算成动画秒数，不创建任何定时器。 */
 export const SWEEP_TOTAL_MS = 1000
@@ -49,21 +50,43 @@ const HUES_LIGHT: readonly [RGBColor, RGBColor, RGBColor] = [
 ]
 
 /**
+ * claude 品牌（cc 内核）的点火色阶：暖橙系（cc-bridge 调校）。浅底变体取
+ * 更深的橙——浅底上亮橙没有对比度。
+ */
+const HUES_DARK_CLAUDE: readonly [RGBColor, RGBColor, RGBColor] = [
+  { r: 232, g: 145, b: 63 },
+  { r: 245, g: 192, b: 138 },
+  { r: 255, g: 214, b: 170 },
+]
+const HUES_LIGHT_CLAUDE: readonly [RGBColor, RGBColor, RGBColor] = [
+  { r: 196, g: 96, b: 20 },
+  { r: 214, g: 130, b: 40 },
+  { r: 168, g: 84, b: 30 },
+]
+
+/**
  * 带底色（波向终端本底淡入的目标色）。近似值：取主题深/浅背景的典
  * 型值而非逐主题读取——波只存活一秒，色差在低 alpha 下不可辨。
  */
 const BAND_DARK: RGBColor = { r: 27, g: 30, b: 40 }
+const BAND_DARK_CLAUDE: RGBColor = { r: 38, g: 30, b: 22 }
 const BAND_LIGHT: RGBColor = { r: 240, g: 240, b: 242 }
 
 export function ignitionHues(onLight: boolean): readonly [RGBColor, RGBColor, RGBColor] {
+  if (getActiveBrand() === 'claude') return onLight ? HUES_LIGHT_CLAUDE : HUES_DARK_CLAUDE
   return onLight ? HUES_LIGHT : HUES_DARK
+}
+
+/** 当前档的暗底带色（品牌档取暖褐近似）。 */
+function darkBand(): RGBColor {
+  return getActiveBrand() === 'claude' ? BAND_DARK_CLAUDE : BAND_DARK
 }
 
 /**
  * 充能色对（前缀强调用）：从带底色调暗端到全值，与波共用 hues[0]。
  */
 export function accentRamp(onLight: boolean): { dim: RGBColor; full: RGBColor } {
-  const band = onLight ? BAND_LIGHT : BAND_DARK
+  const band = onLight ? BAND_LIGHT : darkBand()
   return { dim: blend(band, ignitionHues(onLight)[0], 0.45), full: ignitionHues(onLight)[0] }
 }
 
@@ -129,7 +152,7 @@ export function ignitionLineColors(options: {
   const total = SWEEP_TOTAL_MS / 1000
   if (width <= 0 || !Number.isFinite(elapsed) || elapsed <= 0 || elapsed >= total) return []
   const hue = ignitionHues(onLight)[0]
-  const band = onLight ? BAND_LIGHT : BAND_DARK
+  const band = onLight ? BAND_LIGHT : darkBand()
   const colors: Array<string | undefined> = new Array(width)
   for (let column = 0; column < width; column++) {
     const weight = sampleColumn(elapsed, column, width)[0]

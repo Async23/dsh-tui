@@ -13,6 +13,7 @@ import { isKernelId, type KernelBackendId } from '../kernelPrefs.js'
 import { BTW_CONTEXT_BUDGET_DEFAULT, BTW_CONTEXT_TURNS_DEFAULT, DEFAULT_COMPANION_SKIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, normalizeBtwContextBudget, normalizeBtwContextTurns, normalizeCompanionSkin, normalizePageMargin, normalizeSidePanelPanels, normalizeSidePanelRatio, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SHORTCUT_ACTIONS, type ShortcutActionId } from '../utils/keymap.js'
 import { normalizeSplashFont, type SplashFontSetting } from '../components/splashFonts.js'
+import { normalizeBrandSetting, type BrandSetting } from '../branding.js'
 import { editableConfig, type RuntimeConfig } from './compat/settings.js'
 import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
 
@@ -74,6 +75,10 @@ export interface Config {
    *  id from `components/splashFonts.ts` (`bold`/`square`/…) pinning that one
    *  face. An unknown value falls back to `daily`. */
   splashFont?: SplashFontSetting
+  /** Brand look of the splash and theme (settings `dsh-tui.brand`): `auto`
+   *  (the default) follows the active backend — Claude boots orange;
+   *  `deepseek`/`claude` pin one look. Junk normalizes to `auto`. */
+  brand?: BrandSetting
   /** Swap the header's pixel whale for the static maid portrait. */
   whaleGirl?: boolean
   /** Reduce decorative header content and colors. */
@@ -284,6 +289,12 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
   splashFont: Schema.transform(
     Schema.string(),
     value => normalizeSplashFont(value),
+  ),
+  // 同 splashFont 的 transform 而非 union：cordis.yml 保持决定权，`auto`
+  // 的默认值由 `normalizeBrandSetting` 在每个读取点给出。
+  brand: Schema.transform(
+    Schema.string(),
+    value => normalizeBrandSetting(value),
   ),
   whaleGirl: Schema.boolean().default(false),
   minimal: Schema.boolean().default(false),

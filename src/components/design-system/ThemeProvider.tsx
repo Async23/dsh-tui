@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react'
 import {
   isThemeAvailable,
   isLightThemeActive,
@@ -8,6 +8,7 @@ import {
   getAutoThemeBase,
   AUTO_THEME_NAME,
 } from '../../theme.js'
+import { CLAUDE_BRAND_THEMES, getActiveBrand, subscribeActiveBrand } from '../../branding.js'
 import instances from '../../ink/instances.js'
 import { resolveCustomTheme } from '../../customTheme.js'
 import type { TuiThemeHost } from '../../dsh-adapter/themes.js'
@@ -254,6 +255,8 @@ export function ThemeProvider({
         return false
       }
       requestedThemeRef.current = name
+      // /theme 手选是明确意愿：品牌默认档从此让位（见 renderedTheme 的锁定判定）。
+      brandThemeLockRef.current = true
       setActive(name)
       if (name === AUTO_THEME_NAME) redetectAutoBase()
       return true
@@ -283,11 +286,31 @@ export function ThemeProvider({
     }
   }, [active, redetectAutoBase, runtimeThemeSnapshot])
 
-  const renderedTheme = active === null
-    ? 'dark'
-    : isThemeAvailable(active)
-      ? active
-      : AUTO_THEME_NAME
+  // ── 品牌默认档（branding.ts）───────────────────────────────────────────
+  // Claude 后端（claude 品牌）时把默认主题档替换成 Claude 双主题（claude-dark
+  // / claude-paper，按解析档深浅自动落位）——启动页
+  // 与对话页跟着后端整体换色。锁定判定（用户表达过明确意愿时不覆盖）：
+  // - 显式 `theme` prop / `DSH_TUI_THEME`：锁；
+  // - 会话内 `/theme` 手选：锁（setTheme 置位）；
+  // - 启动时读到的 `~/.dsh-tui/theme.json` 持久化偏好：**不锁**——那是切换
+  //   品档联动之前的历史选择，压住「选了后端整个主题就变」的联动就再也
+  //   切不过去；想固定外观走 `/theme` 重选或设置项 `dsh-tui.brand`。
+  // 品牌经 useSyncExternalStore 订阅：`/settings` 切品牌 → Chat 调
+  // setActiveBrand → 这里即时换档，不重挂组件。
+  const brand = useSyncExternalStore(subscribeActiveBrand, getActiveBrand)
+  const brandThemeLockRef = React.useRef<boolean>(theme !== undefined || envThemeOverride() !== undefined)
+  const renderedTheme = (() => {
+    const resolved = active === null
+      ? 'dark'
+      : isThemeAvailable(active)
+        ? active
+        : AUTO_THEME_NAME
+    if (brand !== 'claude' || brandThemeLockRef.current) return resolved
+    // 双主题按解析档深浅落位：浅色终端（或历史 light 偏好）→ claude-paper，
+    // 深色 → claude-dark——两套共用同一强调色，切明暗不丢品牌识别。
+    const lightness = resolved === 'light' || (resolved === AUTO_THEME_NAME && autoBase === 'light') ? 'light' : 'dark'
+    return CLAUDE_BRAND_THEMES[lightness]
+  })()
   const value = React.useMemo(
     () => ({
       theme: renderedTheme,

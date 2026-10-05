@@ -10,14 +10,14 @@
  */
 import { bigTextWidth, renderBigText } from '../src/components/bigfont.js'
 import { COLUMN_GAP, WHALE_BOX_WIDTH, resolveSplashLayout } from '../src/components/splashLayout.js'
-import { SPLASH_FONTS, pickSplashFont, splashFontById } from '../src/components/splashFonts.js'
+import { SPLASH_FONTS, pickSplashFont, splashFontById, withTagline } from '../src/components/splashFonts.js'
 
 const ACCENT = { r: 63, g: 108, b: 196 }
 const PALE = { r: 211, g: 225, b: 254 }
 /** SGR only — the block font paints with truecolor foreground sequences. */
 const SGR = /\x1b\[[0-9;]*m/g
-/** 开屏实际用到的字母；每款字体都必须有。 */
-const LETTERS = [...new Set([...'DEEPSEEK', ...'HARNESS'])]
+/** 开屏实际用到的字母（deepseek 词 + claude 品牌词，见 `branding.ts`）；每款字体都必须有。 */
+const LETTERS = [...new Set([...'DEEPSEEK', ...'HARNESS', ...'CLAUDE', ...'CODE'])]
 
 let failed = 0
 const check = (name: string, ok: boolean, detail = ''): void => {
@@ -27,32 +27,39 @@ const check = (name: string, ok: boolean, detail = ''): void => {
 
 const columns = (row: string): number => [...row.replace(SGR, '')].length
 
-// ── ①②③ 逐款字体 ─────────────────────────────────────────────────────────
+// ── ①②③ 逐款字体 × 两副词（默认 DEEPSEEK/HARNESS + claude 品牌 CLAUDE/CODE）──
+// claude 词走 `withTagline`（LogoV2 的品牌分支同一条路），契约逐款钉死。
 for (const font of SPLASH_FONTS) {
-  const { top, bottom, topKerning, bottomKerning, bottomIndent } = font.tagline
-  const topRows = renderBigText(font, top, 0, ACCENT, ACCENT, PALE, 60, topKerning)
-  const bottomRows = renderBigText(font, bottom, 0, ACCENT, PALE, PALE, 60, bottomKerning, bottomIndent)
-  const topWidth = columns(topRows[0] ?? '')
-  const bottomWidth = columns(bottomRows[0] ?? '')
-  const inkTop = bigTextWidth(font, top, topKerning)
-  const inkBottom = bigTextWidth(font, bottom, bottomKerning)
+  const wordPairs: readonly [string, typeof font][] = [
+    [font.id, font],
+    [`${font.id} claude`, withTagline(font, 'CLAUDE', 'CODE', { wide: true })],
+  ]
+  for (const [label, wordFont] of wordPairs) {
+    const { top, bottom, topKerning, bottomKerning, bottomIndent } = wordFont.tagline
+    const topRows = renderBigText(wordFont, top, 0, ACCENT, ACCENT, PALE, 60, topKerning)
+    const bottomRows = renderBigText(wordFont, bottom, 0, ACCENT, PALE, PALE, 60, bottomKerning, bottomIndent)
+    const topWidth = columns(topRows[0] ?? '')
+    const bottomWidth = columns(bottomRows[0] ?? '')
+    const inkTop = bigTextWidth(wordFont, top, topKerning)
+    const inkBottom = bigTextWidth(wordFont, bottom, bottomKerning)
 
-  check(`[${font.id}] 两行都是 5 行`, topRows.length === 5 && bottomRows.length === 5)
-  check(
-    `[${font.id}] 两行画出来的列数相等`,
-    topWidth === bottomWidth && topRows.every((row, i) => columns(row) === columns(bottomRows[i] ?? '')),
-    `${topWidth} vs ${bottomWidth}`,
-  )
-  check(
-    `[${font.id}] 下排居中（左右留白差 ≤ 1 列）`,
-    Math.abs(inkTop - inkBottom - 2 * bottomIndent) <= 1,
-    `ink ${inkTop}/${inkBottom} indent ${bottomIndent}`,
-  )
-  check(
-    `[${font.id}] bigTextWidth 等于实际画出的列数`,
-    bigTextWidth(font, top, topKerning) === topWidth - topKerning &&
-      bigTextWidth(font, bottom, bottomKerning) === bottomWidth - bottomIndent - bottomKerning,
-  )
+    check(`[${label}] 两行都是 5 行`, topRows.length === 5 && bottomRows.length === 5)
+    check(
+      `[${label}] 两行画出来的列数相等`,
+      topWidth === bottomWidth && topRows.every((row, i) => columns(row) === columns(bottomRows[i] ?? '')),
+      `${topWidth} vs ${bottomWidth}`,
+    )
+    check(
+      `[${label}] 下排居中（左右留白差 ≤ 1 列）`,
+      Math.abs(inkTop - inkBottom - 2 * bottomIndent) <= 1,
+      `ink ${inkTop}/${inkBottom} indent ${bottomIndent}`,
+    )
+    check(
+      `[${label}] bigTextWidth 等于实际画出的列数`,
+      bigTextWidth(wordFont, top, topKerning) === topWidth - topKerning &&
+        bigTextWidth(wordFont, bottom, bottomKerning) === bottomWidth - bottomIndent - bottomKerning,
+    )
+  }
   check(
     `[${font.id}] 字形与 fallback 都是 glyphWidth 宽`,
     [...Object.values(font.glyphs), font.fallback].every(rows =>
@@ -61,17 +68,51 @@ for (const font of SPLASH_FONTS) {
     `${font.glyphWidth} 列`,
   )
   check(
-    `[${font.id}] 覆盖 DEEPSEEK/HARNESS 的全部字母`,
+    `[${font.id}] 覆盖两副词的全部字母`,
     LETTERS.every(letter => (font.glyphs[letter] ?? []).length === 5),
     LETTERS.join(''),
   )
   // 缺字退化成 fallback 而不是抛错，且不改变字身宽度。
-  const unknown = renderBigText(font, 'Ø', 0, ACCENT, ACCENT, PALE, 60, topKerning)
-  check(`[${font.id}] 缺字走 fallback 且宽度不变`, columns(unknown[0] ?? '') === font.glyphWidth + topKerning)
+  const unknown = renderBigText(font, 'Ø', 0, ACCENT, ACCENT, PALE, 60, font.tagline.topKerning)
+  check(`[${font.id}] 缺字走 fallback 且宽度不变`, columns(unknown[0] ?? '') === font.glyphWidth + font.tagline.topKerning)
 }
 
 check('字体 id 唯一', new Set(SPLASH_FONTS.map(font => font.id)).size === SPLASH_FONTS.length)
 check('字体数量 >= 2（轮换才有意义）', SPLASH_FONTS.length >= 2, `${SPLASH_FONTS.length} 款`)
+
+// ── 品牌词宽解契约（LogoV2 的 claude 分支用 wide 解，这里钉死它的性质）──
+// 穷举全部可行解（独立复算，不信实现内部算术），断言实现落在「中间档」：
+// 字距和最接近紧/宽两极的中点——紧解挤、最宽解空旷（用户两轮反馈的结论）。
+// 下排字距天然大于上排是等宽契约的数学必然（字数差靠 bk−tk 补）。
+for (const font of SPLASH_FONTS) {
+  const wide = withTagline(font, 'CLAUDE', 'CODE', { wide: true })
+  const { topKerning, bottomKerning, bottomIndent } = wide.tagline
+  const feasible: number[] = []
+  for (let tk = 1; tk <= 8; tk++) {
+    for (let bk = 1; bk <= 8; bk++) {
+      const indent = bigTextWidth(font, 'CLAUDE', tk) + tk - bigTextWidth(font, 'CODE', bk) - bk
+      if (indent < 0) continue
+      if (Math.abs(bigTextWidth(font, 'CLAUDE', tk) - bigTextWidth(font, 'CODE', bk) - 2 * indent) <= 1) feasible.push(tk + bk)
+    }
+  }
+  const minSum = feasible.length > 0 ? Math.min(...feasible) : -1
+  const maxSum = feasible.length > 0 ? Math.max(...feasible) : -1
+  const target = (minSum + maxSum) / 2
+  const candidates = [...new Set(feasible)]
+  const mid = candidates.reduce((best, sum) => (Math.abs(sum - target) < Math.abs(best - target) ? sum : best), candidates[0] ?? -1)
+  check(
+    `[${font.id}] CLAUDE/CODE 取中间档可行解（穷举独立复算）`,
+    feasible.includes(topKerning + bottomKerning) && topKerning + bottomKerning === mid,
+    `tk=${topKerning} bk=${bottomKerning} 和=${topKerning + bottomKerning} / 可行档 ${candidates.join(',')} 中位=${mid}`,
+  )
+  const inkTop = bigTextWidth(wide, 'CLAUDE', topKerning)
+  const inkBottom = bigTextWidth(wide, 'CODE', bottomKerning)
+  check(
+    `[${font.id}] CLAUDE/CODE 宽解仍满足等宽 + 居中契约`,
+    Math.abs(inkTop - inkBottom - 2 * bottomIndent) <= 1,
+    `ink ${inkTop}/${inkBottom} indent ${bottomIndent}`,
+  )
+}
 
 // ── ④ 窄终端阶梯（用基准款算阈值） ────────────────────────────────────────
 const font = SPLASH_FONTS[0]!
@@ -108,12 +149,14 @@ for (const width of [10, WHALE_BOX_WIDTH - 1, WHALE_BOX_WIDTH, titleWidth - 1, t
       (layout.showWhale || layout.showBigTitle || layout.showPlainTitle),
   )
 }
-// 宽体字身更宽，阈值必须跟着走（不能写死 97）。
+// 宽体字身更宽，阈值必须跟着走（不能写死 97）。两分支：放得下并排 →
+// showWhale 看宽度算式；放不下大字（!fitsTitle）→ 鲸鱼仍顶上（阶梯③）。
 const widest = [...SPLASH_FONTS].sort((a, b) => paintedWidth(b) - paintedWidth(a))[0]!
 check(
   '阶梯阈值随字体字身宽度变',
   resolveSplashLayout(bothWidth, { whale: true, font: widest }).showWhale ===
-    (paintedWidth(widest) + COLUMN_GAP + WHALE_BOX_WIDTH <= bothWidth),
+    (paintedWidth(widest) + COLUMN_GAP + WHALE_BOX_WIDTH <= bothWidth
+      || bothWidth < bigTextWidth(widest, widest.tagline.top, widest.tagline.topKerning) + widest.tagline.topKerning),
   `最宽字体 ${widest.id} = ${paintedWidth(widest)} 列（画出来）`,
 )
 // 卡在阈值的两侧：恰好等于画出来的宽度才放大字，少一列就不放——否则末字会被 `…` 吃掉。

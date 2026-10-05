@@ -81,6 +81,7 @@ import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
 import { PageMargin } from '../components/PageMargin.js'
 import { normalizeSplashFont } from '../components/splashFonts.js'
+import { normalizeBrandSetting, resolveBrand, setActiveBrand } from '../branding.js'
 import { SETTING_GROUPS, SHORTCUT_FIELD_META, settingField } from '../settings/definitions.js'
 import instances from '../ink/instances.js'
 import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from '../ink/termio/csi.js'
@@ -723,6 +724,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // 开屏大字字体：cordis.yml 这一层的值（未设置时 undefined → 通道归一化成
     // `daily`）；/settings 的改动由 applySplashFont 实时接上。
     splashFont: config.splashFont,
+    // 品牌外观（`dsh-tui.brand`）：`auto`（未设置）跟随后端自动切，/settings
+    // 的改动由 applyBrand 实时接上（branding.ts 负责解析）。
+    brand: config.brand,
   })
   // Register the live Channel for the adapter Kernel. The Channel driver
   // resolves it lazily from the composition root, so this can be called after
@@ -947,6 +951,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         // (undefined → daily), so cordis.yml stays decisive and junk lands on
         // daily.
         splashFont: Schema.string(),
+        // 品牌外观：与 splashFont 同规则——用户层不设默认，cordis.yml 保持
+        // 决定权；applyBrand 归一化（undefined → auto）。
+        brand: Schema.string(),
         // Minimal UI (极简界面, settings key `minimal` — never renamed): strips
         // the header splash, emoji glyphs, and decorative colors; code highlight
         // and tool colors stay. Unrelated to the kernel agent preset `minimal`.
@@ -981,6 +988,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       /** Raw user-layer value: junk is normalized at the apply site (the
        *  settings schema is a plain string, see applySplashFont). */
       splashFont?: string
+      /** Raw user-layer value: junk is normalized at the apply site (the
+       *  settings schema is a plain string, see applyBrand). */
+      brand?: string
       minimal?: boolean
       fullscreen?: boolean
       terminalImages?: boolean
@@ -1043,6 +1053,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     const applySplashFont = (value: Pick<SettingsValue, 'splashFont'>): void => {
       if (shadow) return
       channel.setSplashFont(normalizeSplashFont(value.splashFont ?? config.splashFont))
+    }
+    /** 品牌外观（`dsh-tui.brand`）：`auto` 跟随后端（Claude 后端整套换橙），
+     *  其余固定一档；设置用户层优先于 cordis.yml，非法值回落 `auto`。 */
+    const applyBrand = (value: Pick<SettingsValue, 'brand'>): void => {
+      if (shadow) return
+      channel.setBrand(normalizeBrandSetting(value.brand ?? config.brand))
     }
     const applyMinimalUi = (value: { minimal?: boolean }): void => {
       if (shadow) return
@@ -1143,6 +1159,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       applyWhaleIdle(next)
       applyWhaleGirl(next)
       applySplashFont(next)
+      applyBrand(next)
       applyMinimalUi(next)
       applyLang(next)
       applyDisplay(next)
@@ -1531,6 +1548,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
             // (cordis.yml → daily) instead of a blank — same rule as the
             // `fullscreen` field.
             return normalizeSplashFont(value ?? config.splashFont)
+          },
+        },
+        {
+          ...settingField('brand'),
+          format(value: unknown): string {
+            return normalizeBrandSetting(value ?? config.brand)
           },
         },
         {
@@ -1925,6 +1948,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * workspace may still never have configured a key.
    */
   const onboardingOnBoot = dshBoot && noResume && shouldOfferOnboarding()
+  // 品牌镜像初值（branding.ts）：首帧渲染前铺好，避免 Claude 后端先画一屏
+  // 蓝再变橙。Chat 里的 effect 会在品牌解析变化时跟进更新这个镜像。
+  setActiveBrand(resolveBrand(config.brand, backendChoice))
   const chat = React.createElement(Chat, {
     channel,
     renderScene: createChannelSceneOutlet(() => rawChannel.pluginScene),

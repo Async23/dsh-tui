@@ -34,7 +34,7 @@ import {
 import { DATA_DIR } from './utils/paths.js'
 
 /** The base palettes a user theme may overlay. */
-export const THEME_BASE_NAMES = ['light', 'dark', 'dark-ansi'] as const
+export const THEME_BASE_NAMES = ['light', 'dark', 'dark-ansi', 'claude-dark', 'claude-paper'] as const
 export type ThemeBase = (typeof THEME_BASE_NAMES)[number]
 
 /** The directory user theme files live in (~/.dsh-tui/themes). */

@@ -61,7 +61,7 @@ export type PageMarginSpec = `${number}x${number}`
  * live in `components/splashFonts.ts`, whose registry is keyed by this union
  * — so a face declared here without a table entry is a compile error there.
  */
-export type SplashFontId = 'bold' | 'square' | 'bevel' | 'wide' | 'dot' | 'stencil' | 'classic' | 'slab'
+export type SplashFontId = 'bold' | 'square' | 'bevel' | 'wide' | 'dot' | 'stencil' | 'classic' | 'slab' | 'shadow'
 
 /**
  * Stored big-text setting (settings `dsh-tui.splashFont`): `daily` (the
@@ -69,6 +69,13 @@ export type SplashFontId = 'bold' | 'square' | 'bevel' | 'wide' | 'dot' | 'stenc
  * Normalization back to `daily` belongs to `components/splashFonts.ts`.
  */
 export type SplashFontSetting = 'daily' | SplashFontId
+
+/**
+ * Stored brand-look setting (settings `dsh-tui.brand`): `auto` (the default)
+ * follows the active backend (`branding.ts` resolves it); the other members
+ * pin one look. Normalization back to `auto` belongs to `branding.ts`.
+ */
+export type BrandSetting = 'auto' | 'deepseek' | 'claude'
 
 /** Individually selectable fields in the status footer. */
 export interface StatusBarConfig {

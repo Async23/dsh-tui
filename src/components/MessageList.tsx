@@ -20,6 +20,7 @@ import { getTerminalFlushTick } from '../ink/flush-tick.js'
 import { TurnInterruptedRow } from './TurnInterruptedRow.js'
 import { TurnUsageRow } from './TurnUsageRow.js'
 import { LogoV2 } from './LogoV2.js'
+import type { Brand } from '../branding.js'
 import { StreamingMarkdown } from './StreamingMarkdown.js'
 import { MessageMetadata } from './messages/MessageMetadata.js'
 import { stripNarration } from '../utils/narration.js'
@@ -2026,6 +2027,7 @@ export function LogoHeader({
   whale = true,
   whaleIdle = true,
   whaleGirl = false,
+  brand,
   starred = false,
   onStarClick,
   working = false,
@@ -2042,6 +2044,8 @@ export function LogoHeader({
   whaleIdle?: boolean
   /** Maid portrait swap (passed through to LogoV2; settings `dsh-tui.whaleGirl`). */
   whaleGirl?: boolean
+  /** 品牌档（当前后端 → `resolveBrand`；见 `branding.ts`）。 */
+  brand?: Brand
   /** 求 star 标语行被点击（一键 star；host 不传则不可点）。 */
   onStarClick?: () => void
   /** 本次会话已 star（彩蛋换「捡到星星」版）。 */
@@ -2056,7 +2060,7 @@ export function LogoHeader({
   if (isMinimalUiMode()) return null
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <LogoV2 model={model} effort={effort} cwd={cwd} fontId={fontId} whale={whale} whaleIdle={whaleIdle} whaleGirl={whaleGirl} starred={starred} onStarClick={onStarClick} working={working} skipIntro={skipIntro} />
+      <LogoV2 model={model} effort={effort} cwd={cwd} fontId={fontId} whale={whale} whaleIdle={whaleIdle} whaleGirl={whaleGirl} brand={brand} starred={starred} onStarClick={onStarClick} working={working} skipIntro={skipIntro} />
     </Box>
   )
 }

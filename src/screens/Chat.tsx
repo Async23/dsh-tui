@@ -7,6 +7,7 @@ import { readPresetPref } from '../presetPrefs.js'
 import { readModelPref } from '../modelPrefs.js'
 import { readActivityFrames } from '../activityPrefs.js'
 import { envThemeOverride } from '../components/design-system/ThemeProvider.js'
+import { resolveBrand, setActiveBrand } from '../branding.js'
 import { hasPath } from '../dsh-adapter/settingsEditor.js'
 import { planReload, type ReloadKind } from '../reload.js'
 import { AlternateScreen, Box, Image, Text, useInput, ScrollBox, type ScrollBoxHandle, useTheme, useTerminalSize } from '../ui.js'
@@ -837,6 +838,17 @@ export function Chat({
    * 横幅说的正是这件事。
    */
   const [onboardingPending, setOnboardingPending] = React.useState(onboardingOnBoot === true && !recoveryRemountOnBoot)
+  /**
+   * 品牌档（`branding.ts`）：设置项 `dsh-tui.brand`（`auto` = 跟后端）与当前
+   * 后端 id（`backendCapabilities.backendId`，boot 时即定）的合成。开屏词、
+   * 立绘、大字配色读 prop；主题默认档经 `setActiveBrand` 镜像给
+   * ThemeProvider（它挂在 Chat 外层，拿不到 channel）——plugin 已在首帧前
+   * 铺过初值，这里负责 `/settings` 切品牌时的实时跟动。
+   */
+  const brand = resolveBrand(channel.brand, channel.backendCapabilities?.backendId)
+  React.useEffect(() => {
+    setActiveBrand(brand)
+  }, [brand])
   /** `/tree` opens the session family tree (pi's Session Tree): every rewind
    *  fork stitched back onto the message it diverged from, hover previews,
    *  and per-node rewind/fork/adopt actions. Like the supervisor, a screen. */
@@ -5971,6 +5983,7 @@ export function Chat({
         whaleIdle={channel.whaleIdle}
         whaleGirl={channel.whaleGirl}
         fontId={splashFontIdOf(channel.splashFont)}
+        brand={brand}
         starred={starred}
         onStarClick={runStarAction}
         firstRun={onboardingPending}
@@ -6213,6 +6226,7 @@ export function Chat({
           whale={channel.whale}
           whaleIdle={channel.whaleIdle && whaleArtVisible}
           whaleGirl={channel.whaleGirl}
+          brand={brand}
           starred={starred}
           onStarClick={runStarAction}
           working={channel.working}

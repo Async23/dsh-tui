@@ -6,9 +6,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Box, Text, useAnimationFrame, useTerminalImages, useTerminalSize } from '../ui.js'
-import { getTheme } from '../theme.js'
+import { getTheme, isLightThemeActive } from '../theme.js'
+import { BRAND_SPLASH_WORDS, BRAND_TAGLINE, type Brand } from '../branding.js'
 import { useTheme } from './design-system/ThemeProvider.js'
-import { parseRGB } from './Spinner/spinnerUtils.js'
+import { interpolateColor, parseRGB } from './Spinner/spinnerUtils.js'
 import { renderBigText } from './bigfont.js'
 import { COLUMN_GAP, WHALE_BOX_WIDTH, resolveSplashLayout } from './splashLayout.js'
 import { withTagline, pickSplashFont, splashFontById, type SplashFont } from './splashFonts.js'
@@ -16,10 +17,11 @@ import { pickSplashEgg, splashStarLine, type SplashEgg } from './splashEggs.js'
 import { isHistoricMilestone, markStarAsked, pendingStarMilestone, recordLaunch, STAR_MILESTONES, usageSnapshot } from '../usageStats.js'
 import { effectiveComboDisplay } from '../utils/keymap.js'
 import { stringWidth } from '../ink/stringWidth.js'
-import { BRAND, FLASH, ICE, PALE, sweep } from './shimmer.js'
+import { BRAND, EMBER, EMBER_BRIGHT, EMBER_FLASH, EMBER_LIGHT, EMBER_PALE, EMBER_PAPER, EMBER_PAPER_FLASH, FLASH, ICE, PALE, sweep } from './shimmer.js'
 import { STANDARD_FRAME_INDEX, WhaleArt } from './Whale.js'
 import { WhaleGirlArt } from './WhaleGirl.js'
-import { MAID_BOX_CENTER, MaidPortrait, useMaidPortraits } from './maidPortrait.js'
+import { ClaudeGirlArt } from './ClaudeGirl.js'
+import { CLAUDE_GIRL_ASSETS, MAID_ASSETS, MAID_BOX_CENTER, MaidPortrait, useMaidPortraits } from './maidPortrait.js'
 import { SplashMascot, useSplashMascotSkin } from './sidePanel/companion/SplashMascot.js'
 import { OPENING_SEQUENCES, pickOpeningSequence, WHALE_FRAME_INDEX, type OpeningStep, type WhaleIntroId } from './whaleFrames.js'
 import { RESTING_POSE, type WhaleLayerPose } from './whaleLayers.js'
@@ -107,6 +109,7 @@ export function LogoV2({
   whale = true,
   whaleIdle = true,
   whaleGirl = false,
+  brand = 'deepseek',
   starred = false,
   starReveal,
   onStarClick,
@@ -150,6 +153,11 @@ export function LogoV2({
    * replaced with better art) takes the slot. Both forms are static, so
    * `whaleIdle` only animates the whale. */
   whaleGirl?: boolean
+  /** 品牌档（当前后端 → `brandOfProvider`，见 `branding.ts`）：claude 时
+   * 大字词换 `CLAUDE`/`CODE`、配色换橙阶、立绘槽固定 Claude 娘（不看
+   * whaleGirl 设置——鲸鱼与鲸鱼娘是 DeepSeek 品牌资产）。测试缝：缺省
+   * `deepseek`，行为与品牌化之前逐字节一致。 */
+  brand?: Brand
   /** 本次会话已经 star 过：彩蛋标题换成「捡到一颗小星星啦」，不再重复求。 */
   starred?: boolean
   /** 彩蛋渐显的测试缝：`instant` 时三行一次画全（静态渲染夹具用；真机不传）。 */
@@ -292,10 +300,16 @@ export function LogoV2({
   const [dailyFont] = React.useState<SplashFont>(() => pickSplashFont())
   const font = fontId === undefined ? dailyFont : splashFontById(fontId)
 
+  // 品牌词（`branding.ts`）：claude 内核换 `CLAUDE`/`CODE`——字身不变、字距
+  // 取最宽可行解（两词字数差大，紧解上排字距只有 1、整体局促），窄终端阶梯
+  // 阈值跟着当天真实标题宽度走，与彩蛋共用 `withTagline`。
+  const words = BRAND_SPLASH_WORDS[brand]
+  const brandFont = brand === 'claude' ? withTagline(font, words.top, words.bottom, { wide: true }) : font
+
   // 节日彩蛋：本地日期整天恒定，每次 mount 只判一次（照 pickSplashFont 的写法）。
-  // 只换词——字身宽度不变、字距按新词重解，所以阶梯阈值也跟着当天真实标题宽度走。
+  // 只换下排词——上排钉在品牌词上（deepseek 的 `DEEPSEEK` / claude 的 `CLAUDE`）。
   const [dailyEgg] = React.useState<SplashEgg | null>(() => (egg === undefined ? pickSplashEgg() : egg))
-  const titleFont = dailyEgg === null ? font : withTagline(font, dailyEgg.top, dailyEgg.bottom)
+  const titleFont = dailyEgg === null ? brandFont : withTagline(font, words.top, dailyEgg.bottom, { wide: brand === 'claude' })
 
   // 窄终端阶梯：鲸鱼 + 大字 → 纯大字 → 纯鲸鱼 → 一行纯文字（阈值随字体字身宽度变）。
   const splash = resolveSplashLayout(columns, { whale, font: titleFont })
@@ -317,12 +331,17 @@ export function LogoV2({
   // 女仆娘档优先走**真图**（Kitty/Sixel 终端图像协议，见 `maidPortrait.tsx`）；
   // 协议不可用（内联模式、终端不支持）或资产解码失败时，回落到字符画版
   // 女仆娘（`WhaleGirl.tsx` 半块精灵——作者占位，之后会换更好看的）。
+  // claude 品牌档（`branding.ts`）的立绘槽固定 Claude 娘（同一套盒几何：
+  // 真图 = `assets/claude-girl/`，回落 = `ClaudeGirl.tsx`），不看 whaleGirl
+  // 设置——像素鲸鱼与鲸鱼娘是 DeepSeek 品牌的资产。
   // 两种形态都是静态立绘：闲置动画与点击爱心仍是鲸鱼专属。
   // `maidImageActive` 只在「真图画出来了」时为真。
-  const imagesAvailable = useTerminalImages(whaleGirl)
-  const portraits = useMaidPortraits(whaleGirl && imagesAvailable)
+  const claudeArt = brand === 'claude'
+  const portraitMode = whaleGirl || claudeArt
+  const imagesAvailable = useTerminalImages(portraitMode)
+  const portraits = useMaidPortraits(portraitMode && imagesAvailable, claudeArt ? CLAUDE_GIRL_ASSETS : MAID_ASSETS)
   const maidSource = portraits?.normal
-  const maidImageActive = whaleGirl && imagesAvailable && maidSource !== undefined
+  const maidImageActive = portraitMode && imagesAvailable && maidSource !== undefined
   // 点一下她 → 换成「高兴鲸娘」几秒（自动回安静版；第一个任务后定格、
   // 不再响应，与鲸鱼的规则一致）。定时器在卸载/重挂时清掉。
   const [maidHappy, setMaidHappy] = React.useState(false)
@@ -358,7 +377,7 @@ export function LogoV2({
   React.useEffect(() => {
     // 女仆娘档（真图或字符画）与吉祥物档（SplashMascot 自带节拍器）都
     // 不需要鲸鱼的闲置规划器：那两条路径里分层鲸根本没画。
-    if (!settled || !whaleIdle || !showWhale || whaleFrozen || whaleGirl || mascotSkin !== undefined) {
+    if (!settled || !whaleIdle || !showWhale || whaleFrozen || portraitMode || mascotSkin !== undefined) {
       setIdlePose(null)
       tickRef.current = null
       return
@@ -391,7 +410,7 @@ export function LogoV2({
       tickRef.current = null
       if (timer !== undefined) clearTimeout(timer)
     }
-  }, [settled, whaleIdle, showWhale, working, whaleFrozen, whaleGirl])
+  }, [settled, whaleIdle, showWhale, working, whaleFrozen, portraitMode])
   // Render priority: the layered planner pose owns the settled header while
   // it runs (hearts and blinks compose over the body planes). Otherwise a
   // click heart plays as whole heart frames over the intro — or over the
@@ -405,7 +424,14 @@ export function LogoV2({
   // off-screen, leaving the static gradient behind.
   const t = settled ? 0 : time
 
-  const tagline = tr('logo-tagline')
+  // 品牌欢迎语（claude 档专用文案；deepseek 沿用 i18n 的 `logo-tagline`）。
+  // 英文是两行（\n 分隔）——渲染与居中都按行处理，见下方 welcomeWidth/渲染。
+  const brandTagline = BRAND_TAGLINE[brand]
+  const tagline = brand === 'claude'
+    ? (getLang() === 'zh' ? brandTagline.zh : brandTagline.en)
+    : tr('logo-tagline')
+  /** 欢迎语逐行拆开（单行文案就是一元素）。 */
+  const taglineLines = tagline.split('\n')
   // 求 star 改由**本机用量里程碑**触发（累计启动次数 / 累计在线时长），不再每次随机：
   // 跨档时只报最高那一档、每档只报一次（`usageStats` 记账）。`starChance` 退化成测试缝
   // ——0 关掉、非 0 强开（强开时用最高那档的文案）。`DSH_TUI_STAR_LINE=1`
@@ -462,23 +488,61 @@ export function LogoV2({
   // the width the line ACTUALLY shows: the star easter egg renders a longer
   // line than `logo-tagline`, so reusing the tagline's width would push it
   // visibly off-center.
-  const welcomeWidth = starLine === null ? stringWidth(tagline) : starLine.width
+  // 多行欢迎语取**最宽行**算宽（居中缩进以此为准，窄行再各自补半差）。
+  const welcomeWidth = starLine === null
+    ? Math.max(...taglineLines.map(line => stringWidth(line)))
+    : starLine.width
   // 居中排版（落地页）交给父级的 `alignItems="center"`，缩进一律为 0；只有
   // 转录区顶部那一版才需要"把标语钉在鲸鱼下方"。这条判据与根盒的
   // `align` 走同一个开关，否则两种对齐会各偏一点。
   const welcomePad = align === 'center'
     ? 0
     : showWhale
-      ? Math.max(0, Math.round((whaleGirl ? MAID_BOX_CENTER : WHALE_CENTER) - welcomeWidth / 2))
+      ? Math.max(0, Math.round((portraitMode ? MAID_BOX_CENTER : WHALE_CENTER) - welcomeWidth / 2))
       : 2
 
   // 两行标题各自用字体声明的字距；下排再按 `bottomIndent` 居中——
   // 两者一起保证画出来的列数相等（见 splashFonts 的 tagline 契约）。
-  // 节日彩蛋换的就是这里的两排词（`titleFont` 已按当天词对重解字距）；字体若自带
-  // 配色（半立体那款的灰阶）就用它，否则沿用主题的 accent→activity。
+  // 节日彩蛋换的就是这里的两排词（`titleFont` 已按当天词对重解字距）。
   const { top, bottom, topKerning, bottomKerning, bottomIndent } = titleFont.tagline
-  const bigDeepSeek = renderBigText(titleFont, top, t, titleFont.palette?.from ?? wordmarkRGB, titleFont.palette?.to ?? taglineRGB, FLASH, 60, topKerning)
-  const bigHarness = renderBigText(titleFont, bottom, t, titleFont.palette?.from ?? taglineRGB, titleFont.palette?.to ?? PALE, FLASH, 60, bottomKerning, bottomIndent)
+  // 大字配色按字体/品牌解析（运行时 `palette`（扩展缝）最优先）：
+  // - deepseek：主题 accent → activity → PALE 的蓝白阶（品牌化之前的行为）；
+  // - claude：cc-bridge 校过的深橙 → 浅橙，两行同一对端点——第二行终点不再
+  //   落到写死的蓝白 PALE；
+  // - bevel（半立体）两个品牌都随基色派生亮/暗两档（提亮 / 压暖黑）：字形
+  //   自带 █/▓ 明暗笔画，叠上主题色渐变才是"金属受光"。旧版写死的静态灰阶
+  //   在任何主题下都像没上色（用户反馈的"灰色字体"）。
+  // claude 双主题的大字端点：深底 #D77757 → 淡橙；浅底（claude-paper）反向
+  // ——正色压深 #C96442、高光也变深（浅底上"亮"是加深）。bevel 的金属明暗
+  // 两档同样以当档基色派生。
+  const claudePaper = brand === 'claude' && isLightThemeActive(themeName)
+  const brandBase = brand === 'claude' ? (claudePaper ? EMBER : EMBER_LIGHT) : wordmarkRGB
+  const bevelShade = titleFont.id === 'bevel'
+    ? {
+        from: interpolateColor(brandBase, { r: 255, g: 255, b: 255 }, 0.45),
+        to: interpolateColor(brandBase, { r: 24, g: 18, b: 12 }, 0.55),
+      }
+    : undefined
+  // 扫光高光同族：橙字上扫过蓝光会很脏；claude 深底暖阳高光、浅底深化高光。
+  const flash = brand === 'claude' ? (claudePaper ? EMBER_PAPER_FLASH : EMBER_FLASH) : FLASH
+  // claude 渐变是**跨两行的三档色阶**（行一 起→中、行二 中→收），整幅从左
+  // 上到右下走完色阶。起点两轮提亮（用户反馈"还是暗"）：深底直接从亮档
+  // #E68A69 起步 → #EFA97E → 奶油橙 #FBD6B0（官方正色 #D77757 明度中等、
+  // 压深底发闷，只留给浅底当起点）；浅底 #D77757 → #E68A69 → #EFA97E。
+  const titleFrom = titleFont.palette?.from
+    ?? bevelShade?.from
+    ?? (brand === 'claude' ? (claudePaper ? EMBER : EMBER_LIGHT) : wordmarkRGB)
+  const titleTopTo = titleFont.palette?.to
+    ?? bevelShade?.to
+    ?? (brand === 'claude' ? (claudePaper ? EMBER_LIGHT : EMBER_BRIGHT) : taglineRGB)
+  const titleBottomFrom = titleFont.palette?.from
+    ?? bevelShade?.from
+    ?? (brand === 'claude' ? (claudePaper ? EMBER_LIGHT : EMBER_BRIGHT) : taglineRGB)
+  const titleBottomTo = titleFont.palette?.to
+    ?? bevelShade?.to
+    ?? (brand === 'claude' ? (claudePaper ? EMBER_BRIGHT : EMBER_PALE) : PALE)
+  const bigDeepSeek = renderBigText(titleFont, top, t, titleFrom, titleTopTo, flash, 60, topKerning)
+  const bigHarness = renderBigText(titleFont, bottom, t, titleBottomFrom, titleBottomTo, flash, 60, bottomKerning, bottomIndent)
   // 立绘槽位的**唯一真源**：文字列的实际行数。full = 词标 1 + 两排大字 +
   // 两排之间空 1 行 + 模型/目录/提示 3 行；minimal = 只有两排大字 + 空行
   //（信息行整块不画，见 chrome prop）。槽位与它等高，图片既不压过文字列
@@ -517,7 +581,7 @@ export function LogoV2({
                 reactMaid()
                 return
               }
-              if (whaleGirl) return
+              if (portraitMode) return
               if (settled && whaleIdle) {
                 pendingHeartRef.current = true
                 tickRef.current?.()
@@ -531,9 +595,11 @@ export function LogoV2({
                 鲸鱼形态逐字节一致（tip 行截断/阶梯契约），吉祥物（31 格）在
                 盒内居中。 */}
             <Box width={WHALE_BOX_WIDTH} flexDirection="column" alignItems="center">
-            {mascotSkin !== undefined ? (
+            {/* claude 品牌档的立绘槽钉死 Claude 娘——吉祥物（deepy/鲸娘皮肤）
+                是 DeepSeek 品牌的资产，不跟 claude 档混用。 */}
+            {!claudeArt && mascotSkin !== undefined ? (
               <SplashMascot skin={mascotSkin} active={!whaleFrozen && whaleIdle} />
-            ) : whaleGirl ? (
+            ) : portraitMode ? (
               // 槽位**与文字列严格等高**（textColumnRows）：真图与字符画女仆
               // 娘共用同一个盒，真图解码完成换画时头部高度不跳，视觉上两者
               // 齐平、谁也不多出一截。真图**不带衬底**（transparent）：立绘
@@ -556,7 +622,7 @@ export function LogoV2({
                     presentation="transcript"
                   />
                 ) : (
-                  <WhaleGirlArt width={WHALE_BOX_WIDTH} />
+                  claudeArt ? <ClaudeGirlArt width={WHALE_BOX_WIDTH} /> : <WhaleGirlArt width={WHALE_BOX_WIDTH} />
                 )}
               </Box>
             ) : (
@@ -583,22 +649,26 @@ export function LogoV2({
             )}
             {showBigTitle ? (
               <>
+                {/* 裁掉每行**尾部字距空白**（不可见但计入 Text 宽度）：不裁的话
+                    盒子按含尾距的宽度居中，墨迹整体被往左拽 ~tk/2 列（用户点名
+                    的居中问题）。行首缩进（bottomIndent）不动，SGR 由行尾 reset
+                    序列收尾、不会被误伤。 */}
                 {bigDeepSeek.map((row, index) => (
                   <Text key={`ds-${index}`} wrap="truncate-end">
-                    {row}
+                    {row.replace(/\s+$/u, '')}
                   </Text>
                 ))}
                 <Box height={1} />
                 {bigHarness.map((row, index) => (
                   <Text key={`h-${index}`} wrap="truncate-end">
-                    {row}
+                    {row.replace(/\s+$/u, '')}
                   </Text>
                 ))}
               </>
             ) : (
               showPlainTitle && (
                 <Text color="accent" bold wrap="truncate-end">
-                  DeepSeek Harness
+                  {words.plain}
                 </Text>
               )
             )}
@@ -647,13 +717,23 @@ export function LogoV2({
       {(chrome !== 'minimal' || starLine !== null) && (
       <Box flexDirection="column" marginTop={1} {...(starLine === null || onStarClick === undefined ? {} : { onClick: onStarClick })}>
         {starLine === null ? (
-          <Box paddingLeft={welcomePad}>
-            <Text>{sweep(tagline, t, taglineRGB, FLASH, 60)}</Text>
-          </Box>
+          // 多行欢迎语（claude 品牌英文 slogan 是两行）：`center` 版式交给
+          // 父级逐行居中；`start` 版式在立绘中线下**块内居中**——窄行补半差，
+          // 两行的中轴对齐而不是左缘对齐。
+          taglineLines.map(line => (
+            <Box
+              key={line}
+              paddingLeft={align === 'center'
+                ? 0
+                : welcomePad + Math.max(0, Math.round((welcomeWidth - stringWidth(line)) / 2))}
+            >
+              <Text>{sweep(line, t, taglineRGB, flash, 60)}</Text>
+            </Box>
+          ))
         ) : (
           <>
             <Box paddingLeft={welcomePad}>
-              <Text>{sweep(starLine.title, t, taglineRGB, FLASH, 60)}</Text>
+              <Text>{sweep(starLine.title, t, taglineRGB, flash, 60)}</Text>
             </Box>
             {revealed >= 1 && (
               <Box paddingLeft={welcomePad}>

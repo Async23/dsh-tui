@@ -5,6 +5,7 @@ import {
   FREE_SEGMENT_FILL,
   FREE_SEGMENT_TEXT,
   USED_SEGMENTS,
+  usedSegmentColor,
   allocateBarColumns,
   contextBarReadout,
   contextPressureStep,
@@ -78,7 +79,7 @@ export function ContextBarView({
         width={segmentWidth}
         height={1}
         flexShrink={0}
-        backgroundColor={segment.color}
+        backgroundColor={usedSegmentColor(segment)}
       />,
     )
   }

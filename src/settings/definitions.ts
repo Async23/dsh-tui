@@ -11,11 +11,21 @@
  */
 import type { TuiSettingsField } from '../adapter/ports/channel-settings.js'
 import { SPLASH_FONT_OPTIONS } from '../components/splashFonts.js'
+import { BRAND_SETTING_OPTIONS } from '../branding.js'
 import type { ShortcutActionId } from '../utils/keymap.js'
 
 export type SettingDefinition = Pick<TuiSettingsField, 'label' | 'descriptions' | 'hint' | 'hintDescriptions' | 'kind' | 'group' | 'options'>
 
 export const SETTING_DEFINITIONS = {
+  'brand': {
+    label: 'Brand look',
+    descriptions: { zh: '品牌外观' },
+    group: 'splash',
+    hint: 'Brand look of the splash and theme. Follow backend (default) switches with the active kernel — Claude boots orange (CLAUDE CODE title, Claude girl); the other values pin one look. Applies immediately.',
+    hintDescriptions: { zh: '开屏与主题的品牌外观。跟随后端（默认）随当前内核自动切——Claude 后端整套换橙（CLAUDE CODE 大标题、Claude 娘立绘）；选固定档则锁定一种外观。立即生效。' },
+    kind: 'select',
+    options: BRAND_SETTING_OPTIONS,
+  },
   'btw.contextBudget': {
     label: 'btw context budget',
     descriptions: { zh: 'btw 上下文预算' },
