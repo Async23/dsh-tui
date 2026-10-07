@@ -95,13 +95,15 @@ dsh-tui
 
 | Key | Action |
 |---|---|
-| `Enter` | idle = send; **model working = steer** (inject a next-step boundary, no interrupt); menu open = confirm selection |
+| `Enter` | idle = send; **a known `/` command (with or without arguments) = run that command** (its own gate decides while a turn is running); model working = steer (inject a next-step boundary, no interrupt); menu open = confirm selection |
 | `Tab` | complete `/` command or `@` file; **model working = follow-up** (queue after the current turn) |
 | `Ctrl+Enter` (⌘Enter) | interrupt the current turn and send the input now |
 | `Shift+Enter` / `Ctrl+J` | newline (`Option+Enter` is the mac Terminal.app fallback) |
 | `Alt+Up` | bring the last unhandled message back to the input for editing (no interrupt) |
 | `Esc` (working + pending) | interrupt the turn and re-send the pending message now |
 | `/btw …` while working | Enter runs it directly (side question never interrupts the main turn) |
+
+While a turn is running, the `/` overlay groups commands by their impact on the current conversation: the harmless ones stay on top in their normal style, while commands that are gated, interrupt or replace the conversation, or steer into it sink to the bottom in the theme's grey (`subtle`), with no extra header row. The grey region never blocks use — the gate still gates and the steer still steers. Only two kinds of input steer into the running turn: text that is not a command, and a **direct skill gesture** (`/skill-name …`), which the overlay groups as steering as well.
 
 ### 2.2 Interrupt / exit / system
 
@@ -330,7 +332,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 | Command | Args | Effect |
 |---|---|---|
 | `/new` | none | start a new session (no confirmation; the old session stays under `/resume`) |
-| `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching just parks the session, the running turn keeps going |
+| `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching just **parks** the outgoing session — it keeps running in the background and the active turn is not interrupted (like `/tree`: neither browsing nor switching cuts a running turn short; on the Claude backend a mid-turn switch is refused instead) |
 | `/home` / `/agentview` / `/bg` | none | the same session manager (`/home`=workspace view · `/agentview`=hosted session state · `/bg`=send to background and open, alias `/background`) |
 | `/tree` | none | session fork tree: hover to preview, click to rewind / fork / switch branch |
 | `/fork` | none | copy the current session into a resumable clone (original unaffected) |
@@ -344,7 +346,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 | `/export` | none | export the session as Markdown to the working directory |
 | `/btw` | `<问题>` | side question: single turn, no tools, doesn't interrupt the main turn, not written to history |
 | `/trace` | none | open the trace scene (same as `Ctrl+T`) |
-| `/rewind` | none | rewind selector (same as double-press Esc on empty input) |
+| `/rewind` | none | rewind selector (same as double-press Esc on empty input); **a running turn is cancelled first** |
 | `/exit` (alias `/quit` `/q`) | none | exit dsh-tui |
 
 ### 3.2 Status and diagnostics
@@ -369,7 +371,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 
 | Command | Args | Effect |
 |---|---|---|
-| `/channel` | none | relay channel profiles (Claude backend only), see [Interaction](interaction.en.md#channel-profiles-channel-claude-only) |
+| `/channel` | none | relay channel profiles (Claude backend only); **import / add / manage and any switch that needs a process restart are refused while a turn runs** (the picker itself still opens), see [Interaction](interaction.en.md#channel-profiles-channel-claude-only) |
 | `/model` | none | model selector; **switching = fork the session** (history kept, only routing changes; a session nobody has typed into records no branch, keeping automatic titles for its first prompt), choice persisted to `~/.dsh-tui/model.json` |
 | `/effort` | `status` / `<id>` | reasoning effort: no-arg slider (`←/→` adjust); `status` current level; `<id>` set directly. Persisted to `~/.dsh-tui/effort.json`; new-session start level follows /settings `effortDefault` (§5.3) |
 | `/thinking` | none | extended-thinking display toggle (thinking expands item by item while streaming) |
@@ -449,7 +451,7 @@ Command-line resume: `dsh-tui --resume` (last session) / `dsh-tui --resume <id>`
 ### 4.3 Message delivery semantics (while the model is working)
 
 Keys are in §2.1:
-- `Enter` = **steer** (inject a next-step boundary, no interrupt)
+- `Enter` = a known `/` command (with or without arguments) runs as a command (its own gate decides while a turn is running); anything else **steers** (inject a next-step boundary, no interrupt)
 - `Tab` = **follow-up** (queue after the turn)
 - `Ctrl+Enter` = **interrupt** (interrupt and send)
 - `Alt+Up` bring the last unhandled message back
@@ -699,7 +701,7 @@ When dsh exits unexpectedly, safe mode gives a **read-only** environment diagnos
 
 **Efficiency**
 
-4. Three deliveries while the model works: `Enter` inject a next step, `Tab` queue, `Ctrl+Enter` interrupt and send.
+4. Three deliveries while the model works: `Enter` inject a next step (a known `/` command runs as a command instead), `Tab` queue, `Ctrl+Enter` interrupt and send.
 5. `Alt+Up` brings the last unhandled message back to edit and resend, no retyping.
 6. A quick question without interrupting the main turn or writing history:
    `/btw <问题>`.
