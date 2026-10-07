@@ -174,6 +174,34 @@ Enter，按引导一键安装——dsh-TUI 自己定位 profile 目录并装锁�
 
 详细说明与已知限制：[Claude 后端](docs/claude-backend.md)。
 
+### 实验性：Codex 原生后端
+
+通过 `codex app-server` 驱动你自己的 Codex，沿用配置、登录、指令、skills、hooks、
+MCP 与原生 thread：
+
+```sh
+npm install -g @openai/codex@0.160.1
+dsh-tui --backend codex
+dsh-tui --backend codex --resume <thread-id>
+```
+
+协议基线 **0.160.1**，最低 **0.144.0**，其他版本可能提示 drift。`CODEX_EXECUTABLE`
+指定二进制，`/kernel` 记住后端。退出另一写进程后，`codex resume <id>` 也能打开同一
+thread；这不是把历史导入 DSH 的 `migrate codex`。
+
+流式/工具卡、审批问卷、插话/排队/打断、模型与 effort、Plan、`/review`、`/diff`、
+`/usage`、`/init`、skills 与 MCP 复用现有界面。**Shift+Tab 只开关 Plan**，保留底层
+权限档；Full Access 必须明确选择。已有 Codex 设置不会被默认值覆盖。`/login` 提供
+ChatGPT OAuth、设备码或 API key（后者写入 Codex 自己的凭据存储）。`/channel` 连接
+优先，托管订阅令牌只在第一方路由注入；不写 `~/.codex/config.toml`，不退出原生登录。
+
+原生浏览/归档、fork/对话回退、分页历史、图片、子代理、轮询后台终端、目标与
+`/btw`/`/recap` 接入现有界面。`/logout` 仅清对应 dsh-auth 凭据；已载入的托管令牌
+需要正常重启，不注销原生登录。真实 0.160.1 app-server 九项无凭据离线检查通过，
+没有模型回合或费用；真实订阅登录、带凭据模型调用与真实 TTY 交互本轮未运行。
+自动变化仅 Codex 标识/标题，不改配色与宠物。第三方客户端使用 ChatGPT 订阅令牌受
+OpenAI 条款约束。完整操作与当前边界：[Codex 后端](docs/codex-backend.md)。
+
 ## 快捷键与鼠标
 
 `Enter` 发送 · `Tab` 补全 · `Ctrl+Enter` 打断并发送 · `Alt+Up` 取回上一条 · `Esc` 逐层关闭，空输入双击回溯 · `Ctrl+B` 侧栏 · `Ctrl+O` 详情 · `Ctrl+R` 搜历史（`↑`/`↓` 与 `Ctrl+R` 按当前项目隔离） · `Ctrl+V` 粘贴 · `Ctrl+Shift+E` 全屏草稿编辑器 · `?` 快捷键 · `←` 转后台。

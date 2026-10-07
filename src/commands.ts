@@ -146,6 +146,21 @@ export const BACKEND_CHANNEL_COMMAND: LocalCommand = {
 }
 
 /**
+ * `/goal` as a goals-capable backend serves it (the typed `goals`
+ * capability; the channel core's `backendGoals` host). Like /permission,
+ * deliberately NOT a LOCAL_COMMANDS entry: DSH's own /goal is the
+ * `dsh-command-goal` registry row, and a local entry would shadow it. The
+ * capability snapshot appends the name (channel/capabilities.ts) and
+ * session-controls rides it here. On a backend without the capability the
+ * typed command is refused as unavailable (`isUnavailableLocalCommand`).
+ */
+export const BACKEND_GOAL_COMMAND: LocalCommand = {
+  name: 'goal',
+  description: 'Set or show the session goal',
+  descriptionKey: 'cmd-desc-goal',
+}
+
+/**
  * What a built-in command needs from the bound backend session: `any` works
  * on every backend (UI-only, or served by the channel's backend-neutral
  * core); a capability name needs that session capability; `dsh` needs the
@@ -155,7 +170,7 @@ export const BACKEND_CHANNEL_COMMAND: LocalCommand = {
  */
 export type LocalCommandRequirement =
   | 'any' | 'dsh' | 'models' | 'effort' | 'compact' | 'rewind' | 'fork' | 'resume'
-  | 'subagents' | 'tasks' | 'mcp' | 'context' | 'login' | 'sideQuery' | 'rename' | 'color'
+  | 'subagents' | 'tasks' | 'mcp' | 'context' | 'login' | 'sideQuery' | 'rename' | 'color' | 'init'
 
 const LOCAL_COMMAND_REQUIREMENTS: ReadonlyMap<string, LocalCommandRequirement> = new Map<string, LocalCommandRequirement>([
   ['new', 'any'], ['clear', 'any'], ['status', 'any'], ['cost', 'any'], ['tokens', 'any'],
@@ -169,7 +184,7 @@ const LOCAL_COMMAND_REQUIREMENTS: ReadonlyMap<string, LocalCommandRequirement> =
   ['kernel', 'any'], ['restart', 'any'],
   ['compact', 'compact'], ['resume', 'resume'], ['rewind', 'rewind'], ['fork', 'fork'],
   ['model', 'models'], ['effort', 'effort'], ['agents', 'subagents'], ['jobs', 'tasks'], ['mcp', 'mcp'],
-  ['context', 'context'], ['login', 'login'],
+  ['context', 'context'], ['login', 'login'], ['logout', 'login'], ['init', 'init'],
   ['recap', 'sideQuery'], ['btw', 'sideQuery'], ['rename', 'rename'], ['color', 'color'],
   // /trace opens on every backend; one without trajectory data shows the
   // unsupported state (channel.trajectorySource() decides, not this table).
@@ -202,13 +217,16 @@ export function supportedLocalCommandNames(
  * Whether a typed name is a built-in command the bound backend lacks. Such a
  * line must neither run nor reach the model: the caller shows
  * `cmd-unavailable-backend`. An absent snapshot (a partial embedder channel)
- * means everything is supported.
+ * means everything is supported. `/goal` counts as one when the snapshot
+ * says goals are not served (a backend without the `goals` capability; a
+ * snapshot without the flag predates it and serves everything).
  */
 export function isUnavailableLocalCommand(
   name: string,
-  capabilities: { readonly commands: readonly string[] } | undefined,
+  capabilities: { readonly commands: readonly string[]; readonly goals?: boolean } | undefined,
 ): boolean {
   if (capabilities === undefined) return false
+  if (name === BACKEND_GOAL_COMMAND.name) return capabilities.goals === false
   return LOCAL_COMMANDS.some(command => command.name === name) && !capabilities.commands.includes(name)
 }
 

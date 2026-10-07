@@ -202,6 +202,44 @@ its manual equivalent.
 
 Details and known limitations: [Claude backend](docs/claude-backend.en.md).
 
+### Experimental: native Codex backend
+
+Run your own Codex through `codex app-server`, sharing its configuration,
+login, instructions, skills, hooks, MCP and native threads:
+
+```sh
+npm install -g @openai/codex@0.160.1
+dsh-tui --backend codex
+dsh-tui --backend codex --resume <thread-id>
+```
+
+Protocol baseline **0.160.1**, minimum **0.144.0**; other versions may show
+drift. `CODEX_EXECUTABLE` selects a binary; `/kernel` remembers the backend.
+`codex resume <id>` can open the same thread after the other writer exits.
+This is not `migrate codex`, which imports history into DSH.
+
+Streaming/tool cards, approvals, questions, steer/queue/interrupt, model and
+effort controls, Plan, `/review`, `/diff`, `/usage`, `/init`, skills and MCP
+share the existing UI. **Shift+Tab only toggles Plan**, keeping its underlying
+permission preset; Full Access requires an explicit choice. Existing Codex
+settings are respected, not overwritten with defaults. `/login` offers
+ChatGPT OAuth, a device code or an API key (the last writes to Codex’s own
+credential store). Relay `/channel` connections take precedence; managed
+subscription tokens are only injected on first-party routes. dsh-TUI does
+not write `~/.codex/config.toml` or log out your native Codex account.
+
+Native browsing/archive, fork/conversation rewind, paged history, images,
+subagents, polled background terminals, goals and `/btw`/`/recap` use the
+existing surfaces. `/logout` removes only the matching dsh-auth credential;
+already-loaded managed tokens require a normal restart, not native logout.
+The real 0.160.1 app-server passed nine credential-free offline checks, with
+no model turn or charge; real subscription login, credentialed model calls
+and real-TTY interaction were not run. Only Codex identification/title
+changes automatically, not palette or companion.
+Using ChatGPT subscription tokens in third-party clients is subject to
+OpenAI’s terms. Full instructions and current boundaries:
+[Codex backend](docs/codex-backend.en.md).
+
 ## Keybindings & Mouse
 
 `Enter` send · `Tab` complete · `Ctrl+Enter` interrupt and send · `Alt+Up` recall the last message · `Esc` dismiss, double-`Esc` rewinds · `Ctrl+B` side panel · `Ctrl+O` details · `Ctrl+R` history (`↑`/`↓` and `Ctrl+R` are scoped to the current project) · `Ctrl+V` paste · `Ctrl+Shift+E` fullscreen draft editor · `?` shortcuts · `←` background the session.

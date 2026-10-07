@@ -53,6 +53,7 @@ import { useKernelPicker } from './chat/useKernelPicker.js'
 import { useBackendChannels } from './chat/useBackendChannels.js'
 import { backendModeStatus as modeStatus, backendPermissionCommand, parseMcpCommand } from './chat/backendCommands.js'
 import { PermissionStore, type PermissionPanelSource } from '../channel/permissions.js'
+import { goalStatusLines, parseGoalCommand } from '../channel/goal-command.js'
 import { AskUserQuestionPanel } from '../components/questions/AskUserQuestionPanel.js'
 import { ApprovalPanel } from '../components/approvals/ApprovalPanel.js'
 import { ExtensionDialog } from '../components/ExtensionDialog.js'
@@ -3347,6 +3348,8 @@ export function Chat({
         return true
       }
       case 'init': {
+        const backend = channel.backendInit?.()
+        if (backend !== undefined) { void backend.run(); return true }
         const result = channel.initWorkspace()
         if (result === null) channel.notify(t('agentsmd-create-failed'), { color: 'error' })
         else if (result === 'exists') channel.notify(t('agentsmd-exists'))
@@ -3449,9 +3452,12 @@ export function Chat({
           })
         return true
       }
-      case 'logout':
-        channel.notify(t('login-logout-hint'))
+      case 'logout': {
+        const auth = channel.backendAuth()
+        if (auth?.logout === undefined) channel.notify(t('login-logout-hint'))
+        else void auth.logout()
         return true
+      }
       case 'permission': {
         // The command itself is registered by the permission-presets row
         // (dsh-base): bare `/permission` opens the preset picker and Enter
@@ -3666,6 +3672,43 @@ export function Chat({
         lines.push(t('reload-footer'))
         channel.pushLocal('/reload', lines)
         return true
+      }
+      case 'goal': {
+        // DSH: the `dsh-command-goal` registry row owns /goal, exactly as the
+        // default branch below would dispatch it.
+        if (channel.commandList.some(command => command.external && command.name === 'goal')) {
+          setHelpOpen(false)
+          return runExternalCommand(name, rawInput, images)
+        }
+        // Another backend: the channel core's host over its typed `goals`
+        // capability. None (DSH without the row, or a backend's own `goal`
+        // command) keeps the previous route: the line goes on as text. A
+        // backend with neither never gets here — PromptInput refuses /goal
+        // as unavailable (isUnavailableLocalCommand).
+        const goals = channel.backendGoals?.()
+        if (goals === undefined) return false
+        setHelpOpen(false)
+        // The capability calls settle like registry commands: the draft is
+        // consumed only once the backend took the change (a failure is
+        // reported by the host and leaves the line editable). An invalid
+        // line is never sent anywhere: it stays in the composer.
+        const command = parseGoalCommand(rawInput)
+        switch (command.kind) {
+          case 'status':
+            channel.pushLocal('/goal', goalStatusLines(channel.goal))
+            return true
+          case 'invalid':
+            channel.notify(command.reason, { color: 'error' })
+            return Promise.resolve(false)
+          case 'set':
+            return goals.set(command.objective, command.tokenBudget === undefined ? undefined : { tokenBudget: command.tokenBudget })
+          case 'pause':
+            return goals.pause()
+          case 'resume':
+            return goals.resume()
+          case 'clear':
+            return goals.clear()
+        }
       }
       case 'channel': {
         // 渠道选择器。/channel 只在声明了 channels 能力的内核下进命令表，
@@ -6394,6 +6437,7 @@ export function Chat({
           showAll={showAllMessages}
           thinkingVisible={thinkingVisible}
           historyPaintEnabled={!fullscreen}
+          fullscreen={fullscreen}
           onToggleAll={() =>{  setShowAllMessages(previous => !previous) }}
           onLoadOlder={() => channel.loadOlder()}
           registerRowRef={registerRowRef}
