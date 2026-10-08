@@ -2,7 +2,8 @@
 /**
  * Compact composer regression through the real Chat and terminal renderer.
  * Covers idle spacing, notification appearance/replacement/removal, and
- * multiline draft shrink in fullscreen and inline modes at 120/80/40 columns.
+ * multiline draft and attached-context shrink in fullscreen and inline modes
+ * at 120/80/40 columns.
  * Run after build: node scripts/verify-prompt-spacing.mjs
  */
 import '../lib/types/force-production-react.js'
@@ -130,6 +131,28 @@ for (const fullscreen of [true, false]) {
         && geometry().status === baseline.status
         && lines().every(line => !/第[一二三]行|NOTICE/.test(line))
         && lines().some(line => line.includes('TRANSCRIPT_END')))
+
+      channel.attachedContexts = [{
+        id: 'spacing-context', source: 'panel', sourceId: 'spacing-panel',
+        title: 'ATTACHED_CONTEXT', content: 'Panel context', chars: 13, truncated: false,
+      }]
+      channel.emit()
+      await check('attached context occupies one row above the input', () => hasGap(1)
+        && lines()[geometry().top - 1]?.includes('ATTACHED_CONTEXT'))
+      notify('ATTACHMENT_NOTICE')
+      await check('attachment and notification each retain their own row', () => hasGap(2)
+        && lines()[geometry().top - 1]?.includes('ATTACHED_CONTEXT')
+        && lines()[geometry().top - 2]?.includes('ATTACHMENT_NOTICE'))
+      notify(undefined)
+      await check('removing a notification preserves the attachment row', () => hasGap(1)
+        && lines()[geometry().top - 1]?.includes('ATTACHED_CONTEXT')
+        && lines().every(line => !line.includes('ATTACHMENT_NOTICE')))
+      channel.attachedContexts = []
+      channel.emit()
+      await check('removing the last attachment reclaims the row without stale text', () => hasGap(0)
+        && geometry().top === baseline.top && geometry().bottom === baseline.bottom
+        && geometry().transcriptBottom === baseline.transcriptBottom
+        && lines().every(line => !line.includes('ATTACHED_CONTEXT')))
     } finally {
       instance.unmount()
       await new Promise(resolve => stdout.write('', resolve))

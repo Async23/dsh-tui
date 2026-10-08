@@ -5,8 +5,9 @@ import type { ChannelState } from '../channel/types.js'
 import { isReservedCredentialRef } from '../credentialRefGuard.js'
 import type { OAuthProviderStatus, OAuthSetupHost, ProfilePathOp, ProviderSetupHost } from '../providerWizard.js'
 import type { SettingsHost } from '../settingsEditor.js'
+import { settingsValue } from '../compat/settings.js'
 
-export function createSettingsHosts(ctx: Context, assertActive: () => void = () => undefined): Pick<ChannelState, 'settingsHost' | 'providerSetup' | 'oauthProviderStatuses'> {
+export function createSettingsHosts(ctx: Context, assertActive: () => void = () => undefined): Pick<ChannelState, 'settingsHost' | 'providerSetup' | 'oauthProviderStatuses' | 'backendAuth'> {
   let settingsHostResolved = false
   let settingsHostCache: SettingsHost | undefined
   return {
@@ -101,8 +102,8 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
         | undefined
       const settings = ctx.get('settings') as
         | {
-          describe(): readonly { ns: string; revision: number; user?: unknown }[]
-          get(ns: string): unknown
+          describe(): readonly { ns: string; revision: number; value?: unknown; user?: unknown }[]
+          get?(ns: string): unknown
           mutate(
             ns: string,
             ops: readonly (
@@ -157,7 +158,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
             .map(entry => ({ provider: entry.provider, displayName: entry.displayName }))
         },
         routeExists(route) {
-          const section = settings.get('llm-pi-ai') as
+          const section = settingsValue(settings, 'llm-pi-ai') as
             | { providers?: Record<string, unknown> }
             | undefined
           return section?.providers !== undefined && route in section.providers
@@ -166,7 +167,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
           // The RESOLVED merge (settings.get), not the user layer: a base
           // provider or composition-base route naming this ref is invisible
           // to listConfiguredProviders() but still consumes the credential.
-          const section = settings.get('llm-pi-ai') as
+          const section = settingsValue(settings, 'llm-pi-ai') as
             | { providers?: Record<string, unknown> }
             | undefined
           const providers = section?.providers
@@ -193,12 +194,15 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
           // user layer legitimately exposes nothing to edit.
           const section = (descriptor?.user !== undefined
             ? descriptor.user
-            : settings.get('llm-pi-ai')) as
+            : settingsValue(settings, 'llm-pi-ai')) as
             | { providers?: Record<string, unknown> }
             | undefined
           const providers = section?.providers
           if (providers === undefined || typeof providers !== 'object' || providers === null) return []
           const catalog = catalogMembers()
+          const resolvedSection = settingsValue(settings, 'llm-pi-ai') as
+            | { providers?: Record<string, unknown> }
+            | undefined
           return Object.entries(providers).flatMap(([route, profile]) => {
             // The settings section is user-editable, so a `providers.<route>`
             // entry may be null or a scalar; skip anything that is not a plain
@@ -213,6 +217,12 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
             const api = typeof stored.api === 'string' && stored.api !== ''
               ? stored.api
               : undefined
+            const resolved = resolvedSection?.providers?.[route]
+            const headers = typeof resolved === 'object' && resolved !== null
+              ? (resolved as Record<string, unknown>).headers
+              : undefined
+            const hasCustomHeaders = typeof headers === 'object' && headers !== null
+              && !Array.isArray(headers) && Object.keys(headers).length > 0
             // Keep the raw model entries: a model-list re-selection must
             // rewrite kept ids with their stored objects, so per-model fields
             // this wizard never learned about survive the edit.
@@ -225,6 +235,13 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
             const models = modelEntries?.flatMap(
               entry => typeof entry.id === 'string' ? [entry.id] : [],
             )
+            const overrides = stored.modelOverrides
+            const modelOverrides = typeof overrides === 'object' && overrides !== null && !Array.isArray(overrides)
+              ? Object.fromEntries(Object.entries(overrides).filter(
+                (entry): entry is [string, Record<string, unknown>] =>
+                  typeof entry[1] === 'object' && entry[1] !== null && !Array.isArray(entry[1]),
+              ))
+              : undefined
             return [{
               route,
               ref,
@@ -232,10 +249,12 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
               shadowed: ref !== '' && process.env[ref] !== undefined,
               ...(baseURL !== undefined ? { baseURL } : {}),
               ...(api !== undefined ? { api } : {}),
+              ...(hasCustomHeaders ? { hasCustomHeaders: true } : {}),
               ...(models !== undefined ? { models } : {}),
               ...(modelEntries !== undefined && modelEntries.length > 0
                 ? { modelEntries }
                 : {}),
+              ...(modelOverrides !== undefined ? { modelOverrides } : {}),
             }]
           })
         },
@@ -307,6 +326,10 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
         },
       }
     },
+
+    // The DSH session's sign-in is the DSH credentials `/login` reports; a
+    // non-DSH composition overrides this with its backend's own.
+    backendAuth: () => undefined,
 
     async oauthProviderStatuses(): Promise<readonly OAuthProviderStatus[] | undefined> {
       // Same optional seam the wizard's OAuth branch reads: absent plugin →

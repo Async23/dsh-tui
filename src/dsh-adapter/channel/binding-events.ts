@@ -1,34 +1,53 @@
-import type { AssistantStreamFrame, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AssistantStreamFrame, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
+import { carrierKeyOf } from '@deepseek-ai/dsh-scope'
+import type { ChannelProjection } from '../../channel/projection.js'
+import { t } from '../../i18n.js'
+import { runningPresetOf } from '../presets.js'
+import { agentCapabilityEvidence, resolveAgentCapabilities } from './capabilities.js'
+import { createSessionBatchRouter, createSessionBinder, type BindingFeedHooks, type BindingScope } from './core/binding-feed.js'
 import type { InputConvergence } from './input-actions.js'
-import type { ChannelBinding } from './binding.js'
+import type { DshChannelBinding } from './binding.js'
 import type { ChannelOwner } from './owner.js'
-import { type createChannelProjection } from './projection.js'
 import type { ChannelState } from './types.js'
 
 /**
- * The binding event router is the sole subscriber for a foreground Agent.
- * It captures the binding generation at every listener entry; teardown is
- * incremental and retained callbacks check that captured Agent/session pair
- * before touching state. Transcript presentation remains exclusively owned by
- * ChannelProjection.
+ * Foreground transcript listeners capture a binding generation: the bound
+ * `AgentSession`'s event batches feed the shared projector, and the DSH
+ * specialists read the raw main-session events through `native.dsh`. Child
+ * (subagent) event listeners instead span the Channel owner, keeping parked
+ * reducers current across rebinds. Both paths own registrations incrementally
+ * and fence retained callbacks; only the projector presents the foreground
+ * transcript.
  */
 export function createBindingEvents(ctx: Context, deps: {
   owner: ChannelOwner
-  binding: ChannelBinding
+  binding: DshChannelBinding
   state: ChannelState
-  activity: {
-    start(agent: ChannelBinding['agent']): void
-    stop(): void
-    onAgentStatus(status: ChannelBinding['agent']['status']): unknown
-    onSessionEvent(event: unknown): unknown
-  }
+  /** Read the activity projection's current value for a freshly bound session.
+   *  A projection value only arrives when it changes, so a resumed or
+   *  reattached session needs this read to show its line before the next event.
+   *  The line's semantics live in the working-activity plugin: this app folds
+   *  nothing itself and forwards no events. */
+  seedActivity?(session: unknown): void
+  /** Read the context-occupancy projection's current value for a freshly bound
+   *  session, for the same reason (and with the same plumbing) as
+   *  `seedActivity`: the value only arrives when it changes, so a resumed
+   *  session needs one baseline read to show its occupancy before the next
+   *  request reports usage. */
+  seedContextOccupancy?(session: unknown): void
   inputConvergence: InputConvergence
   selection: ModelSelectionRef
   modelActions: { applyPreferredEffort(): Promise<void>; selection: ModelSelectionRef }
   modeActions: { refreshMode(): void; onSessionEvent(session: unknown, event: unknown): void }
-  projector: ReturnType<typeof createChannelProjection>
-  subagents: { onSessionEvent(session: unknown, event: unknown): boolean; onStreamFrame?(agent: unknown, frame: AssistantStreamFrame): boolean; onStart(info: { id: string; runId?: string; provider: string; local?: boolean }): void; onEnd(info: { id: string; stopReason: string; lastAssistantMessage?: unknown[] }): void }
+  projector: ChannelProjection
+  subagents: {
+    onSessionEvent(session: unknown, event: unknown): boolean
+    onStreamFrame?(agent: unknown, frame: AssistantStreamFrame): boolean
+    onStart(info: { id: string; runId?: string; provider: string; local?: boolean }, parent: object | null): void
+    onEnd(info: { id: string; runId?: string; stopReason: string; lastAssistantMessage?: unknown[] }, parent: object | null): void
+    forget?(agent: Agent): void
+  }
   agentView: { schedule(): void }
   messageObserver?: { publish(session: unknown, event: unknown): void }
   /** Drop a pre-step attachment registered by this channel for one message id
@@ -37,23 +56,82 @@ export function createBindingEvents(ctx: Context, deps: {
    *  channel.ts always wires it. */
   retireAttachment?(messageId: string): void
 }) {
-  const reconcileRetiredProjection = (status: 'idle' | 'disposed'): void => {
-    if (!deps.state.working) return
-    ctx.logger.warn(`dsh-tui: agent became ${status} while the channel still projected an open turn; releasing volatile UI gates`)
-    deps.inputConvergence.cancelInFlight = false
-    deps.state.cancelPending = false
-    deps.state.working = false
-    deps.state.activeToolCount = 0
-    deps.projector.settleStreaming()
-    deps.projector.updateSpinnerMode()
+  let subagentsInstalled = false
+  /**
+   * Preset of the last binding we announced a capability gap for. The gap is a
+   * property of the agent's PRESET, so it is reported once per entry into a
+   * preset that lacks it (a rebind to the SAME preset — /model, /rewind —
+   * stays quiet; switching away and back reports again). Facts come from
+   * `channel/capabilities.ts`, never from a preset-id list: a user preset that
+   * adds compaction/pruning back gets no warning at all.
+   *
+   * A session recording NO preset (rosterless bare `cordis.yml`, or an embed
+   * that composes its own leaf) stays silent: nothing there attributes the
+   * missing services to a preset choice, and the command-list annotation plus
+   * the use-time refusal already say it when it matters. Only the id, not its
+   * contents, is read here.
+   */
+  let announcedPreset: string | undefined
+  let announced = false
+  const announceCapabilityGap = (): void => {
+    const agent = deps.binding.agent
+    const presetId = runningPresetOf(agent.session)
+    if (presetId === undefined) return
+    if (announced && presetId === announcedPreset) return
+    announced = true
+    announcedPreset = presetId
+    const capabilities = resolveAgentCapabilities(agentCapabilityEvidence(ctx, agent))
+    if (capabilities.compaction && capabilities.pruner) return
+    const key = capabilities.compaction
+      ? 'capability-gap-pruner'
+      : capabilities.pruner
+        ? 'capability-gap-compaction'
+        : 'capability-gap-compaction-pruner'
+    deps.state.notify(t(key), { color: 'warning', timeoutMs: 12000 })
   }
-
-  const bind = (): void => {
-    try {
-      deps.state.agentBindingGeneration = deps.binding.bind()
-      deps.inputConvergence.cancelInFlight = false
-      deps.inputConvergence.interruptSeq += 1
-      deps.activity.start(deps.binding.agent)
+  const installSubagents = (): void => {
+    if (subagentsInstalled) return
+    subagentsInstalled = true
+    // Child reducers span foreground bindings. One owner subscription keeps
+    // parked stores current; only the active reducer publishes view changes.
+    deps.owner.own(ctx.on('session/event', (session, event) => {
+      if (deps.owner.current()) deps.subagents.onSessionEvent(session, event)
+    }))
+    deps.owner.own(ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+      if (deps.owner.current()) deps.subagents.onStreamFrame?.(agent, frame)
+    }))
+    // Cordis binds the dispatch receiver as `this`. The upstream carrier
+    // names the direct delegating parent, even for external children absent
+    // from agents.get(); its ancestor-inclusive filter cannot identify it.
+    deps.owner.own(ctx.on('subagent/start' as never, (function (this: unknown, info: Parameters<typeof deps.subagents.onStart>[0]) {
+      if (deps.owner.current()) deps.subagents.onStart(info, carrierKeyOf(this) ?? null)
+    }) as never))
+    deps.owner.own(ctx.on('subagent/end' as never, (function (this: unknown, info: Parameters<typeof deps.subagents.onEnd>[0]) {
+      if (deps.owner.current()) deps.subagents.onEnd(info, carrierKeyOf(this) ?? null)
+    }) as never))
+    deps.owner.own(ctx.on('agent/disposed', ({ agent }) => {
+      if (deps.owner.current()) deps.subagents.forget?.(agent)
+    }))
+  }
+  /**
+   * The DSH half of every bind (core/binding-feed.ts runs it): the owner-level
+   * child listeners once, then per binding the activity seed, the model
+   * selection reset, the preferred effort and mode refresh, the model
+   * selection waterfalls, and the raw durable-event subscribers. Registered
+   * before the core's session subscription, so each raw event reaches the
+   * DSH specialists before the projector folds it.
+   */
+  const hooks = {
+    // This composition maintains mode/effort/command facts through its own
+    // specialists, and replays its seed synchronously at adoption.
+    ownsSessionFacts: true,
+    onGeneration(): void {
+      // DSH specialists attach only to a DSH session.
+      if (deps.binding.session.capabilities.native.dsh !== undefined) installSubagents()
+    },
+    onBind({ capture, current, register }: BindingScope): void {
+      deps.seedActivity?.(deps.binding.agent.session)
+      deps.seedContextOccupancy?.(deps.binding.agent.session)
       deps.modelActions.selection.current = undefined
       deps.modelActions.selection.assembled = undefined
       if (deps.binding.agent.options?.model === undefined && deps.state.provider !== '' && deps.state.model !== '') {
@@ -61,20 +139,17 @@ export function createBindingEvents(ctx: Context, deps: {
       }
       void deps.modelActions.applyPreferredEffort()
       deps.modeActions.refreshMode()
-      const capture = deps.binding.capture()
-      const session = capture.agent.session
-      const current = (): boolean => deps.owner.current() && deps.binding.isCurrent(capture)
-      const register = <T extends () => void>(dispose: T): T => {
-        deps.binding.subscribe(dispose)
-        return dispose
-      }
-      const on = (...args: Parameters<typeof ctx.on>): ReturnType<typeof ctx.on> => register(ctx.on(...args))
-
+      // Entering/resuming a session whose preset serves neither automatic
+      // compaction nor tool-result pruning changes what the user can expect
+      // from a long session; say it once, here, before the turn starts.
+      announceCapabilityGap()
+      const native = capture.session.capabilities.native.dsh
+      if (native === undefined) return
       // Keep the upstream assembly/request pairing, but own each listener as
       // soon as it is installed. The upstream combined disposer is too late
       // if request registration throws, and its post-await assembly write is
       // unsafe after a rebind (including A→B→A ABA).
-      const disposeAssembly = capture.agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+      const disposeAssembly = native.agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
         const selected = deps.selection.current
         const assembled = await next()
         if (!current()) return assembled
@@ -90,7 +165,7 @@ export function createBindingEvents(ctx: Context, deps: {
         }
       })
       register(disposeAssembly)
-      const disposeRequest = capture.agent.ctx.on('agent/request', async (_payload, next) => {
+      const disposeRequest = native.agent.ctx.on('agent/request', async (_payload, next) => {
         const resolved = await next()
         if (!current()) return resolved
         const selected = deps.selection.assembled
@@ -104,76 +179,35 @@ export function createBindingEvents(ctx: Context, deps: {
         }
       })
       register(disposeRequest)
-      on('agent/status', ({ agent: subject, status }) => {
-        if (!current() || subject !== capture.agent) return
-        deps.state.status = status
-        deps.activity.onAgentStatus(status)
-        if (status === 'idle') reconcileRetiredProjection('idle')
-        deps.state.emit()
-      })
-      on('agent/disposed', ({ agent: subject }) => {
-        if (!current() || subject !== capture.agent) return
-        deps.state.status = 'disposed'
-        deps.activity.stop()
-        reconcileRetiredProjection('disposed')
-        deps.state.emit()
-      })
-      /**
-       * The inbox removed one message. Both events retire the pending
-       * preview, but ONLY a discard retires an attached-context entry:
-       * `agent/inbox/claimed` fires while the loop claims the batch, BEFORE
-       * the resident `agent/pre-step` listener can append the attachment —
-       * retiring there would delete the context before it is ever injected
-       * (dsh-agent-loop: `inbox.claim()` → claimed event → `agent/pre-step`).
-       */
-      const retirePending = (payload: { agent: unknown; message: { id?: unknown } }, alsoRetireAttachment = false): void => {
-        if (!current() || payload.agent !== capture.agent) return
-        const messageId = payload.message?.id
-        if (typeof messageId !== 'string') return
-        if (alsoRetireAttachment) deps.retireAttachment?.(messageId)
-        const before = deps.state.pending.length
-        deps.state.pending = deps.state.pending.filter(item => item.id !== messageId)
-        if (deps.state.pending.length !== before) deps.state.emit()
-      }
-      on('agent/inbox/claimed', retirePending)
-      on('agent/inbox/discarded', payload => retirePending(payload, true))
-      on('session/event', (subject, event) => {
+      // Raw durable events for the DSH specialists. Registered before the
+      // session subscription, so each event reaches them before the
+      // projector folds it.
+      register(native.subscribeRaw(event => {
         if (!current()) return
-        const isMainSession = subject === session
-        if (!isMainSession && deps.subagents.onSessionEvent(subject, event)) return
-        if (!isMainSession) return
-        deps.messageObserver?.publish(subject, event)
-        deps.activity.onSessionEvent(event)
-        deps.modeActions.onSessionEvent(subject, event)
-        deps.projector.renderEvent(event)
-        if (event.type === 'assistant/chunk') deps.state.emitStream()
-        else deps.state.emit()
-      })
-      // 0.1.5 live streaming: per-token chunks are transient attempt frames
-      // on this agent-scoped channel; the durable settlement still arrives
-      // through `session/event` above. Pre-0.1.5 hosts never emit it — the
-      // subscription simply stays silent there and chunks keep arriving as
-      // `assistant/chunk` session events.
-      on('agent/assistant-stream', ({ agent: subject, frame }) => {
-        if (!current()) return
-        if (subject !== capture.agent) {
-          deps.subagents.onStreamFrame?.(subject, frame)
-          return
-        }
-        deps.projector.renderStreamFrame(frame)
-        if (frame.type === 'chunk') deps.state.emitStream()
-        else if (frame.type === 'end') deps.state.emit()
-      })
-      on('subagent/start' as never, (info: { id: string; runId?: string; provider: string; local?: boolean }) => {
-        if (current()) deps.subagents.onStart(info)
-      })
-      on('subagent/end' as never, (info: { id: string; stopReason: string; lastAssistantMessage?: unknown[] }) => {
-        if (current()) deps.subagents.onEnd(info)
-      })
-    } catch (error) {
-      deps.owner.dispose()
-      throw error
-    }
-  }
-  return { bind }
+        deps.messageObserver?.publish(native.agent.session, event)
+        deps.modeActions.onSessionEvent(native.agent.session, event)
+      }))
+    },
+  } satisfies BindingFeedHooks
+
+  // Direct regressions drive this owner alone: the same binder the channel
+  // feed runs, over the projector they hand in.
+  const router = createSessionBatchRouter({
+    state: deps.state,
+    projector: deps.projector,
+    inputConvergence: deps.inputConvergence,
+    retireAttachment: deps.retireAttachment,
+    warn: message => ctx.logger.warn(message),
+  })
+  const binder = createSessionBinder({
+    owner: deps.owner,
+    binding: deps.binding,
+    state: deps.state,
+    inputConvergence: deps.inputConvergence,
+    route: router.route,
+    hooks: () => hooks,
+  })
+  return { bind: binder.bind, hooks }
 }
+
+export { createSessionBatchRouter } from './core/binding-feed.js'

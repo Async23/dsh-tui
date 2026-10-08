@@ -27,7 +27,8 @@
   - 名单只允许提交 PR，不授予 write，也不预审功能范围。
   - 维护者 reopen 一次已关闭的 PR 可作为例外；其他人 reopen 会被再次关闭。
   - base 指向 `main`。保持改动聚焦：一个 PR 只做一个逻辑改动。
-    标题用中文或中英对照，描述写清动机、改动点与验证方式。
+    标题用中文或中英对照，描述按 [PR 模板](../.github/PULL_REQUEST_TEMPLATE.md)
+    写清动机、改动形状与验证方式；Agent 发 PR 使用 `.agents/skills/pr`。
   - **改动代码的 PR 必须关联 issue**：描述里写一行 `Closes #<issue 号>`，
     或用侧边栏 Development 关联。CI 的 `issue-link` 组会检查，没有关联即判失败。
   - CI 判定为纯文档的改动不需要关联（路径分流见“验证”）。
@@ -45,6 +46,24 @@ Discussions。人不能用「私下批准」、关联 issue 或粘贴维护者�
 功能提案流程只对 2026-08-24 起新建的 PR 生效。PR 白名单门禁只对门禁合入后
 新开（或被 reopen）的 PR 生效。在此之前开着的 PR 按旧规则处理，不会被追溯关闭，
 也不需要补 Discussion 或跟踪 issue。
+
+### 合并队列（Merge Queue）
+
+`main` 上的合并由 [Mergify](https://mergify.com) 的合并队列执行，配置在
+[`.mergify.yml`](../.mergify.yml)：PR 拿到 1 个 approving review 后自动入队，队列把它
+更新到最新 `main`、在临时 PR 上重跑 CI，绿了自动合并。合并条件由 base 分支上的
+ruleset 注入（批准、`ci-gate`、评论已解决、批准最后一次推送），与手动合并同一把尺。
+队列不放水，也没有任何绕过批准的通道；急修仍然只有 admin 能做的
+`gh pr merge --admin`。
+
+队列只收 base 指向 `main` 的 PR：stacked PR 在 retarget 到 `main` 之前不会入队。
+已经批准但想先别合，打 `on hold`。队列创建的临时 PR（`mergify/merge-queue/*`）是
+draft、只跑一次 CI 就关，`pr-gate` 与 `issue-link` 都按机器人放行。
+
+配套的 ruleset 决定：`main` 的「要求分支必须最新」已关闭。它和队列冲突——队列测的是
+临时 PR，GitHub 会认为原 PR「不是最新」而拒绝合并，而「在最新 `main` 上测出合并后的
+状态」正是队列要替你做的事。批准、`ci-gate`、评论已解决这几条仍由 GitHub 强制执行，
+为此 Mergify **不在**任何豁免名单里。
 
 ## 范围（Scope）
 
@@ -66,6 +85,9 @@ Discussions。人不能用「私下批准」、关联 issue 或粘贴维护者�
 - `src/index.ts`：公共 Cordis 插件入口、配置 Schema，与对运行时插件的惰性移交。
 - `src/dsh-adapter/plugin.ts`：TTY 校验、服务注册、Agent 创建/恢复、React 树挂载，以及
   终端/进程的收尾清理。
+- `src/dsh-adapter/oauth/`：pi-ai 订阅 OAuth 的 provider 路由、`/auth` 命令、
+  凭据存储与 user-questions 桥接；DeepSeek 账号授权委派给宿主服务，
+  经 `src/oauth.ts` 子入口挂载。
 - `src/dsh-adapter/questions-answerer.ts` 与 `preset-resolution.ts`：
   隔离 user-questions / agent-preset 的上游预发布兼容分派，避免把版本分支
   散进 bootstrap 与 channel 动作面。
@@ -78,9 +100,15 @@ Discussions。人不能用「私下批准」、关联 issue 或粘贴维护者�
     也能观察、替换或拒绝下游结果；`{ prepend: true }` 会把 listener 插到队首。
   - 上游没有受支持的方法发现或保留可验证的独占 claimant，
     因此 legacy seat guard 及其告警无法在本地复现。
-- `src/dsh-adapter/channel.ts`：事件到视图的投影 + 非 React 的动作面。把 DSH 会话事件
-  翻译成 transcript 行，实现 submit、steer、rewind、resume、模型/preset 切换、
-  本地报告及相关状态迁移。
+- `src/dsh-adapter/channel.ts`：Channel 入口——后端中立核心
+  `channel/core/`（绑定、输入管线、共享投影器的接线、宿主接缝、`/new`、本地动作、
+  文件/报告、按能力委托的动作）+ 仅 DSH 会话挂载的扩展 `channel/extensions.ts`
+  （rewind、resume、agent view、子代理/任务、模型/preset/模式、recap 等 DSH
+  specialist 的接线）。会话事件由后端翻译器转成 `AgentEvent`，经唯一的共享投影器
+  `src/channel/projection.ts` 成为 transcript 行。新增后端不写 channel 代码。
+- `src/agent/`、`src/channel/`、`src/backends/claude/`、`src/backends/codex/`、`src/dsh-adapter/backend/`：
+  后端中立的会话领域与共享投影器，以及各后端的翻译器与会话实现。结构、规则与接入
+  新后端的步骤见 [多后端架构](agent-backend-design.md)。
 - `src/screens/Chat.tsx`：顶层交互协调器。负责模态优先级、全局键盘、滚动/
   搜索/选区状态、slash 命令分发与聊天屏组装。
 - `src/screens/StatusLine.tsx` 与 `src/screens/StatusMetrics.ts`：底部状态栏
@@ -118,7 +146,7 @@ Cordis config
   -> src/index.ts
   -> src/dsh-adapter/plugin.ts
   -> DSH agent/session services
-  -> src/dsh-adapter/channel.ts (session events -> Channel snapshot)
+  -> src/dsh-adapter/channel.ts（core + DSH extensions；AgentEvent -> 共享投影器 -> Channel snapshot）
   -> src/screens/Chat.tsx
   -> src/components/*
   -> src/ui.ts
@@ -129,7 +157,9 @@ Cordis config
 职责归属在各层，不要越权：
 
 - Agent/会话/工具事实来自 DSH 服务与持久化会话事件。
-- 投影与 TUI 动作属于 `dsh-adapter/channel.ts`，不属于呈现组件。
+- 投影属于共享投影器 `src/channel/projection.ts`，TUI 动作属于 channel 核心
+  （`dsh-adapter/channel/core/`）与 DSH 扩展（`dsh-adapter/channel/extensions.ts`），
+  不属于呈现组件。
 - 交互模式与按键优先级属于 `Chat.tsx` 或当前聚焦的模态/输入组件。
 - 可复用的视觉行为属于 `components/` 与主题感知原语。
 - 终端协议、布局、命中测试、选区与帧差分行为属于 `ink/`。
@@ -144,7 +174,7 @@ Cordis config
   字段是 pnpm 版本的唯一真源，CI 与 corepack 都从这里取值。
 - 干净检出安装：先 `git clone --recurse-submodules`（或在已有检出里
   `git submodule update --init --recursive`），再 `pnpm install --frozen-lockfile`。
-  `vendor/dsh-std` 与 `dsh-auth` 是 workspace / `link:` 依赖，子模块为空时安装必失败。
+  `vendor/dsh-std` 是 workspace 依赖，子模块为空时安装必失败。
 - `pnpm-lock.yaml` 是唯一锁文件。npm 消费方不读依赖包的 lockfile，
   `package-lock.json` 已移除（见 #173 后续处理）。
 - 有意改依赖时：用 `pnpm add` 更新 `pnpm-lock.yaml`，检查完整 lockfile diff，
@@ -173,6 +203,15 @@ Cordis config
 
 - 该命令先删除整个 `lib/`，再用 `tsc -p tsconfig.json` 把 `src/` 输出到
   `lib/types/`，最后运行适配边界、上游契约与 patch surface 门禁。
+- 编译前的 vendor 构建（`vendor/dsh-std`、`vendor/mathjax-tex-svg`）由
+  `scripts/build-vendor.mjs` 负责：输入（子模块源码、锁文件、构建命令、Node
+  版本）与产物文件逐字节都和上次成功构建一致时跳过，否则照常重建；
+  `node scripts/build-vendor.mjs --force` 强制重建。指纹记在
+  `node_modules/.cache/dsh-tui/vendor-build.json`。
+- `verify:build` 按 CPU 数并行跑全部门禁，每个门禁独立临时 HOME，输出按门禁
+  整块打印；`pnpm verify:build --jobs 1`（或 `DSH_TUI_VERIFY_JOBS=1`）恢复
+  串行、实时输出，便于排查单个门禁。门禁不得依赖其他门禁留下的状态；确实需要
+  独占机器的门禁登记进 `scripts/run-verify-build.mjs` 的 `SERIAL`，并写明原因。
 - `prepare` 生命周期只服务**源码检出场景**的自举编译（vendor 子模块缺失时
   快速失败，见 scripts/prepare-guard.mjs）。
 - Git URL 依赖安装自 vendoring（#308）起三重阻断（workspace 依赖/子模块/
@@ -213,9 +252,22 @@ CI 另按 `.github/workflows/ci.yml` 的 `changes` 路径白名单分流：`AGEN
 `.agents/skills/` 和源码中的注释不在文档豁免内，仍会触发代码门禁。本地无需
 重建不代表 CI 会跳过；提交时保留所需门禁并如实说明本地验证范围。
 
-`verify:build` 也检查源码输入卫生、渲染原语、主题与活动偏好迁移、状态动画、
-表格布局、mermaid 图表和侧问行为。源码卫生检查只拦截已列明的命名与编译产物回归，不替代
+`verify:build` 也检查源码输入卫生、渲染原语、终端尺寸来源（`ink/` 之外只经
+`useTerminalSize()`）、主题与活动偏好迁移、状态动画、表格布局、mermaid 图表、
+LaTeX 公式和侧问行为。源码卫生检查只拦截已列明的命名与编译产物回归，不替代
 来源或许可证审计。
+
+CI 的测试组按 `scripts/ci-group-timings.json` 的实测耗时分片（每条恰好落在
+一片，表只影响均衡）；新增脚本不必改表，需要重新均衡时整组跑一次
+`node scripts/run-ci-group.mjs <组> --record-timings`。
+
+本地提速可加 `--jobs N`（缺省 1，与 CI 相同）：组内条目并发执行，每条仍有独立的
+HOME 与渲染日志，输出按条整块打印。CI 环境下指定 `--jobs > 1` 会直接以退出码 2 拒绝运行。
+并发下失败的条目会串行重跑一次：重跑通过
+按 CPU 争用导致的偶发失败放行，但会以 `::error` 和汇总标记记下来；重跑仍失败才算
+真失败。`--jobs > 1` 不能与 `--record-timings` 同用（并发下的耗时不准）。日常建议：
+先跑改动区域的聚焦脚本（见下表），再对受影响的组加 `--jobs 4`，合并前跑
+`pnpm build` 和四个测试组全量。
 
 CI 在安装后运行：
 
@@ -229,17 +281,38 @@ node --import tsx/esm scripts/verify-askpanel-layout.tsx
 node --import tsx/esm scripts/repro-toolcards.tsx
 ```
 
+CI 的测试 job 设置 `DSH_TUI_LANG=zh` 作为兜底，但独立执行的回归不能依赖它；
+本地跑尚未固定语言的脚本时，带上 `DSH_TUI_LANG=zh`，否则 lang.json 为 en 或
+locale 为 `en_US` 的机器会误报失败。UI 语言在 import 时按 `DSH_TUI_LANG` →
+`~/.dsh-tui/lang.json` → 系统 locale 解析。断言或定位界面文案的脚本（包括
+「不出现某文案」的否定断言）必须自行固定与断言一致的语言：动态 import 前写
+`process.env.DSH_TUI_LANG = 'zh'` / `'en'`；静态 import 的中文脚本把
+`import './lib/default-lang-zh.mjs'` 放在其他 import 前。不要用 `??=` 保留宿主值，
+也不要按宿主语言选择不同断言。已逐场景调用 `setLang` 的双语回归和仅用中文作
+输入数据的宽度/剪贴板等测试不需要重复设置。
+`node scripts/verify-regression-language.mjs`（先构建，已接入 `channel-ui` CI 组）
+在临时 HOME 下覆盖与脚本预期语言相反的 locale、持久化偏好和环境变量三种启动条件，
+同时保护中文正向断言和英文否定断言。`verify-ime-cursor`、`repro-suggestion-click`
+和 `verify-queue` 的语言修复保留，但在既有固定等待迁移完成前仅独立运行，不进入 CI 矩阵。
+诊断探针不作为此回归组全量执行；需要固定中文输出时显式带上 `DSH_TUI_LANG=zh`。
+
 改动共享渲染、`Chat`、提示/问卷布局、工具卡、主题原语或 Ink core 时，三个
 CI 回归都要跑。窄改动还要跑最近的聚焦脚本：
 
 | 改动区域 | 聚焦验证 |
 | --- | --- |
 | 通用无头屏幕组装 | `pnpm smoke` |
+| 跨代理会话迁移（src/migrate、adapter 解析或事件合成） | `node --import tsx/esm scripts/verify-migrate.mjs` |
+| 共享投影器、DSH 翻译器 | `pnpm verify:projection-golden`、`node --import tsx/esm scripts/verify-dsh-translate.ts`、`pnpm verify:agent-domain` |
+| Claude 后端 | 对应的 `scripts/verify-claude-*`（假 SDK，不花钱）与 `node --import tsx/esm scripts/verify-backend-channel.ts`；`verify:claude-live`/`verify:claude-headless` 调用真实 CLI，只在有意花费时手动跑（钉在 haiku） |
+| 归档语义与后端 OAuth 登出 | `node --import tsx/esm scripts/verify-session-archive.tsx`（真实无头浏览器、假目录），`node --import tsx/esm scripts/verify-backend-logout.ts`（真实 channel/UI facade、假 OAuth host）；不触碰原生登录/真实凭据，DSH/Claude 默认删除语义保持 |
+| Codex 原生后端 | `pnpm verify:codex-contract`、对应 `scripts/verify-codex-*` 的假 app-server/fixture 回归、`node --import tsx/esm scripts/verify-backend-channel.ts`；中立层改动再跑 DSH 黄金投影、Claude 对照与 `verify-agent-event-invariants.ts`。真实 `verify-codex-live.ts` / 探针只经 `codex-cheap-only.mjs` 守卫，真实 ChatGPT 登录/TTY 未跑须单列 |
 | Channel submit/steer/pending 行为 | `node scripts/verify-submit.mjs` |
 | 回退后编辑重发与历史 Inbox 清理 | `pnpm verify:rewind-edit` |
 | 提示队列行为 | `node scripts/verify-queue.mjs` |
 | Goal/todo 投影与渲染 | `node scripts/verify-channel-goal-todo.mjs` + `node scripts/verify-goal-todo.mjs` |
 | Compaction 与折叠 transcript 行 | `node scripts/verify-compact.mjs` |
+| 命令能力事实（compaction / plan / 问卷 / 剪枝的路由与 Help + `/` 的不可用标注） | `pnpm verify:agent-capabilities` |
 | 压缩 × 会话切换生命周期（取消先于 fork 快照、persistence 分类提示） | `node --import tsx/esm scripts/verify-compact-switch.tsx` |
 | 主题加载、持久化与运行时插件接缝 | `node --import tsx/esm scripts/verify-themes.mjs`、`node --import tsx/esm scripts/verify-runtime-themes.ts` |
 | 默认推理强度等偏好链（effortPrefs / settings 默认值） | `node --import tsx/esm scripts/verify-effort-default.ts` |
@@ -251,7 +324,7 @@ CI 回归都要跑。窄改动还要跑最近的聚焦脚本：
 | Hover 事件性能（兴趣边界完整、无兴趣矩形快路径、帧边界/多 root 失效） | `node --import tsx/esm scripts/verify-hover-coalesce.tsx` |
 | 输入框鼠标选区编辑（拖选/Shift+click/双击选词/删除替换/Esc 分层/Ctrl+C 复制、CJK 宽字符与 fold 侧钳制） | `node --import tsx/esm scripts/verify-input-selection.tsx` |
 | Sixel 编码、worker 缓存、缩略图/预览生命周期 | `node --import tsx/esm scripts/verify-terminal-images-sixel.tsx`、`node --import tsx/esm scripts/verify-sixel-transcript.tsx`；耗时对比 `node --import tsx/esm scripts/bench-sixel-encode.tsx` |
-| Markdown 独立节点（表格、mermaid 图）与流式分块间距 | `pnpm verify:table-layout`、`pnpm verify:mermaid-diagram`、`node --import tsx/esm scripts/verify-streaming-markdown-spacing.tsx` |
+| Markdown 独立节点（表格、mermaid 图、公式块）、LaTeX 公式与流式分块间距 | `pnpm verify:table-layout`、`pnpm verify:mermaid-diagram`、`pnpm verify:latex-math`、`node --import tsx/esm scripts/verify-streaming-markdown-spacing.tsx` |
 | 跨进程会话占用账本（失败行为、严格读、锁回收、预约） | `pnpm verify:session-mounts` |
 | 未发送草稿的跨屏交接（快照、光标、图片绑定、归属） | `pnpm verify:composer-draft-handoff`；端到端换屏另见 `node scripts/verify-session-browser.mjs` |
 
@@ -264,7 +337,8 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 
 - 保留的固定 `sleep(` 必须带机读标签 `固定窗:探针` / `固定窗:墙钟` /
   `固定窗:pacing`（定义见该文件头部），写在 sleep 同行尾注释或紧贴上方注释里。
-- `verify:fixed-window` 门禁扫描 `scripts/run-ci-group.mjs` 登记的脚本，无标签即失败。
+- `verify:fixed-window` 门禁扫描 `scripts/run-ci-group.mjs` 与
+  `scripts/verify-regression-language.mjs` 登记的脚本（含矩阵子进程），无标签即失败。
 - `固定窗:待迁移` 是存量技术债（清零跟踪 #791），按文件计数锁在
   `scripts/fixed-window.baseline.json`：任一文件增加即失败，旧债减少不能抵消。
 - 清掉一处后用 `--write-baseline` 重写基线并一起提交。新代码不得使用。
@@ -365,6 +439,13 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 - 本地 slash 命令在 `src/commands.ts` 声明、`Chat.tsx` 分发；注册表命令运行时
   合并。新增命令时同步更新声明、分发、帮助/文档与 i18n 描述（`src/i18n.ts` 的
   `cmd-desc-<name>`，只写 zh——en 回退声明原文）。
+- 一切界面文案必须走 i18n 字典（`src/i18n.ts` 的 `t(key, params)`，zh/en 双语
+  必填）。不要在组件里硬编码整句英文——即使当前只有两种语言，也别漏走字典：
+  `scripts/verify-i18n.ts` 会拦死键、占位符漂移与字典外的英文整句字面量
+  （issue #980 的漏网形态），`scripts/verify-toolcard-i18n.tsx` 在渲染侧证明
+  文案真的本地化。工具显示名走 `tool-name-*` 家族（在
+  AssistantToolUseMessage 的字面键映射表登记）；新增第三语言的操作清单见
+  i18n.ts 头部注释「Adding a language」。
 - 技能命令不进本地名单：DSH 发现的 user-invocable 技能经注册表合并为直调命令，
   命令名必须是可解析的 kebab-case，且不能与本地命令撞名。
 - `ask_user_question` 必须经 `QuestionStore` 串行化；并发问题刻意 FIFO 呈现，
@@ -404,16 +485,19 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 
 | 改动 | 需要同步 |
 | --- | --- |
-| 插件配置或环境行为 | `src/index.ts`、运行时消费、`cordis.patch.yml`、`cordis.yml`、`README.md`、`README_ZH.md` |
+| /settings 可改的设置（新增/改说明） | 只在 `src/settings/definitions.ts` 写一次（中英标题与说明、类型、选项；按 key 排序），Config Schema 在 `src/dsh-adapter/index.ts`，运行时 format/parse 留在 `src/dsh-adapter/plugin.ts` 的字段里。`pnpm compile` 生成随 npm 包发布的 `lib/settings.json`，官网设置参考由它生成；`verify:settings` 检查定义完整。官网参考上线前，`docs/user-guide{,.en}.md` 的设置表仍需同步一行 |
+| 其他插件配置或环境行为 | `src/dsh-adapter/index.ts`、运行时消费、`cordis.patch.yml`、`cordis.yml`（注释只写示例值与必要语义）、`README.md`、`README_ZH.md` |
 | Slash 命令或快捷键 | `src/commands.ts`、`src/screens/Chat.tsx`、帮助/输入组件、双 README、相关技能映射/测试 |
 | 主题契约、插件接缝或持久化主题行为 | `src/theme.ts`、`src/themeCatalog.ts`、`src/dsh-adapter/themes.ts`、所有色板、主题 provider/picker、自定义主题解析器、主题验证、双 README、插件文档 |
-| 会话/channel 行为 | `src/dsh-adapter/channel.ts`、受影响的 UI 投影、编译产物、聚焦 channel/回放回归 |
+| 会话/channel 行为 | 后端中立的放 `src/dsh-adapter/channel/core/`，DSH 专属的放 `channel/extensions.ts` 及其 specialist、受影响的 UI 投影、编译产物、聚焦 channel/回放回归（含 `verify-backend-channel`、`verify-channel-rollback`） |
 | 渲染器/布局行为 | `src/ink/` 或 Yoga 源、编译产物、CI 回归、聚焦滚动/resize/PTY 探针 |
 | 技能发现或呈现 | DSH adapter、slash 命令合并、`/skills` 与相关回归；项目维护技能放 `.agents/skills/` 且不得加入 npm 包 |
-| 用户可见的文档化行为 | 中英文 README，外加适用的配置注释/帮助文本 |
-| 贡献入口或 PR 门禁 | `docs/contributing.md`、`docs/contributing.en.md`、`.github/workflows/pr-gate.yml`、`.github/scripts/pr-intake/`、`.github/APPROVED_CONTRIBUTORS` |
+| 用户可见的文档化行为 | 中英文 README，适用的配置注释/帮助文本与 `docs/` 双语页；新增用户手册同时改 `scripts/guide-sources.mjs` 清单、`guide/dsh-tui-guide/SKILL.md` 路由，再 `node scripts/build-guide.mjs` / `node scripts/verify-guide.mjs`（不手改副本） |
+| 贡献入口或 PR 门禁 | `.mergify.yml`、`docs/contributing.md`、`docs/contributing.en.md`、`.github/workflows/pr-gate.yml`、`.github/scripts/pr-intake/`、`.github/APPROVED_CONTRIBUTORS` |
 | 包版本或依赖 | `package.json`、`pnpm-lock.yaml`、适用时的生成/发布产物；不要顺手搅动旧 npm 锁文件 |
-| 上游验证线 bump | `src/dsh-adapter/contract.ts`、`package.json` peer+dev 两组范围、随包内置的 `dsh-auth/package.json` 与 `dsh-auth/pnpm-lock.yaml`、`pnpm-workspace.yaml`、`.github/workflows/ci.yml` alpha-compat 的上游 SHA、`scripts/verify-{alpha-source,patch-surface,web-coexistence,upstream-contract}` 内的版本常量、`patch-surface.snapshot.json`、`ADAPTER.md`、`docs/user-guide.md`；步骤见 [ADAPTER.md](../ADAPTER.md) 升级流程 |
+| Claude Agent SDK 版本 | `package.json` 的 optional peer 与 dev 两处精确版本、`pnpm-lock.yaml`、`src/backends/claude/contract.ts`（`VALIDATED_SDK_VERSION`/`VALIDATED_CLI_VERSIONS`）、`docs/claude-backend{,.en}.md` 的安装命令；`verify:claude-contract` 检查一致 |
+| Codex 协议/验证版本 | 用 `scripts/codex-protocol-sync.mjs` 正规生成类型、更新 `src/backends/codex/contract.ts`、方法表/fixture/脱敏与 live/replay 回归、双语 Codex 用户说明；不添加 Codex SDK npm 依赖，不拿最低版本当全部实验接口已验证 |
+| 上游验证线 bump | `src/dsh-adapter/contract.ts`、`src/dsh-adapter/oauth/`、`package.json` peer+dev 两组范围、`pnpm-workspace.yaml`、`.github/workflows/ci.yml` alpha-compat 的上游 SHA、`scripts/verify-{alpha-source,patch-surface,web-coexistence,upstream-contract}` 内的版本常量、`patch-surface.snapshot.json`、`ADAPTER.md`、`docs/user-guide.md`；步骤见 [ADAPTER.md](../ADAPTER.md) 升级流程 |
 
 ## Git 与发布安全（Git And Release Safety）
 
@@ -427,10 +511,18 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 - 发布由 tag 驱动：`.github/workflows/publish.yml` 要求 `v*` tag 与
   `package.json` 版本完全一致，随后构建、跑聚焦回归并发布 npm。版本变更与
   tag 是发布操作，不是日常清理。
-- Release note 带贡献者署名：建 GitHub Release 用
-  `gh release create vX.Y.Z --notes-file notes.md --generate-notes`。
-  - 手写摘要在前，GitHub 在后自动追加 What's Changed（PR 标题 + 作者 + 链接）、
-    New Contributors 与 Full Changelog；`.github/release.yml` 从自动清单里排除 bot。
+- Release note 带贡献者署名，GitHub Release 不手建：`publish.yml` 发布 npm 后
+  自动创建该 tag 的 Release，正文用 GitHub Release Notes API 生成 What's Changed
+  （PR 标题 + 作者 + 链接）、New Contributors 与 Full Changelog；
+  `.github/release.yml` 从自动清单里排除 bot。Release 缺 `SHA256SUMS` 所列任一资产时，
+  同一 run 构建并上传整合包（重跑也会补齐）。
+  - 可选手写摘要：打 tag 前提交 `.github/release-notes/vX.Y.Z.md`，自动清单接在它后面；
+    没有该文件就只有自动清单。
+  - 自动清单前有 `<!-- dsh-tui:generated-notes -->` 标记。Release 已存在（重跑、或维护者
+    先手建）时只更新不失败：有该标记或 `## What's Changed` 就不动；否则把自动清单追加
+    在原正文后面，绝不覆盖。
+  - 补发已有 tag 的 Release note：Actions → Publish → Run workflow → 填 tag，
+    只处理正文，不发布 npm、不构建整合包。
   - 手写摘要中来自外部贡献者的条目在末尾标 `（#PR号 by @用户名）`，
     维护者自己的条目不标；裸写 `#123` 与 `@user`，GitHub 渲染成链接。
 - 移交代码改动前检查 `git diff --check`、源码 diff、生成 diff 与 `git status`，

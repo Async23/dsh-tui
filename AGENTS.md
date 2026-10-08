@@ -9,9 +9,15 @@ dsh-TUI 是 DeepSeek Harness 的终端界面插件：零核心改动、纯插件
 ```
 src/index.ts        公共 Cordis 插件入口、配置 Schema、对运行时实现的惰性移交
 src/dsh-adapter/plugin.ts  运行时实现：TTY 校验、服务注册、Agent 创建/恢复、React 树挂载与收尾
-src/dsh-adapter/channel.ts  会话事件 → 视图投影 + 非 React 动作面（submit/steer/rewind/resume/切换）
+src/dsh-adapter/channel.ts  Channel 入口：后端中立核心（channel/core/）+ 仅 DSH 会话挂载的扩展（channel/extensions.ts）
+src/agent/          后端中立的会话领域：AgentEvent、AgentSession、类型化能力（无 I/O、无厂商依赖）
+src/channel/        共享投影器（AgentEvent → 视图状态）与审批/问卷等中立 store
+src/backends/claude/  实验性 Claude Agent SDK 后端；多后端结构见 docs/agent-backend-design.md
+src/backends/codex/  Codex app-server 原生后端：协议、hub、翻译器与能力；不捆绑 Codex npm 依赖
+src/dsh-adapter/oauth/    内置订阅 OAuth：provider 路由、/auth、凭据存储与问卷桥接
 src/screens/        Chat.tsx 交互协调器与状态栏呈现
 src/components/     功能组件；design-system/ 是主题感知原语
+src/components/sidePanel/  侧栏分栏（几何、标签栏、PanelHost、键盘接缝）与内置面板适配
 src/themeCatalog.ts  内置、静态 JSON 与运行时插件主题的统一列表/解析
 src/ui.ts           本地渲染器、主题化 Box/Text 与公共 TUI 原语的首选门面
 src/ink/            Ink 系渲染器与终端实现——敏感基础设施，改动聚焦并附专用回归
@@ -23,7 +29,7 @@ src/*Prefs.ts 等    ~/.dsh-tui 下的持久化用户偏好与会话元数据
 presets/            随包分发的 preset（liangshen）
 bin/dsh-tui.js      dsh-tui 直达命令入口
 vendor/dsh-std      vendored 依赖（frozen lockfile 构建，见 scripts/build 相关脚本）
-dsh-ecosystem-spec/ 生态适配规范子项目（自带 CONTRIBUTING 与治理文档）
+tui-profile/        仓内 TUI Profile：插件准入 + 私有协议定义（纯文件，随本仓代码修订）
 cordis.patch.yml    profile 安装的包级覆盖层；行序、行 ID 与 insert/override 语义关键
 cordis.yml          直接 Cordis/DSH 启动的完整裸组合示例
 scripts/            无头回归、复现环境、探针与诊断；运行前先读脚本头部说明
@@ -37,9 +43,9 @@ lib/                由 src/ 生成的产物——忽略入库、随 npm 分发�
 
 ```sh
 pnpm install --frozen-lockfile  # pnpm 11；Node ^22.19 || >=24（CI 用 Node 24）
-pnpm compile                    # 干净编译 src/ → lib/types/（先删整个 lib/）
+pnpm compile                    # 干净编译 src/ → lib/types/（先删整个 lib/；vendor 构建未变则跳过）
 pnpm build                      # compile + 全部构建门禁
-pnpm verify:build               # 构建门禁（边界/契约/patch surface/plugin 系列等），不重复编译
+pnpm verify:build               # 构建门禁（边界/契约/patch surface/plugin 系列等），并行、不重复编译；--jobs 1 串行排查
 pnpm verify:package             # npm tarball 目标完整 + 入口 smoke import
 pnpm verify:release             # 个人版下载、校验、更新来源的离线回归
 pnpm release:pack               # 生成 dist-release/，须先 build
@@ -53,7 +59,7 @@ pnpm smoke                      # 通用无头屏幕组装冒烟
 
 ## 上游边界与契约
 
-- 官方 `@deepseek-ai/*` 包只允许在 `src/dsh-adapter/` 内 import；UI 层（`screens/`、`components/`、`ink/`、`hooks/`、`utils/`、`terminal-utils/`）一律通过 adapter facade 间接接触上游。`pnpm run verify:boundary` 扫描全部源码，发现越界即失败。
+- 厂商包按目录隔离：`@deepseek-ai/*` 只在 `src/dsh-adapter/`，`@anthropic-ai/*` 只在 `src/backends/claude/`；后端中立层 `src/agent/`、`src/channel/` 不 import 厂商包、`src/dsh-adapter/` 与 `src/backends/`；UI 层不 import `src/backends/`，从 `src/dsh-adapter/` 只取类型（存量值 import 的 allowlist 只减不增）。完整规则表见 [ADAPTER.md](ADAPTER.md)；`pnpm run verify:boundary` 扫描全部源码，越界即失败。
 - 校验版本线、peer 范围与 blessed 包清单在 `src/dsh-adapter/contract.ts`；本地检测到 drift 打警告，CI 上 `verify:contract` 直接失败。
 - 运行时或发布类型引用的 `@deepseek-ai/*` 框架包必须同时是 peer 与 dev 依赖（`verify:manifest-deps` 门禁）；仅测试/脚本使用的框架包只进 dev 依赖。
 - `cordis.patch.yml` 对官方行的干预已快照到 `patch-surface.snapshot.json`，改动需保持同步（`verify:patch-surface` 门禁）。
@@ -61,14 +67,16 @@ pnpm smoke                      # 通用无头屏幕组装冒烟
 ## 约定与红线
 
 - **源码与产物分离**：改 `src/`，绝不直接改 `lib/`，不提交 `lib/` 下的生成结果。
-- **真源投影**：持久化的 DSH 会话事件日志是 transcript 真源；不要插入可能与持久化分歧的乐观助手/工具事实。保留事件顺序、序列锚点与 call-ID 匹配。
-- **职责分层**：投影与 TUI 动作属于 `dsh-adapter/channel.ts`，交互模式与按键优先级属于 `Chat.tsx`，终端协议、布局与帧差分属于 `ink/`。不要为界面好写而在 TUI 里重实现 DSH 域服务——经 channel 或既有注册表缝隙适配。
+- **真源投影**：后端的持久化会话记录（DSH 会话事件日志、Claude 的转录文件）是 transcript 真源；不要插入可能与持久化分歧的乐观助手/工具事实。保留事件顺序、序列锚点与 call-ID 匹配。
+- **职责分层**：投影属于共享投影器 `src/channel/projection.ts`，TUI 动作属于 channel 核心 `dsh-adapter/channel/core/` 与 DSH 扩展 `channel/extensions.ts`（新后端经会话能力接入，不写 channel 代码），交互模式与按键优先级属于 `Chat.tsx`，终端协议、布局与帧差分属于 `ink/`。不要为界面好写而在 TUI 里重实现 DSH 域服务——经 channel 或既有注册表缝隙适配。
 - **注册即效应**：资源经 Cordis 注册，用 `ctx.effect` 或既有单一退出漏斗清理。渲染失败必须响亮且非零退出；正常退出前恢复终端状态（raw 模式、光标、alt-screen、同步输出、鼠标、焦点）。
 - **渲染安静**：TUI 活动期间不加 `console.log` 或 stdout 诊断；用 opt-in 的 stderr/调试路径（`DSH_TUI_DEBUG`、`DSH_TUI_RENDER_LOG`）。
 - **TypeScript**：纯 ESM，相对导入用 `.js` 后缀；纯类型依赖优先 `import type`；不因 Ink 系渲染器的放宽而引入 `any`，用 `unknown` 收窄；遵循现有两空格、单引号、无分号风格，不批量格式化渲染器文件。
 - **终端宽度是显示单元宽度**，不是 JS 字符串长度；考虑 ANSI 转义、组合字符、emoji 与东亚宽字符，用仓库的宽度/切片/换行辅助函数。
+- **尺寸只有一个来源**：`ink/` 之外一律经 `useTerminalSize()` 取尺寸（页边距、分栏会逐层收窄它），不直接读 `stdout.columns/rows` 或自行监听 resize；确需物理终端的，登记进 `verify:terminal-size-source` 的 `ALLOWED` 并写明理由。
 - **双语文档同步**：行为、配置、快捷键与限制在 `README.md`（英文默认）与 `README_ZH.md`（中文）两版同步。插件配置、slash 命令、主题、渲染器、技能发现的跨文件同步清单见 [docs/contributing.md](docs/contributing.md)。
 - **密钥**：交互启动读取 `DEEPSEEK_API_KEY`；诊断只能报告是否已设置，绝不泄露完整值。
+- **PR**：创建或更新 PR（包括改写描述）一律使用 `.agents/skills/pr`。
 - **Git 安全**：只暂存显式路径，不用 `git add .`/`git add -A`；不运行破坏性清理命令；未经要求不 commit、不打 tag、不 push、不发布。个人发布由 `v*-async23.*` tag 驱动且必须与 `package.json` 版本完全一致；只发布本 fork 的 GitHub Release，不发布上游 npm 包。用户明确要求完整发版时包含 commit、tag、push 和 Release。
 
 ## 编辑本文件

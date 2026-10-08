@@ -87,7 +87,8 @@ try {
   await test('progressive recovery can still prove a long boot-only log empty', async () => {
     const { path, source } = fixture('long-boot', Array.from({ length: HEAD_MAX_FRAMES }, () => frame([policy])))
     assert.equal(digestSession(path, cwd).hasPrompt, true, 'bounded read is inconclusive')
-    assert.equal((await listSummaries(source))[0]!.hasPrompt, false, 'complete recovery proves empty')
+    assert.equal((await listSummaries(source))[0]!.hasPrompt, true, 'foreground keeps incomplete evidence visible')
+    assert.equal(await settled(() => readIndex().get('long-boot')?.derived?.hasPrompt === false), true, 'background recovery proves empty')
   })
   for (const titled of [false, true]) {
     await test(`frame limit, title=${titled}: a small log is not necessarily empty`, async () => {
@@ -172,7 +173,7 @@ try {
       const id = SessionId(`persisted-${compression}`)
       try {
         assert.ok(await settled(() => ctx.get('sessionPersistence') !== undefined))
-        const session = Session.create(id, [], { version: 3, id, createdAt: 1, cwd, isSeeded: false })
+        const session = Session.create(id, [], { ...Session.create(id).header, createdAt: 1, cwd })
         session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'durable input' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
         const writer = await ctx.sessionPersistence.create(session.header)
         try { await writer.append(session.snapshotEvents()); await writer.flush() }

@@ -1,4 +1,5 @@
 import { t } from '../i18n.js'
+import { primaryComboString } from './keymap.js'
 
 /**
  * Per-line character budget for transcript text.
@@ -38,7 +39,7 @@ function formatCount(value: number): string {
 
 /**
  * Clip every line of `text` longer than `max` characters, appending an
- * inline `… +N chars (ctrl+o to expand)` marker to the clipped line.
+ * inline localized fold marker (`long-line-folded`) to the clipped line.
  *
  * Line boundaries are preserved (never re-flowed, never merged), so the
  * result stays valid input for the markdown renderer and for diff-style
@@ -82,7 +83,7 @@ export function foldLongLines(text: string, max: number = LONG_LINE_MAX_CHARS): 
         hiddenChars += hidden
         foldedLines++
         out.push(text.slice(lineStart, end))
-        out.push(` ${t('long-line-folded', { n: formatCount(hidden) })}`)
+        out.push(` ${t('long-line-folded', { n: formatCount(hidden), key: primaryComboString('transcript') })}`)
       } else {
         out.push(text.slice(lineStart, lineEnd))
       }

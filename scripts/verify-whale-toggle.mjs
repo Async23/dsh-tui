@@ -15,6 +15,7 @@ const [
   { LogoHeader },
   { createChannel },
   { settle },
+  { applyCompanionSkin },
 ] = await Promise.all([
   import('node:assert'),
   import('node:stream'),
@@ -23,7 +24,12 @@ const [
   import('../src/components/MessageList.js'),
   import('../src/dsh-adapter/channel.js'),
   import('./lib/term-test.mjs'),
+  import('../src/tuiDisplayPrefs.js'),
 ])
+// 本脚本测的是 dsh-tui.whale 的鲸鱼路径：经 LogoHeader（不透传
+// companionSkin）渲染，把吉祥物皮肤用 store 钉在 'whale'，避免默认
+// deepy 皮肤把艺术槽换成字母格宠物（那属 verify-splash-mascot 的范围）。
+applyCompanionSkin('whale')
 
 let checks = 0
 function check(name, test) {
@@ -94,7 +100,7 @@ const WHALE_OUTLINE = '\x1b[38;2;20;38;96m'
 
 // `ready`（可选）：call site 断言里比默认文字条件更强的正向条件必须并入
 // 等待谓词（#561 弱条件分叉），否则 settle 等到文字就返回、断言到旧帧。
-async function renderHeader({ columns, whale, ready }) {
+async function renderHeader({ columns, whale, ready, expect }) {
   const stdout = new FakeOutput(columns)
   const stderr = new FakeOutput(columns)
   const props = { model: 'whale-model-probe', cwd: '/whale/cwd' }
@@ -113,11 +119,12 @@ async function renderHeader({ columns, whale, ready }) {
       patchConsole: false,
     },
   )
+  // 默认等「文字列画出来了」；纯鲸鱼档没有文字列，用 expect 换掉这个前提。
+  const settled = expect ?? (plain => plain.includes('dsh-TUI') && plain.includes('whale-model-probe'))
   await settle(() => {
     const raw = stdout.writes.join('')
     const plain = stripAnsi(raw)
-    return plain.includes('dsh-TUI') && plain.includes('whale-model-probe')
-      && (ready === undefined || ready(raw))
+    return settled(plain) && (ready === undefined || ready(raw))
   })
   const raw = stdout.writes.join('')
   await instance.unmount()
@@ -144,24 +151,44 @@ check('setWhale(true) restores the default view', () => {
 })
 
 // Real LogoHeader -> LogoV2 rendering: default, explicit opt-out, and narrow fallback.
-const wideDefault = await renderHeader({ columns: 100, ready: raw => raw.includes(WHALE_OUTLINE) })
+// 宽度按**阶梯**取，不按字体取：120 列放得下任何一款轮换字体与鲸鱼并排
+// （最宽的 wide 需要 40 + 2 + 71 = 113 列），35 列连大字都放不下——这样断言
+// 与「今天轮到哪款字体」无关。
+const BOTH_FIT_COLUMNS = 120
+const NOTHING_FITS_COLUMNS = 35
+const wideDefault = await renderHeader({ columns: BOTH_FIT_COLUMNS, ready: raw => raw.includes(WHALE_OUTLINE) })
 check('wide LogoHeader shows whale by default', () => {
   assert.ok(wideDefault.raw.includes(WHALE_OUTLINE), 'whale palette marker missing')
   assert.ok(wideDefault.plain.includes('dsh-TUI'), 'text logo missing')
 })
 
-const wideDisabled = await renderHeader({ columns: 100, whale: false })
+const wideDisabled = await renderHeader({ columns: BOTH_FIT_COLUMNS, whale: false })
 check('LogoHeader forwards whale=false while preserving the text logo', () => {
   assert.ok(!wideDisabled.raw.includes(WHALE_OUTLINE), 'whale palette marker still rendered')
   assert.ok(wideDisabled.plain.includes('dsh-TUI'), 'text logo missing')
   assert.ok(wideDisabled.plain.includes('whale-model-probe'), 'header details missing')
 })
 
-const narrowDefault = await renderHeader({ columns: 63 })
-check('narrow terminal hides whale but preserves the text logo', () => {
-  assert.ok(!narrowDefault.raw.includes(WHALE_OUTLINE), 'whale should hide below 64 columns')
+const narrowDefault = await renderHeader({ columns: NOTHING_FITS_COLUMNS })
+check('narrow terminal drops the whale and falls back to the plain title', () => {
+  assert.ok(!narrowDefault.raw.includes(WHALE_OUTLINE), 'whale should hide when the art no longer fits')
   assert.ok(narrowDefault.plain.includes('dsh-TUI'), 'text logo missing')
   assert.ok(narrowDefault.plain.includes('whale-model-probe'), 'header details missing')
+})
+
+// 阶梯独有的一档：48 列时大字放不下（最窄的 classic/slab 也要 54 列）、鲸鱼还放得下
+// ——只渲染鲸鱼，文字列整列不画（画出来只会是 `✦ dsh…` 这种残句）。对任何一款轮换
+// 字体都是这一档，所以这与"今天轮到哪款字体"无关。
+const WHALE_ONLY_COLUMNS = 48
+const whaleOnly = await renderHeader({
+  columns: WHALE_ONLY_COLUMNS,
+  expect: plain => !plain.includes('dsh-TUI'),
+  ready: raw => raw.includes(WHALE_OUTLINE),
+})
+check('whale-only tier renders the art and drops the whole text column', () => {
+  assert.ok(whaleOnly.raw.includes(WHALE_OUTLINE), 'whale missing in the whale-only tier')
+  assert.ok(!whaleOnly.plain.includes('dsh-TUI'), 'text column should not render in the whale-only tier')
+  assert.ok(!whaleOnly.plain.includes('whale-model-probe'), 'header details should not render either')
 })
 
 console.log(`\nAll ${checks} whale-toggle checks passed.`)

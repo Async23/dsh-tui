@@ -28,6 +28,7 @@ import { homedir, tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import ts from 'typescript'
 
 let failed = 0
 function check(name, ok, extra = '') {
@@ -58,9 +59,41 @@ const {
   getStandaloneBinaryPath,
   getStandaloneAssetName,
 } = await import('../lib/types/update.js')
+const { KERNEL_IDS } = await import('../lib/types/kernelPrefs.js')
+const launcherPath = fileURLToPath(new URL('../bin/dsh-tui.js', import.meta.url))
+const launcherAst = ts.createSourceFile(launcherPath, readFileSync(launcherPath, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+const launcherKernelIds = launcherAst.statements.flatMap(statement =>
+  ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
+).find(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === 'KERNEL_IDS')?.initializer
+check(
+  'launcher kernel ids stay aligned with the compiled registry',
+  launcherKernelIds !== undefined && ts.isArrayLiteralExpression(launcherKernelIds)
+    && launcherKernelIds.elements.every(ts.isStringLiteral)
+    && JSON.stringify(launcherKernelIds.elements.map(element => element.text)) === JSON.stringify(KERNEL_IDS),
+)
 const compiledModulePath = fileURLToPath(new URL('../lib/types/update.js', import.meta.url))
 const compiledShellQuotePath = fileURLToPath(new URL('../lib/types/utils/shellQuote.js', import.meta.url))
 const compiledPathsPath = fileURLToPath(new URL('../lib/types/utils/paths.js', import.meta.url))
+// update.js imports stripResumeArgs from here (a kernel switch must not hand
+// the replacement this kernel's --resume flags) — the scratch mirror has to
+// carry it or the copy fails to link.
+const compiledSessionHistoryPath = fileURLToPath(new URL('../lib/types/sessionHistory.js', import.meta.url))
+// update.js imports KERNEL_SWITCH_HANDOFF_ENV from here (the kernel-switch
+// handoff is one-shot) — the scratch mirror has to carry it or the copy
+// fails to link.
+const compiledKernelPrefsPath = fileURLToPath(new URL('../lib/types/kernelPrefs.js', import.meta.url))
+// update.js imports the kernel-switch transition events (S05 MVE) from
+// handoffEvents.js, which in turn pulls kernelCatalog.js (display names)
+// and i18n.js (bilingual copy). The scratch mirrors must carry all of
+// them or the copy fails to link; npm deps (chalk, semver) resolve via
+// the scratch node_modules junction below.
+const compiledHandoffEventsPath = fileURLToPath(new URL('../lib/types/handoffEvents.js', import.meta.url))
+// update.js imports the ACK protocol (S05 完整版) from handoffAck.js and
+// EXIT_ALT_SCREEN from the ink dec sequences — both must ride the mirror.
+const compiledHandoffAckPath = fileURLToPath(new URL('../lib/types/handoffAck.js', import.meta.url))
+const compiledTermioDir = fileURLToPath(new URL('../lib/types/ink/termio', import.meta.url))
+const compiledKernelCatalogPath = fileURLToPath(new URL('../lib/types/components/kernelCatalog.js', import.meta.url))
+const compiledI18nPath = fileURLToPath(new URL('../lib/types/i18n.js', import.meta.url))
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 
 /**
@@ -70,10 +103,19 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url))
  */
 function copyUpdateModule(dstDir) {
   mkdirSync(join(dstDir, 'utils'), { recursive: true })
+  mkdirSync(join(dstDir, 'components'), { recursive: true })
   cpSync(compiledModulePath, join(dstDir, 'update.js'))
   cpSync(new URL('../lib/types/release.js', import.meta.url), join(dstDir, 'release.js'))
   cpSync(compiledShellQuotePath, join(dstDir, 'utils', 'shellQuote.js'))
   cpSync(compiledPathsPath, join(dstDir, 'utils', 'paths.js'))
+  cpSync(compiledSessionHistoryPath, join(dstDir, 'sessionHistory.js'))
+  cpSync(compiledKernelPrefsPath, join(dstDir, 'kernelPrefs.js'))
+  cpSync(compiledHandoffEventsPath, join(dstDir, 'handoffEvents.js'))
+  cpSync(compiledHandoffAckPath, join(dstDir, 'handoffAck.js'))
+  // dec.js 拉着 csi/ansi 的序列常量链——整个 termio 目录随镜像走。
+  cpSync(compiledTermioDir, join(dstDir, 'ink', 'termio'), { recursive: true })
+  cpSync(compiledKernelCatalogPath, join(dstDir, 'components', 'kernelCatalog.js'))
+  cpSync(compiledI18nPath, join(dstDir, 'i18n.js'))
 }
 
 // ---- installedTuiVersion: compiled layout is this module's own real layout
@@ -335,7 +377,8 @@ check(
 // ---- pnpm minimumReleaseAgeExclude pre-seed: pnpm ≥11 delays installs of
 // packages published within minimumReleaseAge (24h default) — on release day
 // that gate refuses the exact version /update pins, so the update flow must
-// exempt this package at the exact target before pnpm runs.
+// exempt this package at the exact versions pnpm checks before the swap: the
+// target AND the still-locked old version (issue #1205).
 {
   const DSH_HOME_BACKUP = process.env.DSH_HOME
   const ageScratch = mkdtempSync(join(tmpdir(), 'verify-releaseage-'))
@@ -371,8 +414,8 @@ check(
       JSON.stringify(outcome),
     )
 
-    // Case 3: a stale entry for this package is replaced (no accumulation)
-    // while foreign entries survive.
+    // Case 3: without a second exemption a stale own entry is replaced (no
+    // accumulation) while foreign entries survive.
     writeFileSync(yamlPath, "minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.9.3'\n")
     outcome = ensureProfileReleaseAgeExclude('tui', '0.10.0-beta.1')
     text = readFileSync(yamlPath, 'utf8')
@@ -382,6 +425,88 @@ check(
         text.includes("- 'x@1.0.0'") &&
         text.includes("- '@deepseek-harness-tui/dsh-tui@0.10.0-beta.1'") &&
         !text.includes('0.9.3'),
+      `${JSON.stringify(outcome)} :: ${text}`,
+    )
+
+    // Case 3b: the same entry is KEPT when it is the second exemption
+    // (alsoExempt) — the locked version still inside the release-age window.
+    writeFileSync(yamlPath, "minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.9.3'\n")
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.10.0-beta.1', '0.9.3')
+    text = readFileSync(yamlPath, 'utf8')
+    check(
+      'releaseAge: alsoExempt keeps the locked version alongside the target',
+      outcome !== undefined && outcome.changed === true &&
+        text.includes("- 'x@1.0.0'") &&
+        text.includes("- '@deepseek-harness-tui/dsh-tui@0.9.3'") &&
+        text.includes("- '@deepseek-harness-tui/dsh-tui@0.10.0-beta.1'"),
+      `${JSON.stringify(outcome)} :: ${text}`,
+    )
+
+    // Case 3c: idempotent once both exemptions are present — no rewrite.
+    const bothBefore = readFileSync(yamlPath, 'utf8')
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.10.0-beta.1', '0.9.3')
+    check(
+      'releaseAge: second run with both exemptions is a no-op',
+      outcome !== undefined && outcome.changed === false && readFileSync(yamlPath, 'utf8') === bothBefore,
+      JSON.stringify(outcome),
+    )
+
+    // Case 3d: alsoExempt equal to the target (or empty) adds nothing twice.
+    writeFileSync(yamlPath, "minimumReleaseAgeExclude:\n  - '@deepseek-harness-tui/dsh-tui@0.10.0-beta.1'\n")
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.10.0-beta.1', '0.10.0-beta.1')
+    text = readFileSync(yamlPath, 'utf8')
+    check(
+      'releaseAge: alsoExempt === version keeps a single entry',
+      outcome !== undefined && outcome.changed === false &&
+        (text.match(/@deepseek-harness-tui\/dsh-tui@0\.10\.0-beta\.1/g) ?? []).length === 1,
+      `${JSON.stringify(outcome)} :: ${text}`,
+    )
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.10.0-beta.1', '')
+    check(
+      'releaseAge: empty alsoExempt is ignored',
+      outcome !== undefined && outcome.changed === false && readFileSync(yamlPath, 'utf8') === text,
+      JSON.stringify(outcome),
+    )
+
+    // Case 3e (issue #1205): two releases inside the window — the locked old
+    // version is exempted together with the target, so the lockfile entry
+    // pnpm verifies before the swap installs too. Target-first order is
+    // load-bearing on pnpm 11.7.x, which honours only the first entry per
+    // package (11.21.x applies every entry regardless of order): the target
+    // is the version the swap itself resolves, and the locked version may be
+    // a dev build the registry cannot resolve at all.
+    writeFileSync(yamlPath, "minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.11.2'\n")
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.12.0', '0.11.2')
+    text = readFileSync(yamlPath, 'utf8')
+    check(
+      'releaseAge: same-day double release exempts locked + target (#1205)',
+      outcome !== undefined && outcome.changed === true &&
+        text.includes("- 'x@1.0.0'") &&
+        text.includes("- '@deepseek-harness-tui/dsh-tui@0.11.2'") &&
+        text.includes("- '@deepseek-harness-tui/dsh-tui@0.12.0'") &&
+        text.indexOf("- '@deepseek-harness-tui/dsh-tui@0.12.0'") <
+          text.indexOf("- '@deepseek-harness-tui/dsh-tui@0.11.2'"),
+      `${JSON.stringify(outcome)} :: ${text}`,
+    )
+    const doubleBefore = readFileSync(yamlPath, 'utf8')
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.12.0', '0.11.2')
+    check(
+      'releaseAge: double-release rerun is a no-op',
+      outcome !== undefined && outcome.changed === false && readFileSync(yamlPath, 'utf8') === doubleBefore,
+      JSON.stringify(outcome),
+    )
+
+    // Case 3f: a later update drops the entry the lockfile no longer pins —
+    // the exempt list tracks locked + target, not every version ever exempt.
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.13.0', '0.12.0')
+    text = readFileSync(yamlPath, 'utf8')
+    check(
+      'releaseAge: older own entry dropped once no longer needed',
+      outcome !== undefined && outcome.changed === true &&
+        text.includes("- 'x@1.0.0'") &&
+        text.includes("- '@deepseek-harness-tui/dsh-tui@0.12.0'") &&
+        text.includes("- '@deepseek-harness-tui/dsh-tui@0.13.0'") &&
+        !text.includes('0.11.2'),
       `${JSON.stringify(outcome)} :: ${text}`,
     )
 

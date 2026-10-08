@@ -62,6 +62,18 @@ const ownPackage = readJson(join(ownDir, 'package.json'))
 const ownVersion = ownPackage?.name === '@deepseek-harness-tui/dsh-tui' ? ownPackage.version : undefined
 const PACKAGE = '@deepseek-harness-tui/dsh-tui'
 const PROFILE = 'dsh-tui'
+// Kept local so the launcher also works without compiled modules.
+const KERNEL_IDS = ['dsh', 'claude', 'codex']
+
+// 随包用户手册（guide/，见 scripts/build-guide.mjs）：交给 dsh 当内核
+// dsh-skill-filesystem 的随包技能根（rank 600 的 bundledSkillDir 默认取这个
+// 环境变量）。会话里模型常驻只多一行技能目录，用户真问到 dsh-tui 时才按需
+// 读手册。用户自己设过就不覆盖；包里没有 guide/（旧安装/裁剪包）时保持原样。
+const withGuideSkillDir = env => {
+  if (env.DSH_BUNDLED_SKILL_DIR !== undefined) return env
+  const guideDir = join(ownDir, 'guide')
+  return existsSync(guideDir) ? { ...env, DSH_BUNDLED_SKILL_DIR: guideDir } : env
+}
 // 救援 profile（最小可用）：同 home 下的空白 profile（仅 base+TUI，无第三方
 // 插件），是主 profile 装炸时的干净启动通道——创建走官方 dsh plugin add
 // （钉当前版本，同 bootstrap 语义）。
@@ -438,11 +450,20 @@ const MSG = {
       `[dsh-tui] \`update\` 需要 profile 的编译产物，但它缺失或版本过旧、不含 CLI 入口。\n` +
       `请改用手工升级：\n  dsh plugin --profile ${PROFILE} add ${releaseSpec()}`,
   },
+  migrateUnavailable: {
+    en:
+      `[dsh-tui] \`migrate\` needs the profile's compiled copy, but it is missing or too old to carry the CLI entry.\n` +
+      `Update first:\n  dsh-tui update`,
+    zh:
+      `[dsh-tui] \`migrate\` 需要 profile 的编译产物，但它缺失或版本过旧、不含 CLI 入口。\n` +
+      `请先升级：\n  dsh-tui update`,
+  },
   helpText: {
     en:
       `Usage: dsh-tui|dst [command] [options] [path|url]\n\n` +
       `Commands:\n` +
       `  update                 Update the ${PROFILE} profile to the latest release\n` +
+      `  migrate [agent]        Import conversations from claude-code/codex/omp/zcode/grok-build (--dry-run to preview)\n` +
       `  doctor                 Pre-flight environment checks (dsh/pnpm/profile/key)\n` +
       `  safe                   Safe mode: read-only diagnostics, inventory, repair guidance\n` +
       `  safe --rescue          Create/verify the clean rescue profile (starts it in a terminal)\n` +
@@ -451,12 +472,16 @@ const MSG = {
       `Options:\n` +
       `  --resume [id]          Resume the last (or the given) session\n` +
       `  -c, --continue         Same as --resume\n` +
+      `  --backend <id>         Agent backend: dsh | claude | codex (claude, codex: experimental)\n` +
+      `  -- <prompt...>        Treat the remaining arguments as literal prompt text\n` +
       `  <path|url>             Open with the given workspace target\n\n` +
-      `Any other argument is forwarded to \`dsh --profile ${PROFILE}\`.`,
+      `Leading DSH options (e.g. --dump-config, --patch <path>) are forwarded unchanged.\n` +
+      `Other arguments go to the app in \`dsh --profile ${PROFILE}\`.`,
     zh:
       `用法：dsh-tui|dst [命令] [选项] [路径|URL]\n\n` +
       `命令：\n` +
       `  update                 将 ${PROFILE} profile 升级到最新版本\n` +
+      `  migrate [agent]        迁移 claude-code/codex/omp/zcode/grok-build 的对话（--dry-run 预览）\n` +
       `  doctor                 启动前环境诊断（dsh/pnpm/profile/密钥）\n` +
       `  safe                   安全模式：只读诊断、插件清单与修复指引\n` +
       `  safe --rescue          创建/校验干净的救援 profile（有终端时随即启动它）\n` +
@@ -465,8 +490,11 @@ const MSG = {
       `选项：\n` +
       `  --resume [id]          恢复上次（或指定 id 的）会话\n` +
       `  -c, --continue         同 --resume\n` +
+      `  --backend <id>         Agent 后端：dsh | claude | codex（claude、codex 为实验性）\n` +
+      `  -- <提示词...>         将剩余参数作为字面提示词\n` +
       `  <路径|URL>             以指定工作区目标启动\n\n` +
-      `其余参数原样转发给 \`dsh --profile ${PROFILE}\`。`,
+      `前置 DSH 选项（如 --dump-config、--patch <路径>）原样转发。\n` +
+      `其余参数交给 \`dsh --profile ${PROFILE}\` 中的应用。`,
   },
 }
 const msg = key => MSG[key][lang]
@@ -617,14 +645,18 @@ const runDoctorChecks = () => {
     'DEEPSEEK_API_KEY',
     keyFromEnv ? L.keySetEnv : keyFromStore ? L.keySetStore : L.keyMissing,
   )
-  for (const candidate of [join(homedir(), '.dsh-tui', 'cordis.yml'), join(profileDir, 'cordis.patch.yml')]) {
-    report(existsSync(candidate), 'config', `${candidate}${existsSync(candidate) ? '' : `  ${L.missing}`}`)
-  }
+  // `~/.dsh-tui/cordis.yml` 是裸组合（`dsh --config cordis.yml`）时代的用户根
+  // 配置：profile 安装不使用它，全包也没有任何代码读它——缺席是常态，不是故障。
+  // 恒报 ✗ 会把旁边唯一有意义的 profile 补丁一起变成噪音（用户会去创建这个对
+  // 功能毫无影响的文件）。只在用户确实留了它时列出。
+  const legacyConfig = join(homedir(), '.dsh-tui', 'cordis.yml')
+  if (existsSync(legacyConfig)) report(true, 'config', legacyConfig)
+  const profileConfig = join(profileDir, 'cordis.patch.yml')
+  report(existsSync(profileConfig), 'config', `${profileConfig}${existsSync(profileConfig) ? '' : `  ${L.missing}`}`)
   return { hardFailure, lines }
 }
 // ─── safe 会话支撑（清单解析与报告渲染，交互/非交互共用）──────────────────────
-// 保护包：组合层模板与 TUI 本体，不进入卸载候选。两维度分类是 PR② 卸载
-// 功能将复用的唯一分类规则，不得合并简化（spec §6.1）。
+// Packages that profile repair and rescue must never remove.
 const PROTECTED_PLUGINS = new Set(['@deepseek-ai/dsh-base', PACKAGE])
 // dir 参数供救援 profile 复用同一套解析规则（两处 manifest 契约不许分叉）。
 const readProfileInventory = (dir = profileDir) => {
@@ -715,12 +747,12 @@ const forwardExit = child => {
 // 统一表示子进程结局；不在此处做任何退出决定——退出权在调用者（首启结算
 // 或 safe 菜单）。Windows 经 cmd()/shell:true 启动（见 cmd 注释），壳层
 // 观察到的 signal 不保证等同内部 dsh 的中断语义：判定一律只看数值 code，
-// 不从数值反推信号（spec §5.1）。
+// Do not infer a signal from the numeric exit code.
 const startDshSession = (dshArgs, profile = PROFILE, env = process.env) =>
   new Promise(resolve => {
     const child = spawn(...cmd('dsh', ['--profile', profile, ...dshArgs]), {
       stdio: 'inherit',
-      env,
+      env: withGuideSkillDir(env),
       ...shellOpt,
     })
     child.on('error', err => resolve({ kind: 'error', error: err }))
@@ -743,13 +775,87 @@ const rescueEnv = () => {
   return env
 }
 
+// ─── 最后运行记录 ────────────────────────────────────────────────────────────
+// TUI 把 {backendId,sessionId,cwd,attemptId} 写进 ~/.dsh-tui/last-run.json
+// （boot 写一次，退出时刷新，见 src/update.ts 的 writeLastRunRecord）。
+// 内核切换后本进程的 env 仍是原内核，安全模式重试若按 env 去读 resume.txt
+// 或其他后端偏好，会回到原内核，甚至拿 DSH 的会话 id 跨后端恢复；所以
+// 本次启动之后写下的记录优先。
+const readLastRunRecord = () => {
+  try {
+    const parsed = JSON.parse(readFileSync(join(homedir(), '.dsh-tui', 'last-run.json'), 'utf8'))
+    if (parsed === null || typeof parsed !== 'object') return undefined
+    if (!KERNEL_IDS.includes(parsed.backendId)) return undefined
+    if (typeof parsed.sessionId !== 'string' || typeof parsed.cwd !== 'string' || typeof parsed.attemptId !== 'string') return undefined
+    if (typeof parsed.updatedAt !== 'number' || !Number.isFinite(parsed.updatedAt)) return undefined
+    return parsed
+  } catch {
+    return undefined
+  }
+}
+// 记录 → 重试 env：DSH_TUI_BACKEND 与一次性的 DSH_TUI_BACKEND_HANDOFF（后者
+// 压过 Config 行）都设成记录里的内核；记录有可恢复的会话 id 才设
+// DSH_TUI_RESUME_SESSION，否则删掉继承来的值，在该内核上冷启动。
+const envFromLastRun = record => {
+  const env = { ...process.env }
+  env.DSH_TUI_BACKEND = record.backendId
+  env.DSH_TUI_BACKEND_HANDOFF = record.backendId
+  if (typeof record.sessionId === 'string' && record.sessionId.trim() !== '') {
+    env.DSH_TUI_RESUME_SESSION = record.sessionId
+  } else {
+    delete env.DSH_TUI_RESUME_SESSION
+  }
+  return env
+}
+// 首次 spawn 前记下的时刻：updatedAt 不早于它的记录是本次启动的 TUI 写的，
+// 更早的是上一次启动留下的。
+let launchChain = null
+const noteLaunchChain = () => {
+  launchChain = { startedAt: Date.now() }
+}
+
+// 非 DSH 内核的上次会话来自各自 backends/<id>/prefs.json 的 lastSession。
+const readBackendLastSession = backendId => {
+  try {
+    const prefs = JSON.parse(readFileSync(join(homedir(), '.dsh-tui', 'backends', backendId, 'prefs.json'), 'utf8'))
+    return typeof prefs?.lastSession === 'string' ? prefs.lastSession.trim() : ''
+  } catch {
+    return ''
+  }
+}
+// 安全模式「重试正常启动」的环境（菜单选项 1，首启 fallback 与 `safe` 共用）：
+//   1. 本次启动之后写下的最后运行记录：崩溃时实际在跑的内核与会话，压过
+//      env 里的 --resume（内核切换是用户更新的选择）。
+//   2. 没有这样的记录（崩得太早，或旧版本不写）：env 里已有
+//      DSH_TUI_RESUME_SESSION 就照用；否则按 env 的后端读它的上次会话
+//      （resume.txt 或对应后端偏好文件），读不到就冷启动。
+const resumeEnvForRetry = () => {
+  const chain = launchChain
+  const record = readLastRunRecord()
+  if (record !== undefined && chain !== null && record.updatedAt >= chain.startedAt) {
+    return envFromLastRun(record)
+  }
+  if (process.env.DSH_TUI_RESUME_SESSION !== undefined) return process.env
+  let target = ''
+  if (KERNEL_IDS.includes(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh') {
+    target = readBackendLastSession(process.env.DSH_TUI_BACKEND)
+  } else {
+    try {
+      target = readFileSync(join(homedir(), '.dsh-tui', 'resume.txt'), 'utf8').trim()
+    } catch {
+      // 没有历史会话可恢复——静默冷启动。
+    }
+  }
+  return target === '' ? process.env : { ...process.env, DSH_TUI_RESUME_SESSION: target }
+}
+
 // TTY 判定：询问与菜单都要求 stdin/stdout 均可交互（readline 需要 stdin，
 // 菜单可读需要 stdout）；任一非 TTY（脚本/管道/headless 宿主）走降级。
 const isInteractive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY)
 
 // 子进程异常退出后终端可能停在脏状态（alt-screen/鼠标/隐藏光标——清理
 // 责任在 TUI 的 ink 退出路径，不保证完成）。进入询问/菜单前做最小恢复，
-// 仅为让后续界面可读，不承诺完整复原（spec §6.2）。
+// Reset the screen and mouse modes before prompting after a child exit.
 const restoreTerminalMinimal = () => {
   process.stdout.write('\x1b[?1049l\x1b[?1000l\x1b[?1006l\x1b[?25h')
 }
@@ -763,7 +869,7 @@ const askSafeEntry = async pendingExitCode => {
   // 与 runSafeSession.askChoice 同款 close 竞速：接口 close（上方 SIGINT
   // 处理器主动 close，或 TTY 的 Ctrl+D/EOF）时 question 可能永不结算——
   // 裸 await 会让 fallback 询问挂死（PTY 实测 Ctrl+C 下顶层 await 以退出
-  // 码 13 异常中止）。close 一律按取消，对齐 spec §6.2：Ctrl+C/Ctrl+D/EOF
+  // 码 13 异常中止）。close 一律按取消：Ctrl+C/Ctrl+D/EOF
   // 等价拒绝（按原退出码收束）。
   let answer
   try {
@@ -867,7 +973,7 @@ const runSafeSession = async ({ pendingExitCode = 0, retryDsh, extraLines, rescu
       // cold start = 手动入口无已规范化 args，按空参数冷启动。
       const replay = typeof retryDsh === 'function'
       console.log(L.retry + (replay ? L.replaySource : L.coldStartSource))
-      // 两来源共用 profileReady 前置（spec §4：重试不得隐式自举）。
+      // Both retry paths require a ready profile; neither bootstraps it.
       if (!profileReady()) { console.error(msg('safeListUnreadable')(msg('safeGuideLabels').notReadyReason)); continue }
       state.handingOff = true // 主动交接：此刻起的中断不算用户取消
       const settled = settleRetry(replay ? await retryDsh() : await startDshSession([]))
@@ -1063,7 +1169,7 @@ const settleFirstResult = async (result, firstArgs) => {
   if (result.kind === 'error') {
     console.error(msg('launchFailed')(result.error))
     if (isInteractive()) {
-      if (await askSafeEntry(1)) process.exit(await runSafeSession({ pendingExitCode: 1, retryDsh: () => startDshSession(firstArgs) }))
+      if (await askSafeEntry(1)) process.exit(await runSafeSession({ pendingExitCode: 1, retryDsh: () => startDshSession(firstArgs, PROFILE, resumeEnvForRetry()) }))
     } else {
       console.error(msg('safeHint')(1))
     }
@@ -1074,7 +1180,7 @@ const settleFirstResult = async (result, firstArgs) => {
     console.error(msg('profileExited')(result.code))
     if (isInteractive()) {
       if (await askSafeEntry(result.code)) {
-        process.exit(await runSafeSession({ pendingExitCode: result.code, retryDsh: () => startDshSession(firstArgs) }))
+        process.exit(await runSafeSession({ pendingExitCode: result.code, retryDsh: () => startDshSession(firstArgs, PROFILE, resumeEnvForRetry()) }))
       }
     } else {
       console.error(msg('safeHint')(result.code))
@@ -1183,7 +1289,7 @@ const checkProfileAlignment = installedVersion => {
 // ─── 子命令：safe（安全模式入口，两种角色同一段代码）──────────────────────────
 // 零 lib 依赖、不委托、不自举（对齐 doctor 的依赖边界，而非 update 的
 // profile-lib 路径）：profile 损坏时它必须仍可达。控制面只读；重试与
-// 修复动作语义见 safe 会话实现（spec §4/§5）。
+// Recovery and retry behavior lives in runSafeSession.
 // `safe --rescue` 是同一个救援动作的显式入口（不是新动作）：交互终端里
 // 等价于菜单选项 5（门禁 → 创建/复用 → 干净启动），非交互终端里只做
 // 门禁 + 创建/复用并报告结论（没有终端可交接时不启动 TUI），以便脚本与
@@ -1238,6 +1344,26 @@ if (subcommand === 'update') {
     process.exit(1)
   }
   process.exit(await cliUpdate(PROFILE))
+}
+
+// ─── 子命令：migrate ─────────────────────────────────────────────────────────
+// 跨代理会话迁移（claude-code / codex / omp → DSH sessions）。与 update 同
+// 一条委托路径：动态 import **profile 的**编译产物（瘦壳零 lib 依赖不变），
+// 落盘走上游官方 JsonlSessionPersistence（见 src/dsh-adapter/migrate/）。
+// profile 未初始化时先自举；产物缺失或旧版无 cliMigrate 导出给升级指引。
+if (subcommand === 'migrate') {
+  if (!profileReady()) bootstrapProfile()
+  let cliMigrate
+  try {
+    ;({ cliMigrate } = await import(pathToFileURL(join(profilePkgDir, 'lib', 'types', 'dsh-adapter', 'migrate', 'cli.js')).href))
+  } catch {
+    cliMigrate = undefined
+  }
+  if (typeof cliMigrate !== 'function') {
+    console.error(msg('migrateUnavailable'))
+    process.exit(1)
+  }
+  process.exit(await cliMigrate(process.argv.slice(3)))
 }
 
 // ─── 全局副本：瘦壳角色 ───────────────────────────────────────────────────────
@@ -1308,10 +1434,51 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     }
     return ''
   }
+  // Launcher-owned options from DSH apps/cli/src/args.ts. Only classify the
+  // leading prefix here; DSH still owns validation and execution. Keep this
+  // inline: migrated global launchers must not depend on lib/ or other files.
+  const dshValueFlags = new Set(['--profile', '--from-default-profile', '--patch'])
+  const dshSwitches = new Set(['--dump-config', '--dump-default-config', '--dump-config-schema', '-V', '--version'])
+  const hostArgs = []
   const args = []
   const argv = process.argv.slice(2)
+  // Resume flags in command-line order: an explicit id, or `null` for a bare
+  // flag. Replayed after the whole line is read, with the original
+  // "each flag sets it, the last one wins" semantics — only a bare flag's
+  // source depends on the backend, which may be named after it.
+  const resumeFlags = []
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
+    if (a === '--') {
+      args.push(...argv.slice(i))
+      break
+    }
+    if (args.length === 0) {
+      const flag = a.split('=', 1)[0]
+      if (dshValueFlags.has(flag)) {
+        hostArgs.push(a)
+        // Required host values are raw tokens, even when flag-shaped. Never
+        // intercept them as a resume flag or an existing workspace path.
+        if (a === flag && argv[i + 1] !== undefined) hostArgs.push(argv[++i])
+        continue
+      }
+      if (dshSwitches.has(a)) {
+        hostArgs.push(a)
+        continue
+      }
+    }
+    // `--backend <id>`: which agent backend the app opens its session with
+    // (the row reads DSH_TUI_BACKEND; absent falls back to kernel.json, then dsh).
+    if (a === '--backend' || a.startsWith('--backend=')) {
+      const backend = a.startsWith('--backend=') ? a.slice('--backend='.length).trim() : (argv[i + 1] ?? '').trim()
+      if (a === '--backend' && argv[i + 1] !== undefined) i += 1
+      if (!KERNEL_IDS.includes(backend)) {
+        console.error(lang === 'zh' ? `未知的 --backend：${backend}（可选 ${KERNEL_IDS.join(' / ')}）` : `Unknown --backend: ${backend} (expected ${KERNEL_IDS.join(' or ')})`)
+        process.exit(2)
+      }
+      process.env.DSH_TUI_BACKEND = backend
+      continue
+    }
     if (a === '--resume' || a === '-c' || a === '--continue' || a.startsWith('--resume=')) {
       let sessionId = ''
       if (a.startsWith('--resume=')) {
@@ -1319,8 +1486,8 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
       } else if (a === '--resume' && argv[i + 1] !== undefined && !argv[i + 1].startsWith('-')) {
         sessionId = argv[++i].trim()
       }
-      if (!sessionId) sessionId = readLastResumeTarget()
-      if (sessionId) setResumeEnv(sessionId)
+      // 裸 --resume：等整条命令行读完再决定（`--backend` 可能在它后面）。
+      resumeFlags.push(sessionId || null)
     } else if (
       process.env.DSH_TUI_WORKSPACE_TARGET === undefined
       && !a.startsWith('-')
@@ -1332,11 +1499,22 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     }
   }
 
+  // 按出现顺序重放 --resume：裸 --resume 时 DSH 读 resume.txt（契约不变），
+  // 其他内核读各自的上次会话。
+  for (const flag of resumeFlags) {
+    const sessionId = flag ?? (KERNEL_IDS.includes(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh' ? readBackendLastSession(process.env.DSH_TUI_BACKEND) : readLastResumeTarget())
+    if (sessionId) setResumeEnv(sessionId)
+  }
+
   // 启动：被委托场景下本副本自己的版本即对齐诊断所见的启动器代际。
   if (process.env.DSH_TUI_LAUNCHER_VERSION === undefined && ownVersion !== undefined) {
     process.env.DSH_TUI_LAUNCHER_VERSION = ownVersion
   }
 
-  const firstArgs = args
+  // DSH consumes its own --; only the app tail belongs behind it. Preserve
+  // the app-level separator too, and replay this same argv on a safe retry.
+  const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
+  // 必须在首次 spawn 之前：本次启动的 TUI 写的记录都晚于这个时刻。
+  noteLaunchChain()
   settleFirstResult(await startDshSession(firstArgs), firstArgs)
 }

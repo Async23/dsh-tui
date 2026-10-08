@@ -1,10 +1,41 @@
 /** Host-owned in-process Channel contract. No runtime or upstream imports. */
-import type { ChatRow, AgentStatus, TokenUsage, NotificationItem, ActivityStatus, ChannelGoal, TodoPanelItem, LoadedContext, PendingMessage, ChannelSceneMetadata, SubagentState, SubagentControl, BackgroundJobState, JobControl, StagedImageInput, StagedImageHandle, ComposerImageRef, ComposerSubmission, ExternalCommandOutcome, TranscriptImage, ResumeResult, EffortOption, PermissionPresetSnapshot, PresetOption, LlmModelInfo, LlmProviderInfo, SkillInfo, CredentialStatus, AgentViewRow, AgentViewDispatchResult, BackgroundResult, RawTrajEvent, ChannelSelection } from './channel-view.js'
-import type { SpinnerMode, ToolBackground, ScrollGutterMode, PageMarginSetting, StatusBarConfig, SessionModeSpec } from './channel-display.js'
+import type { ChatRow, AgentStatus, TokenUsage, TurnUsageSummary, SessionCostByModel, SubagentCostEntry, NotificationItem, ChannelGoal, TodoPanelItem, LoadedContext, PendingMessage, ChannelSceneMetadata, SubagentState, SubagentControl, BackgroundJobState, JobControl, StagedImageInput, StagedImageHandle, ComposerImageRef, ComposerSubmission, ExternalCommandOutcome, TranscriptImage, ResumeResult, EffortOption, PermissionPresetSnapshot, PresetOption, LlmModelInfo, LlmProviderInfo, SkillInfo, CredentialStatus, AgentViewRow, AgentViewDispatchResult, BackgroundResult, RawTrajEvent, TrajectoryLane, TrajectorySource, ChannelSelection, AttachedContext, CompactionStatus, ContextOccupancy, ChannelCapabilities, ChannelCostReport, ChannelRateLimit, ChannelSessionRef, BackendModeOption, BackendChannelOption, BackendChannelInput } from './channel-view.js'
+import type { SpinnerMode, ToolBackground, ScrollGutterMode, PageMarginSetting, StatusBarConfig, SessionModeSpec, SplashFontSetting, JobGroupFoldMode, BrandSetting } from './channel-display.js'
 import type { LocalCommand, CommandCompletion, BalanceResult, FileCandidate, RecapOutcome } from './channel-catalog.js'
-import type { TuiRewindMode, SessionTreeData, SessionSummary, PreviewEntry } from './channel-session.js'
+import type { AgentCapabilities } from './channel-capabilities.js'
+import type { TuiRewindMode, SessionTreeData, SessionSummary, PreviewEntry, ForeignSource, ForeignSessionRow, ForeignImportOutcome } from './channel-session.js'
 import type { TuiWorkspaceTarget, TuiWorkspaceCommand, TuiWorkspaceCommandResult, TuiWorkspaceEntry } from './channel-workspace.js'
-import type { ProviderSetupHost, OAuthProviderStatus, SettingsHost, TuiSettingsSection } from './channel-settings.js'
+import type { ProviderSetupHost, OAuthProviderStatus, OAuthSetupHost, SettingsHost, TuiSettingsSection } from './channel-settings.js'
+
+/** One backend session's sign-in surface (`ChannelUi.backendAuth`). */
+export interface BackendAuthHost {
+  /** Report status, present OAuth, then reconnect after sign-in or sign-out. */
+  login(present: (oauth: OAuthSetupHost, provider: string) => Promise<'added' | 'updated' | 'deleted' | 'signed-out' | 'cancelled' | 'failed'>): Promise<void>
+  /** Remove only this backend's host OAuth credential, never its native login. */
+  logout?(): Promise<boolean>
+}
+
+/** Relay profile management for the bound backend session. */
+export interface BackendChannelsHost {
+  snapshot(): { readonly channels: readonly BackendChannelOption[]; readonly activeId: string | undefined }
+  activate(id: string): { readonly ok: boolean; readonly restart: boolean }
+  importFromSettings(): { readonly option: BackendChannelOption; readonly restart: boolean } | undefined
+  save(input: BackendChannelInput): BackendChannelOption | undefined
+  remove(id: string): boolean
+  peekImport(): { readonly baseUrl?: string; readonly tiers: Readonly<Record<string, string>> } | undefined
+}
+export interface BackendModesHost { snapshot(): { modes: readonly BackendModeOption[]; currentIndex: number }; set(id: string): Promise<boolean> }
+export interface BackendMcpHost { reconnect(name: string): Promise<boolean>; toggle(name: string, enabled: boolean): Promise<boolean> }
+/** The bound session's typed `goals` capability (`/goal` on a non-DSH
+ *  session): each call resolves true once the backend took the change
+ *  (the goal itself arrives as `goal.change`), false after a reported
+ *  failure. */
+export interface BackendGoalsHost {
+  set(objective: string, options?: { readonly tokenBudget?: number }): Promise<boolean>
+  pause(): Promise<boolean>
+  resume(): Promise<boolean>
+  clear(): Promise<boolean>
+}
 
 /**
  * The public channel surface a screen renders: the full transcript and live
@@ -29,15 +60,53 @@ export interface ChannelUi {
    *  the prompt-input border + session label chip accent (cc/sessionColors). */
   readonly sessionColor: string
   readonly agentId: string
+  /** Identity of the session behind the bound agent. Read by session-scoped
+   *  consumers — the activity projection is keyed by session, and the two ids
+   *  are only conventionally equal (both are minted as a `SessionId`), so the
+   *  session must be nameable on its own rather than inferred from the agent. */
+  readonly sessionId: string
   /** TUI-owned generation that changes on every live Agent rebind. */
   readonly agentBindingGeneration: number
+  /** Cross-backend identity of the bound session (`backendId` + the
+   *  backend's own session id); follows every rebind. */
+  readonly sessionRef: ChannelSessionRef
+  /** What the bound backend session supports, as plain data: the UI hides
+   *  commands and affordances whose capability is absent instead of letting
+   *  them fail. A DSH session supports everything the TUI offers. Distinct
+   *  from {@link ChannelUi.capabilities}, which describes what the current
+   *  DSH agent's composition mounts (compaction, `/plan`, skills, …). */
+  readonly backendCapabilities: ChannelCapabilities
+  /** The session cost the backend itself reported (Claude
+   *  `total_cost_usd`), or undefined when the backend reports none; the
+   *  status line then falls back to its local estimate. */
+  readonly costReport: ChannelCostReport | undefined
+  /** Subscription usage windows the backend reported (Claude
+   *  `rate_limit_event`), or undefined when it reports none. */
+  readonly rateLimit: ChannelRateLimit | undefined
+  /** The bound session has durable history older than the painted
+   *  transcript (a compaction cut it off before a resume): "load earlier"
+   *  shows even when no row is folded, and `loadOlder()` prepends it. */
+  readonly olderHistory: boolean
   /** `dsh-tui.recapOnOpen` (default on): auto-summarize the session tail
    *  into the dim AutoRecapRow when the session opens/resumes. Read live
    *  (settings service), so a `/settings` change applies on the next
    *  session switch; absent settings service → on. */
   readonly autoRecapOnOpen: boolean
+  /** Settings namespace this mount registered under — the Config owner's
+   *  Loader id (see `resolveSettingsNamespace`), not a fixed plugin name, so
+   *  custom mount ids are supported. Read sites that look the TUI's section up
+   *  through `describe()`/`listNamespaces()` must match on this value; a
+   *  literal `'dsh-tui'` silently misses every non-default mount. */
+  readonly settingsNamespace: string
   /** Resolved model id (from the plugin config). */
   readonly model: string
+  /** Display name of the live model when a channel mapping says the id the
+   *  runtime echoes is not what actually serves the request (relay channels
+   *  echo the requested id back; backends/claude/modelEnv.ts resolves it
+   *  from the user ANTHROPIC_*_MODEL env plus the local model-names.json).
+   *  UI renders this instead of `model` when present; attribution and
+   *  matching keep using `model`. */
+  readonly modelDisplay: string | undefined
   /** Provider route of the live agent. */
   readonly provider: string
   /** Raw cordis.yml `provider` key (undefined when unset) — the boot-time
@@ -54,6 +123,11 @@ export interface ChannelUi {
   readonly configuredLang: string | undefined
   /** Running token totals across the session's assistant messages. */
   readonly tokens: TokenUsage
+  /** 本会话主会话用量按模型分桶（费用估算输入）。与 `tokens` 并行累计，
+   *  既有 `tokens` 语义与显示不变；会话中途换模型时历史用量留在原模型桶。 */
+  readonly mainCost: SessionCostByModel
+  /** 子代理 durable 用量按 (provider, model) 分桶快照（费用估算输入）。 */
+  readonly subagentCost: readonly SubagentCostEntry[]
   /** Working directory of the session. */
   readonly cwd: string
   /** Human-facing cwd (remote POSIX path/URI instead of a host alias). */
@@ -62,6 +136,12 @@ export interface ChannelUi {
   readonly gitBranch: string | undefined
   /** True between turn/start and turn/end — drives the working spinner. */
   readonly working: boolean
+  /** In-flight compaction of this session's history, or undefined when none
+   *  is running (see {@link CompactionStatus}). Required-and-undefined rather
+   *  than optional: the effect inventory maps over `keyof ChannelUi`, and an
+   *  optional member widens that key union with `undefined`, which breaks the
+   *  `Record` constraint on the inventory itself. */
+  readonly compaction: CompactionStatus | undefined
   /** True while a user-requested abort (Ctrl+C/Esc interrupt) has not yet
    *  converged — no turn/start or turn/end has retired the aborted turn.
    *  Chat uses it so a repeated Ctrl+C during a stuck abort force-exits. */
@@ -86,16 +166,39 @@ export interface ChannelUi {
    *  is the top tier). Consumed by top-tier-triggered UI (effort ignition). */
   readonly effortLevels: readonly string[] | undefined
   /** Usage of the most recent request (context share + cache hits come from
-   *  this, not the running totals — each request's input IS the context). */
+   *  this, not the running totals — each request's input IS the context).
+   *  `at` is the producing message's event time, so readouts that quote
+   *  this request can say when it was measured. */
   readonly lastUsage:
-    | { input: number; output: number; cacheRead: number; cacheWrite: number }
+    | { input: number; output: number; cacheRead: number; cacheWrite: number; at: number }
     | undefined
+  /** Ledger of the most recently ended turn: per-turn usage aggregate,
+   *  retry count, span, model/effort. Kept until the next turn ends, so the
+   *  footer's turn mini-summary can read it while the next turn runs without
+   *  mixing the two. Undefined before any turn ended. */
+  readonly turnUsage: TurnUsageSummary | undefined
+  /**
+   * Context occupancy — the ONE source of truth for the footer's `ctx` field,
+   * the segmented context bar, the working-activity line's `⚠ ctx N%` prefix,
+   * `/tokens` + `/status`, and the context-low warning. Read from DSH's own
+   * `contextPressure` session projection (`projectedTokens ?? pressureTokens`,
+   * the same number the Web UI shows) and refreshed by that projection's change
+   * feed — never by a per-render fold.
+   *
+   * `undefined` only before anything is known: no request yet AND no meter (a
+   * bare `cordis.yml` composition). {@link ContextOccupancy.source} says which
+   * path answered; see `dsh-adapter/context-occupancy.ts` for the deliberate
+   * divergence from the official "render nothing" behavior.
+   *
+   * Required-and-undefined rather than optional, matching `compaction`: the
+   * effect inventory in `adapter/channel/ui-policy.ts` maps over
+   * `keyof ChannelUi`, and an optional member would widen that union.
+   */
+  readonly contextOccupancy: ContextOccupancy | undefined
   /** Output tokens per second of the current/last turn's response, when known. */
   readonly tps: number | undefined
   /** Per-turn tps samples (sparkline history), oldest first. */
   readonly tpsSamples: readonly { tps: number; at: number }[]
-  /** Latest in-process working-activity snapshot. */
-  readonly workingActivity: ActivityStatus | undefined
   /** Working-activity indicator preset name (`claude`/`moon`/…/`random`). */
   readonly activityFrames: string | undefined
   /** Edit/Write diff presentation preference (`auto`/`split`/`unified`). */
@@ -103,6 +206,11 @@ export interface ChannelUi {
   /** Thinking-block display (`preview` = 2-3 line live stream + fold per
    *  step; `full` = expanded until turn end). */
   readonly thinkingFold: 'preview' | 'full'
+  /** Grouping/folding of runs of consecutive background-job cards (settings
+   *  `dsh-tui.jobGroupFold`): `auto` folds a settled run of 3+ into its
+   *  summary line, `always` folds any run of 2+, `never` never folds on its
+   *  own (a header click still folds a single run). */
+  readonly jobGroupFold: JobGroupFoldMode
   /** Live tool-card background treatment. */
   readonly toolBackground: ToolBackground
   /** What the fullscreen transcript's right gutter shows (settings
@@ -120,6 +228,11 @@ export interface ChannelUi {
   /** Terminal-card header folding (settings `dsh-tui.foldTerminalCommand`):
    *  collapse a multi-line command title to its first line + count hint. */
   readonly foldTerminalCommand: boolean
+  /** Turn-usage ledger row in the transcript (settings `dsh-tui.turnUsageRow`;
+   *  off by default): the quiet right-aligned line that closes each turn.
+   *  Display only: the ledger itself is always collected for `turnUsage`,
+   *  /tokens, /status and the footer hover. */
+  readonly turnUsageRow: boolean
   /** Whether the session-name chip shows on the prompt top border's right
    *  side (settings `dsh-tui.promptSessionLabel`; off by default). */
   readonly promptSessionLabel: boolean
@@ -138,12 +251,47 @@ export interface ChannelUi {
   readonly whale: boolean
   /** Idle whale behaviors switch (settings `dsh-tui.whaleIdle`). */
   readonly whaleIdle: boolean
+  /** Swap the header's pixel whale for the static maid portrait (settings
+   * `dsh-tui.whaleGirl`; off by default). */
+  readonly whaleGirl: boolean
   /** Apply an idle-whale-behavior change (see the public Channel type). */
   setWhaleIdle(enabled: boolean): void
-  /** Minimal mode (settings `dsh-tui.minimal`): no header splash, no emoji
-   *  glyphs, no decorative colors; code highlight and tool colors stay. */
+  /** Big-text face on the header splash (settings `dsh-tui.splashFont`):
+   *  `daily` (the default) rotates by local date, any other id pins that one
+   *  face — see `components/splashFonts.ts` for the registry. */
+  readonly splashFont: SplashFontSetting
+  /** Brand look (settings `dsh-tui.brand`): `auto` (the default) follows the
+   *  active backend — Claude boots orange (`CLAUDE`/`CODE` title, Claude girl,
+   *  ember theme); the other values pin one look. See `branding.ts`. */
+  readonly brand: BrandSetting
+  /** Apply a brand-look change (see the public Channel type). */
+  setBrand(setting: BrandSetting): void
+  /** Apply a maid-portrait change (see the public Channel type). */
+  setWhaleGirl(enabled: boolean): void
+  /** Minimal UI (settings key `dsh-tui.minimal`, labeled 极简界面 /
+   *  "Minimal UI"): no header splash, no emoji glyphs, no decorative colors;
+   *  code highlight and tool colors stay. This is the INTERFACE switch and
+   *  has nothing to do with the kernel's agent preset `minimal` (极简模式 /
+   *  "Minimal"), which changes the model-facing tool catalog. */
+  readonly minimalUi: boolean
+  /** @deprecated Pre-rename alias of {@link minimalUi}; reads the same flag.
+   *  Kept because plugin scenes receive this port through
+   *  `TuiSceneProps.channel` (a published surface). Use `minimalUi`.
+   *
+   *  REMOVAL: v0.13 — the rename and deprecated aliases first ship in
+   *  v0.12.0, leaving one released minor-version deprecation window as
+   *  `docs/plugins.md` promises for a frozen seam. Delete `minimal` (and
+   *  `setMinimal()` below, plus the `'setMinimal': 'mutate'` row in
+   *  `adapter/channel/ui-policy.ts`) in v0.13, gated on one concrete audit:
+   *  scan the scene-plugin consumption surface — this repo's `src/**`
+   *  re-exports and every plugin reached through `TuiSceneProps.channel`
+   *  on the dsh-tui-ecosystem org — for a read of `.minimal` or a call to
+   *  `.setMinimal(`. Zero consumer hits → delete in v0.13; a hit found at
+   *  that cut is migrated in the same release instead of pushing the
+   *  removal out again. */
   readonly minimal: boolean
-  /** Whether the in-process working-activity line is shown (config.activity). */
+  /** Whether the working-activity line is shown (config.activity); the line
+   * itself is read from the plugin's session projection, not this port. */
   readonly activityEnabled: boolean
   /** Whether the segmented context bar row shows in the status footer
    *  (config.contextBar; the status/mode lines are unaffected). */
@@ -185,6 +333,19 @@ export interface ChannelUi {
   readonly commandList: readonly LocalCommand[]
   /** Context-aware slash completions, including plugin subcommands. */
   commandCompletions(input: string): readonly CommandCompletion[]
+  /**
+   * What the CURRENT agent's composition actually serves (compaction, pruning,
+   * questionnaire, skills, and the route `/compact` and `/plan` take), with
+   * the evidence for each fact documented in
+   * `dsh-adapter/channel/capabilities.ts`.
+   *
+   * Resolved from live services through the agent's own preset scope chain —
+   * never from a preset-id table — so a user preset that adds a service back
+   * gets the full feature set with no consumer change. Consumers use it to
+   * refuse-with-reason instead of failing on use, and to mark an entry whose
+   * capability is missing in Help and `/` completion.
+   */
+  capabilities(): AgentCapabilities
   /**
    * Run a plugin-registered slash command against the live agent (DSH
    * `dsh-commands` registry): logs `command/run`/`command/done` and returns
@@ -269,6 +430,24 @@ export interface ChannelUi {
     readonly maxImageDimension: number
     readonly maxImagePixels: number
   } | undefined
+  /**
+   * Contexts a side panel staged for the NEXT submission ("Send to Chat",
+   * side-panel design §6.7), oldest first. The composer renders one chip per
+   * entry above the input row; the submission that captures them consumes and
+   * clears the list, and every session-scoped reset (resume / rewind / new /
+   * model switch) empties it with the other session projections.
+   */
+  readonly attachedContexts: readonly AttachedContext[]
+  /**
+   * Stage one panel context on the composer. The body is capped at the shared
+   * `MENTION_MAX_FILE_CHARS` limit when it is staged (`truncated` records the
+   * cut), and a duplicate `sourceId` + `title` REPLACES the existing entry
+   * instead of stacking a second chip.
+   */
+  attachContext(input: { source: 'panel'; sourceId: string; title: string; content: string }): void
+  /** Drop one staged context by its `id` (an unknown id is a no-op). */
+  detachContext(id: string): void
+
   submit(text: string, images?: readonly ComposerImageRef[]): void
   /**
    * Steer a message into the running turn (Codex/pi semantics): injected at
@@ -281,10 +460,33 @@ export interface ChannelUi {
    *  stays true the abort has not converged; Chat force-exits on the next
    *  Ctrl+C press in that window. */
   cancel(): void
-  /** Abort the in-flight turn and process `texts` right away (Esc/Ctrl+Enter
+  /** Abort the in-flight turn and process `texts` right away (Ctrl+Enter
    *  with queued input): each text is re-queued as a followup once the abort
    *  settles, so the new turn starts immediately. Returns the count queued. */
   interruptAndDeliver(inputs: readonly (string | ComposerSubmission)[]): number
+  /** Esc with queued input: abort the turn and park the queued previews as a
+   *  dock, as Claude Code does. The backend drops its queued copies with the
+   *  aborted turn, and nothing re-delivers them until the user sends the
+   *  dock (⏎ / `deliverDocked`) or retracts items (Alt+↑ / the ↑ editor).
+   *  Returns the count docked; 0 means nothing new was parked (the caller
+   *  may still `cancel`). */
+  interruptAndDock(): number
+  /** Deliver every docked queued message now (⏎ on an empty draft), FIFO,
+   *  exactly once. Rows still awaiting their interrupt receipt's verdict
+   *  stay parked, since their backend copies may yet run, and the call
+   *  notifies how many were held. Returns the count sent. */
+  deliverDocked(): number
+  /**
+   * Lossless swap: retract the docked row `id` into the composer and park
+   * the live draft (text + staged images) at the pending tail as a new
+   * docked row, in one queue write. Nothing sends and no undo history is
+   * lost. The backend never saw the parked draft, so it stays outside the
+   * interrupt-receipt fence: a settling receipt must not un-dock it.
+   * Returns false when `id` is no longer a docked row (claimed, discarded or
+   * un-docked meanwhile), or while an unsettled interrupt receipt still
+   * holds the row.
+   */
+  swapDockedForDraft(id: string, draft: { text: string; images?: readonly ComposerImageRef[] }): boolean
   /** Rewind the conversation to a past user message (the double-Esc rewind):
    *  forks the session through that message, swaps in a fresh agent, and
    *  returns the message text for re-editing — or `null` when unwritable.
@@ -351,8 +553,11 @@ export interface ChannelUi {
    *  The history replays unchanged; only the request route changes. */
   switchModel(provider: string, model: string): Promise<boolean>
   /** The live route's effort levels + adapter default for the `/effort`
-   *  slider; empty `efforts` after notifying when unsupported/unavailable. */
-  listEfforts(): Promise<{ efforts: readonly EffortOption[]; defaultEffort: string | undefined }>
+   *  slider; empty `efforts` after notifying when unsupported/unavailable.
+   *  `levelsFallback` is true when the ladder is the CLI-standard
+   *  compatibility offer (the model row declares no tiers of its own) —
+   *  the slider marks it as such instead of implying the model's list. */
+  listEfforts(): Promise<{ efforts: readonly EffortOption[]; defaultEffort: string | undefined; levelsFallback?: true }>
   /** Set one effort level by id (validated against the adapter list);
    *  false + a notify when the id is not offered. Persists like the old
    *  Shift+Tab cycle (~/.dsh-tui/effort.json). */
@@ -369,6 +574,14 @@ export interface ChannelUi {
   readonly modeIndex: number
   /** Shift+Tab: advance to the next configured session mode. */
   cycleMode(): Promise<void>
+  backendChannels(): BackendChannelsHost | undefined
+  backendModes(): BackendModesHost | undefined
+  backendMcp(): BackendMcpHost | undefined
+  /** Backend-owned `/init`; DSH keeps its synchronous initWorkspace path. */
+  backendInit(): { run(): Promise<boolean> } | undefined
+  /** `/goal` on a session with the typed `goals` capability; undefined
+   *  otherwise (DSH's /goal is its command registry row). */
+  backendGoals(): BackendGoalsHost | undefined
   /** Read the official permission preset roster and current identity. */
   permissionPresets(): PermissionPresetSnapshot
   /**
@@ -434,6 +647,13 @@ export interface ChannelUi {
    *  without the plugin, so `/login` renders exactly what it did before. */
   oauthProviderStatuses(): Promise<readonly OAuthProviderStatus[] | undefined>
   /**
+   * The bound backend session's own sign-in for `/login` (status lines, the
+   * host's OAuth sign-in preselected on the backend's provider, reconnect on
+   * the fresh credential); undefined for a DSH session, whose `/login`
+   * reports the DSH credentials.
+   */
+  backendAuth(): BackendAuthHost | undefined
+  /**
    * Runtime capabilities for the `/settings` screen, over the settings /
    * credentials seams; undefined when the composition lacks the settings
    * service (the screen then renders plugin sections as unavailable and
@@ -451,7 +671,18 @@ export interface ChannelUi {
   listFiles(): Promise<readonly string[]>
   /** Every session the persistence backend stores, classified and unfiltered
    *  — the browser (`/resume`) decides which of them a given view shows. */
-  listSessions(): Promise<readonly SessionSummary[]>
+  /** Last successful source-scoped listing for first paint; never authoritative. */
+  cachedSessions(): readonly SessionSummary[] | undefined
+  listSessions(onEnriched?: (summary: SessionSummary) => void, onPartial?: (rows: readonly SessionSummary[]) => void): Promise<readonly SessionSummary[]>
+  /** Other coding agents on this machine that have conversations (a cheap
+   *  presence probe; nothing is read or remembered). */
+  listForeignSources(): Promise<readonly ForeignSource[]>
+  /** One source's conversations, newest first; `onRow` streams rows as the
+   *  scan finds them. Unchanged conversations are not re-read within a run. */
+  listForeignSessions(agentId: string, onRow?: (row: ForeignSessionRow) => void): Promise<readonly ForeignSessionRow[]>
+  /** Import one foreign conversation unless already present; a repeat
+   *  request for a conversation being imported joins the running import. */
+  importForeignSession(agentId: string, key: string): Promise<ForeignImportOutcome>
   /** Trailing exchanges of a persisted session, for the browser's preview. */
   previewSession(sessionId: string): Promise<readonly PreviewEntry[]>
   /** Mark a session for `dsh-tui --resume` on the next launch. */
@@ -477,6 +708,10 @@ export interface ChannelUi {
   renameSessionTo(sessionId: string, title: string): Promise<boolean>
   /** Manually compact the session history (`/compact`); no-op notify when the leaf lacks a compaction service. */
   compact(): void
+  /** Abort an in-flight manual compaction (`Esc` while it runs). No-op when
+   *  none is running or the running one belongs to another process/host: only
+   *  this channel's own request carries an abort signal it may fire. */
+  cancelCompact(): void
   /** Render a multi-line local report in the transcript (`/status`,
    *  `/doctor`, …): a `local` row plus one `local-output` row per line. */
   pushLocal(title: string, lines: readonly string[]): void
@@ -558,17 +793,60 @@ export interface ChannelUi {
    * time; agent swaps (/resume /rewind /new) are reflected immediately.
    */
   traceEvents(): readonly RawTrajEvent[]
+  /**
+   * The trajectory source's own three-state report (see
+   * {@link TrajectorySource}): 'unsupported' when the composition mounted no
+   * trajectory source at all, 'empty'/'supported' when it did (the DSH
+   * extension reading its raw history; any other backend via the core's
+   * AgentEvent fold). Every trajectory surface (/trace, Ctrl+T, the sidebar
+   * tab, the ⤢ outlet) reads this instead of guessing from the event count,
+   * so "not adapted yet" never shows up as "no turns yet".
+   */
+  trajectorySource(): TrajectorySource
+  /**
+   * The trajectory's drilldown lanes: every subagent whose child-lane
+   * events the mounted source folded into their own log. A source that
+   * attributes no lanes (DSH raw history today) answers an empty roster, and
+   * the scope filter is then not offered rather than faked over the main
+   * ledger.
+   */
+  trajectoryLanes(): readonly TrajectoryLane[]
+  /**
+   * One lane's own raw-event snapshot (`descendants` unset), or the agent's
+   * whole subtree merged in emission order (`descendants` set). Same
+   * append-only, prefix-identity contract as {@link traceEvents}, so the
+   * scoped fold stays incremental like the main one.
+   */
+  trajectoryLaneEvents(agentId: string, descendants?: boolean): readonly RawTrajEvent[]
+  /**
+   * Localized one-phrase label naming the mounted trajectory source (the
+   * raw DSH session log, or the backend-neutral AgentEvent fold), so the
+   * fullscreen view says what it is reading instead of guessing from the
+   * backend id.
+   */
+  trajectoryBackendLabel(): string
   setDiffLayout(layout: 'auto' | 'split' | 'unified'): void
   setThinkingFold(mode: 'preview' | 'full'): void
+  setJobGroupFold(mode: JobGroupFoldMode): void
   setToolBackground(background: ToolBackground): void
   setScrollGutter(mode: ScrollGutterMode): void
   setShowBackToBottom(visible: boolean): void
   setPageMargin(setting: PageMarginSetting): void
   setFoldTerminalCommand(enabled: boolean): void
+  setTurnUsageRow(enabled: boolean): void
   setPromptSessionLabel(enabled: boolean): void
   setExpandEditor(enabled: boolean): void
   setSmoothStreaming(enabled: boolean): void
   setStatusBar(config: Partial<StatusBarConfig>): void
   setWhale(visible: boolean): void
+  setSplashFont(setting: SplashFontSetting): void
+  /** Apply a minimal-UI change (see the public Channel type). */
+  setMinimalUi(enabled: boolean): void
+  /** @deprecated Pre-rename alias of {@link setMinimalUi}. Kept for plugin
+   *  scenes that call `channel.setMinimal()`; use `setMinimalUi`.
+   *
+   *  REMOVAL: v0.13, under the same audit as `minimal` above — a scene-plugin
+   *  consumption scan of `.minimal` / `.setMinimal(` with zero remaining
+   *  callers. */
   setMinimal(enabled: boolean): void
 }

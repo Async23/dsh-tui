@@ -17,6 +17,8 @@ git submodule update --init --recursive
 
 上游贡献准入要求只针对提交给上游的 PR；本个人 fork 的修改按仓库维护者授权处理。
 
+若上游改写了 Git 历史，先根据旧 Release 的基础提交定位新历史中内容相同的节点，并比较两者的 tree。按已核对的基线做三方合并，合并提交同时保留个人分支与上游的父节点；不要用默认 merge-base 把历史改写误判成新的源码差异，也不要强推覆盖个人分支历史。
+
 ## 构建与验证
 
 ```sh
@@ -26,6 +28,8 @@ pnpm verify:release
 node --import tsx/esm scripts/verify-auto-recap.tsx
 pnpm release:pack
 ```
+
+同步源码时，合并前还须按[共享开发契约](contributing.md)运行全部四个 CI 回归组。
 
 在 macOS 上，系统临时目录可能使 Unix socket 路径超过长度限制；遇到注入通道测试的路径错误时，可用 `TMPDIR=/tmp pnpm verify:build` 运行同一套检查。中文界面断言用 `DSH_TUI_LANG=zh`，与 CI 一致。无头颜色测试不要继承 tmux 的颜色降级环境；在 tmux 中运行时可使用 `env -u TMUX -u NO_COLOR TMPDIR=/tmp DSH_TUI_LANG=zh pnpm verify:build`，不改变实际终端配置。
 

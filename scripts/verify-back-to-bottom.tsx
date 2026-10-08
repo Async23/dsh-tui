@@ -29,8 +29,9 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, { render, Alternat
   import('./lib/term-test.mjs'),
 ])
 
-const [{ Config }, { createInitialChannelView }, { createPreferences }] = await Promise.all([
+const [{ Config }, { configValues }, { createInitialChannelView }, { createPreferences }] = await Promise.all([
   import('../src/dsh-adapter/index.js'),
+  import('../src/dsh-adapter/compat/settings.js'),
   import('../src/dsh-adapter/channel/state.js'),
   import('../src/dsh-adapter/channel/preferences.js'),
 ])
@@ -43,8 +44,8 @@ function check(name: string, ok: boolean, extra = '') {
   if (!ok) failed += 1
 }
 
-check('插件配置默认显示按钮', Config({}).showBackToBottom === true)
-check('插件配置保留显式关闭', Config({ showBackToBottom: false }).showBackToBottom === false)
+check('插件配置默认显示按钮', (configValues(Config({})).showBackToBottom ?? true) === true)
+check('插件配置保留显式关闭', configValues(Config({ showBackToBottom: false })).showBackToBottom === false)
 const launch = { model: 'probe', cwd: '/tmp', provider: 'test' }
 const identity = { agentId: 'probe', mode: { id: 'default' }, cwdDescription: '/tmp' }
 const defaults = createInitialChannelView(launch, identity)

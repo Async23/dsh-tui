@@ -3,7 +3,7 @@ import chalk from 'chalk'
 import { Box, Text } from '../../ui.js'
 import { t } from '../../i18n.js'
 import { StreamingMarkdown } from '../StreamingMarkdown.js'
-import { formatDuration } from '../../terminal-utils/format.js'
+import { formatDuration, formatTokens } from '../../terminal-utils/format.js'
 import {
   THINKING_SPINNER_FRAMES,
   THINKING_SPINNER_INTERVAL_MS,
@@ -11,8 +11,9 @@ import {
 } from '../../terminal-utils/figures.js'
 import { BRAND, ICE } from '../shimmer.js'
 import { interpolateColor } from '../Spinner/spinnerUtils.js'
-import { isMinimalMode } from '../../minimalMode.js'
+import { isMinimalUiMode } from '../../minimalUiMode.js'
 import type { ClickEvent } from '../../ink/events/click-event.js'
+import { primaryComboString } from '../../utils/keymap.js'
 
 /** Preview body rows — a FIXED row count (kimicode-style constant-height
  *  ticker). Ink's truncate slices the whole string across newlines as one
@@ -43,13 +44,19 @@ type Props = {
   preview?: boolean
   /** Thinking wall-clock duration once the reasoning block settled (ms). */
   durationMs?: number
+  /** Estimated thinking tokens when the backend reports thinking only as a
+   *  count (no text). Renders a one-line `Thinking · ~N tokens` header while
+   *  streaming and `Thought · ~N tokens` once settled; text, when present,
+   *  still wins. */
+  reasoningTokens?: number
   /** Message-selection mode highlight. */
   isSelected?: boolean
   onClick?(event: ClickEvent): void
 }
 
 /**
- * Thinking block: settled rows fold to `⚓ Thinking (ctrl+o to expand)`;
+ * Thinking block: settled rows fold to `⚓ Thinking` plus the localized
+ * ctrl+o expand hint (hint-expand-ctrl-o);
  * streaming rows switch between a three-line preview and the full reasoning
  * text on click. The live leading mark is a rotating braille spinner
  * (`⠋⠙⠹…`, Kimi Code style), settling back to the static anchor (`⚓`). When
@@ -65,10 +72,22 @@ export function AssistantThinkingMessage({
   streaming = false,
   preview = false,
   durationMs,
+  reasoningTokens,
   isSelected = false,
   onClick,
 }: Props): React.ReactNode {
-  if (!thinking) return null
+  if (!thinking) {
+    if (reasoningTokens === undefined) return null
+    return (
+      <ThinkingTokensHeader
+        tokens={reasoningTokens}
+        streaming={streaming}
+        marginTopOnTurn={marginTopOnTurn}
+        isSelected={isSelected}
+        onClick={onClick}
+      />
+    )
+  }
 
   // The preview ticker tracks the newest ARRIVED line (smooth streaming must
   // not lag it behind the reveal); the expanded body below paints `thinking`
@@ -91,10 +110,10 @@ export function AssistantThinkingMessage({
 
   // Kimi Code style blue pulse: the streaming glyph breathes along the
   // header's brand→ice ladder, one sine period per ~7 frames (≈0.56s) —
-  // lively without strobing. Minimal mode drops the color (plain glyph);
+  // lively without strobing. The minimal UI drops the color (plain glyph);
   // settled always keeps the plain dim anchor.
-  const label = `${t('thinking-label')}${duration}${streaming ? '…' : ` ${t('hint-expand-ctrl-o')}`}`
-  const minimal = isMinimalMode()
+  const label = `${t('thinking-label')}${duration}${streaming ? '…' : ` ${t('hint-expand-ctrl-o', { key: primaryComboString('transcript') })}`}`
+  const minimalUi = isMinimalUiMode()
   const pulse = (Math.sin(frame * 0.9) + 1) / 2
   const pulseColor = interpolateColor(BRAND, ICE, pulse)
   const frameText = THINKING_SPINNER_FRAMES[frame % THINKING_SPINNER_FRAMES.length]!
@@ -107,12 +126,12 @@ export function AssistantThinkingMessage({
   const header =
     streaming ? (
       <Box flexDirection="row">
-        <Text>{minimal ? frameText : chalk.rgb(pulseColor.r, pulseColor.g, pulseColor.b).bold(frameText)}</Text>
+        <Text>{minimalUi ? frameText : chalk.rgb(pulseColor.r, pulseColor.g, pulseColor.b).bold(frameText)}</Text>
         {/* 流式行同样可点击折叠（hover 提亮标签给出指示，与落定态一致） */}
         <Text dimColor={!hovered} color={hovered ? 'text' : undefined} italic>{` ${label}`}</Text>
       </Box>
     ) : (
-      <Text italic dimColor={!hovered} color={hovered ? 'text' : undefined}>{`${minimal ? '*' : THINKING_SETTLED_MARKER} ${label}`}</Text>
+      <Text italic dimColor={!hovered} color={hovered ? 'text' : undefined}>{`${minimalUi ? '*' : THINKING_SETTLED_MARKER} ${label}`}</Text>
     )
 
   if (preview) {
@@ -200,6 +219,55 @@ export function AssistantThinkingMessage({
           cost at O(new content) instead of re-laying out the whole block. */}
         <StreamingMarkdown dimColor>{thinking}</StreamingMarkdown>
       </Box>
+    </Box>
+  )
+}
+
+/**
+ * Count-only thinking: the backend streams an
+ * estimated token count but no thinking text. One header line in the same
+ * visual language as a text block — the pulsing braille spinner while live,
+ * the settled anchor afterwards — with nothing to expand.
+ */
+function ThinkingTokensHeader({
+  tokens,
+  streaming,
+  marginTopOnTurn,
+  isSelected,
+  onClick,
+}: {
+  tokens: number
+  streaming: boolean
+  marginTopOnTurn: boolean
+  isSelected: boolean
+  onClick?(event: ClickEvent): void
+}): React.ReactNode {
+  const [frame, setFrame] = React.useState(0)
+  React.useEffect(() => {
+    if (!streaming) return
+    const interval = setInterval(() => setFrame(f => f + 1), THINKING_SPINNER_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [streaming])
+  const minimalUi = isMinimalUiMode()
+  const n = formatTokens(tokens)
+  const pulse = (Math.sin(frame * 0.9) + 1) / 2
+  const pulseColor = interpolateColor(BRAND, ICE, pulse)
+  const frameText = THINKING_SPINNER_FRAMES[frame % THINKING_SPINNER_FRAMES.length]!
+  return (
+    <Box
+      flexDirection="row"
+      marginTop={marginTopOnTurn ? 1 : 0}
+      backgroundColor={isSelected ? 'messageActionsBackground' : undefined}
+      onClick={onClick}
+    >
+      {streaming ? (
+        <>
+          <Text>{minimalUi ? frameText : chalk.rgb(pulseColor.r, pulseColor.g, pulseColor.b).bold(frameText)}</Text>
+          <Text dimColor italic>{` ${t('thinking-tokens-live', { n })}`}</Text>
+        </>
+      ) : (
+        <Text dimColor italic>{`${minimalUi ? '*' : THINKING_SETTLED_MARKER} ${t('thinking-tokens-done', { n })}`}</Text>
+      )}
     </Box>
   )
 }

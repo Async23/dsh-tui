@@ -381,6 +381,14 @@ const typeKeys = async (s: string, stepMs = 40) => {
   await typeKeys('/theme')
   await sleep(200) // 固定窗:pacing 等浮层 key-ready，无文本可观测
   stdin.write('\r')
+  // nltheme 排在内置主题之后；内置加长（claude 族）后它不一定在首屏窗口。
+  // 步进焦点直到该行入窗——断言的是「换行压平渲染」而非「首屏可见性」，
+  // 不依赖内置主题的数量。
+  for (let step = 0; step < 24; step++) {
+    if (await settled(() => screenLines().some(l => l.includes('Foo Bar NL')))) break
+    stdin.write('\x1b[B')
+    await sleep(25) // 固定窗:pacing 逐键步进
+  }
   // 断言在 settle 捕获的同一快照 lines 上求值，无重读分叉。
   let lines: string[] = []
   await settle(() => {
@@ -401,9 +409,14 @@ const typeKeys = async (s: string, stepMs = 40) => {
 
 // ------------------------------------------------------------ RewindPicker
 {
-  const bufBefore = term.buffer.active.length
+  const bufBeforeNotice = term.buffer.active.length
   stdin.write('\x1b') // 双击 Esc（空输入）打开 rewind——双击判定窗口是墙钟语义
-  await sleep(100) // 固定窗:墙钟 双击 Esc 判定窗内的第二次按键间隔
+  // 个人版仅在通知可见时为其留一行。先钉住第一下 Esc 的通知增长，
+  // 再单独测第二下打开浮层是否零增长，不能把两种布局变化混为一谈。
+  check('首次 Esc 提示在屏', await settled(() => screenLines().some(l => l.includes('再次按 Esc'))))
+  const bufBefore = term.buffer.active.length
+  check('首次 Esc 只为通知增加一行', bufBefore === bufBeforeNotice + 1,
+    `${bufBeforeNotice} → ${bufBefore}`)
   stdin.write('\x1b')
   // 焦点 0 = 最新用户消息；首项带 'last message' 描述（2 行）。
   check('rewind 焦点 0 在屏（首项 2 行）', await settled(() => focusLineVisible('rewind 消息 29')))

@@ -22,7 +22,9 @@ import { clearTranscriptImageCacheForTests, loadTranscriptImageFull } from '../l
 import { loadSharp } from '../lib/types/dsh-adapter/sharp.js'
 import instances from '../lib/types/ink/instances.js'
 import { createNode, type DOMElement } from '../lib/types/ink/dom.js'
-import { encodeSixel, SixelEncoderCache } from '../lib/types/ink/sixel-codec.js'
+import { encodeSixel, SixelEncoderCache, sixelCoveragePaints } from '../lib/types/ink/sixel-codec.js'
+import { MathBlock } from '../lib/types/components/MathBlock.js'
+import { applyMathRendering } from '../lib/types/tuiDisplayPrefs.js'
 import { SixelGraphicsManager } from '../lib/types/ink/sixel-graphics.js'
 import { selectTerminalImageProtocol } from '../lib/types/ink/terminal-image-protocol.js'
 import { CharPool, HyperlinkPool, StylePool, createScreen, setCellAt } from '../lib/types/ink/screen.js'
@@ -68,6 +70,129 @@ await boundsCache.render({ assetKey: 'large-bounds', request: { source, width: 1
 await assert.rejects(boundsCache.render({ assetKey: 'large-bounds', request: { width: 1200, height: 2, background: '#ffffff' } }),
   'cache hits must not bypass the ordinary source presentation budget')
 await assert.rejects(encodeSixel({ source: { ...source, data: new Uint8Array(1) }, width: 2, height: 2, background: '#000000' }))
+// Transparent rasters go out as-is: the DCS keeps background select 1 ("no
+// action") and empty areas are never painted, so a sixel terminal shows its
+// own background (a wallpaper included) through a formula or through the
+// transparent margins of an illustration. Everything else still composites
+// onto a colour, because Sixel cannot express the partial alpha that keeps
+// shadows and translucent panels smooth.
+{
+  const clearSource: TerminalImageSource = { width: 2, height: 2, data: new Uint8Array(16) }
+  const clear = await encodeSixel({ source: clearSource, width: 2, height: 2, transparent: true })
+  assert.match(clear.data, /^\x1bP0;1;q/u, 'a transparent raster keeps the no-action background select')
+  const body = /^\x1bP0;1;q([\s\S]*)\x1b\\$/u.exec(clear.data)![1]
+  const onMagenta = new Uint8Array(decode(body, { fillColor: 0xffff00ff }).data32.buffer)
+  const onGreen = new Uint8Array(decode(body, { fillColor: 0xff00ff00 }).data32.buffer)
+  assert.deepEqual([...onMagenta.slice(0, 4)], [255, 0, 255, 255], 'empty pixels take whatever the terminal fills with')
+  assert.deepEqual([...onGreen.slice(0, 4)], [0, 255, 0, 255], 'so they stay unpainted instead of baked to one colour')
+  // Coverage is binary (see TRANSPARENT_INK_THRESHOLD): dropping anti-aliased
+  // pixels outright is what thinned formula strokes to hairlines.
+  const edge: TerminalImageSource = { width: 1, height: 1, data: new Uint8Array([52, 57, 69, 128]) }
+  const strongest = await encodeSixel({ source: edge, width: 1, height: 1, transparent: true })
+  const strongestBody = /^\x1bP0;1;q([\s\S]*)\x1b\\$/u.exec(strongest.data)![1]
+  const strongestPixel = [...new Uint8Array(decode(strongestBody, { fillColor: 0xffff00ff }).data32.buffer).slice(0, 4)]
+  // The palette round trip may shift a channel by a level; the point is that a
+  // partially covered pixel survives as solid ink instead of vanishing.
+  assert.equal(strongestPixel[3], 255, 'coverage above the threshold becomes solid ink')
+  assert.ok(Math.abs(strongestPixel[0]! - 52) <= 2 && Math.abs(strongestPixel[1]! - 57) <= 2,
+    `and keeps the ink colour (${strongestPixel.join(',')})`)
+  const faint: TerminalImageSource = { width: 1, height: 1, data: new Uint8Array([52, 57, 69, 32]) }
+  const faintest = await encodeSixel({ source: faint, width: 1, height: 1, transparent: true })
+  const faintestBody = /^\x1bP0;1;q([\s\S]*)\x1b\\$/u.exec(faintest.data)![1]
+  assert.deepEqual([...new Uint8Array(decode(faintestBody, { fillColor: 0xffff00ff }).data32.buffer).slice(0, 4)],
+    [255, 0, 255, 255], 'and coverage below it stays transparent')
+  const painted = await encodeSixel({ source: clearSource, width: 2, height: 2, background: '#ffffff' })
+  assert.ok(painted.data.length > clear.data.length, 'a backing colour still paints the whole raster')
+  const defaulted = await encodeSixel({ source: clearSource, width: 2, height: 2 })
+  assert.ok(defaulted.data.length > clear.data.length, 'a raster that is not transparent always paints a backing')
+}
+// Line art (typeset formulas) keeps a SOLID transparent mask: the 25%–62.5%
+// coverage band the 2×2 Bayer dither turns into a checkerboard is exactly
+// where thin strokes live (fraction-bar edges, radical overlines, small
+// superscripts — real MathJax rasters measured ~30–50% of their ink pixels in
+// that band), and dithering there is the user-visible speckled, faded look.
+// A request marked lineArt paints the whole band solid; photos and sprites
+// keep the dithered mask byte-for-byte.
+{
+  const midFill = (width: number, height: number): TerminalImageSource => {
+    const data = new Uint8Array(width * height * 4)
+    // 112 ≈ 44% coverage, centred in the dither plateau (96–127 after
+    // quantization) so the exact Bayer expectation is platform-stable.
+    for (let index = 0; index < data.length; index += 4) data.set([52, 57, 69, 112], index)
+    return { data, width, height }
+  }
+  const paintedMap = async (request: SixelEncodeRequest): Promise<boolean[]> => {
+    const raster = await encodeSixel(request)
+    const body = /^\x1bP0;1;q([\s\S]*)\x1b\\$/u.exec(raster.data)![1]
+    return [...decode(body, { fillColor: 0xffff00ff }).data32].map(pixel => pixel !== 0xffff00ff)
+  }
+  const countRow = (painted: boolean[], width: number, row: number): number =>
+    painted.slice(row * width, (row + 1) * width).filter(Boolean).length
+  const longestRun = (painted: boolean[], width: number, row: number): number => {
+    let best = 0
+    let run = 0
+    for (let x = 0; x < width; x++) {
+      run = painted[row * width + x] ? run + 1 : 0
+      best = Math.max(best, run)
+    }
+    return best
+  }
+  // a) The dither band, both policies. A constant ~44% coverage area is what
+  // an anti-aliased stroke edge looks like after quantization.
+  const patchSource = midFill(4, 4)
+  const speckled = await paintedMap({ source: patchSource, width: 4, height: 4, transparent: true })
+  const solid = await paintedMap({ source: patchSource, width: 4, height: 4, transparent: true, lineArt: true })
+  const expectedBayer = Array.from({ length: 16 }, (_, index) => sixelCoveragePaints(112, index % 4, Math.floor(index / 4)))
+  assert.deepEqual(speckled, expectedBayer, 'the unmarked (photo) mask still dithers by Bayer position')
+  assert.equal(speckled.filter(Boolean).length, 8, 'a mid-band area thins to half its pixels under the dither')
+  assert.equal(solid.filter(Boolean).length, 16, 'line art paints the whole dither band solid — reverting the strategy fails here')
+  // A thin bar must be CONTINUOUS under line art (the readable-stroke goal)
+  // while the dither keeps breaking it (the "hairline" symptom).
+  const barSource = midFill(8, 2)
+  const speckledBar = await paintedMap({ source: barSource, width: 8, height: 2, transparent: true })
+  const solidBar = await paintedMap({ source: barSource, width: 8, height: 2, transparent: true, lineArt: true })
+  for (const row of [0, 1]) {
+    assert.equal(countRow(speckledBar, 8, row), 4, 'the dithered bar keeps only every other pixel')
+    assert.equal(longestRun(speckledBar, 8, row), 1, 'and reads as speckles, not a line')
+    assert.equal(countRow(solidBar, 8, row), 8, 'the line-art bar paints every pixel')
+    assert.equal(longestRun(solidBar, 8, row), 8, 'as one continuous solid run')
+  }
+  // b) Constructive byte-identity: pure 0/255 sources (screenshots, pixel art)
+  // encode byte-identically under either policy, and a composited raster
+  // ignores lineArt entirely — photographs are untouched by this fix.
+  const shot: TerminalImageSource = {
+    width: 2, height: 2,
+    data: new Uint8Array([9, 8, 7, 255, 0, 0, 0, 0, 0, 0, 0, 0, 210, 220, 230, 255]),
+  }
+  assert.equal((await encodeSixel({ source: shot, width: 2, height: 2, transparent: true, lineArt: true })).data,
+    (await encodeSixel({ source: shot, width: 2, height: 2, transparent: true })).data,
+    'pure 0/255 sources are byte-identical under either mask policy')
+  assert.equal((await encodeSixel({ source: shot, width: 2, height: 2, background: '#101010', lineArt: true })).data,
+    (await encodeSixel({ source: shot, width: 2, height: 2, background: '#101010' })).data,
+    'a composited (non-transparent) raster ignores lineArt')
+  // c) The marker reaches the encoder: a line-art placement keys its own raster
+  // and its request carries the flag; an unmarked placement does not.
+  const chainJobs: Array<{ request: SixelEncodeRequest; resolve: (value: SixelRaster) => void }> = []
+  const chain = new SixelGraphicsManager(() => {}, request => new Promise(resolve => chainJobs.push({ request, resolve })))
+  const blankScreen = () => createScreen(40, 16, new StylePool(), new CharPool(), new HyperlinkPool())
+  chain.setCellSize({ width: 10, height: 20 })
+  chain.beginFrame(40, 16)
+  const formulaPlacement: TerminalImagePlacement = {
+    node: createNode('ink-image'), source: patchSource, x: 2, y: 3, columns: 4, rows: 4,
+    presentation: 'transcript', transparent: true, lineArt: true,
+  }
+  chain.prepare(formulaPlacement)
+  chain.prepare({ ...formulaPlacement, node: createNode('ink-image'), lineArt: undefined })
+  chain.reconcile(blankScreen(), blankScreen())
+  assert.equal(chainJobs.length, 1, 'the worker encodes one variant at a time')
+  chainJobs[0].resolve(raster)
+  await until(() => chainJobs.length === 2, 'the line-art marker keys a separately encoded raster')
+  assert.ok(chainJobs.some(job => job.request.transparent === true && job.request.lineArt === true),
+    'the formula request carries the line-art marker into the encoder')
+  assert.ok(chainJobs.some(job => job.request.transparent === true && job.request.lineArt === undefined),
+    'an unmarked (photo) request does not')
+  chain.dispose()
+}
 const tail = decodeRaster((await encodeSixel({ source, width: 13, height: 7, background: '#123456' })).data)
 assert.equal(tail.width, 13)
 assert.equal(tail.height, 7, 'last six-pixel band must not extend raster dimensions')
@@ -589,4 +714,29 @@ for (const [name, env, caps] of [
 }
 for (const key of Object.keys(process.env)) if (!(key in oldEnv)) delete process.env[key]
 Object.assign(process.env, oldEnv)
-console.log('Sixel codec, async lifecycle, fallback, erase and preview regression passed')
+
+// The mint point: a MathBlock formula in a real Sixel terminal marks its
+// placement lineArt, so the typeset raster reaches the encoder with the solid
+// mask strategy (the wiring <Image lineArt> → ink-image attribute → placement).
+{
+  applyMathRendering('image')
+  const mathInput = new Input()
+  const mathOutput = new Output(mathInput, '\x1b[?61;4;28c')
+  const mathTree = () => <ThemeProvider theme="dark"><AlternateScreen><Box width={50} height={16} flexDirection="column">
+    <Text>MATH</Text>
+    <MathBlock token={{ type: 'mathBlock', raw: '$$\n\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}\n$$', text: '\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}' }} dimColor={false} forceWidth={50} />
+    <Text>AFTER</Text>
+  </Box></AlternateScreen></ThemeProvider>
+  const mathApp = await render(mathTree(), { stdin: mathInput, stdout: mathOutput, stderr, exitOnCtrlC: false, patchConsole: false })
+  try {
+    const host = instances.get(mathOutput) as unknown as { frontFrame: { images?: TerminalImagePlacement[] } }
+    await until(() => (host.frontFrame.images ?? []).some(p => p.lineArt === true), 'the typeset formula placement carries the line-art marker')
+    assert.ok((host.frontFrame.images ?? []).some(p => p.lineArt === true && p.transparent === true && p.presentation === 'transcript'),
+      'a floating formula is transparent (masked) AND line art (solid mask) in the transcript')
+  } finally {
+    applyMathRendering('auto')
+    mathOutput.isTTY = false
+    mathApp.unmount()
+  }
+}
+console.log('Sixel codec, async lifecycle, fallback, erase, preview and line-art regression passed')

@@ -28,7 +28,7 @@
  *      picker can paint the previous list while the fresh one loads,
  *      exactly as before.
  */
-import type { ChatRow, PermissionPresetSnapshot } from '../dsh-adapter/channel.js'
+import type { BackendModeOption, ChatRow, PermissionPresetSnapshot } from '../dsh-adapter/channel.js'
 import type { TranscriptImage } from '../dsh-adapter/transcript-images.js'
 import type { TuiRewindMode } from '../dsh-adapter/extension-events.js'
 import type { TuiWorkspaceCommandResult } from '../workspaces.js'
@@ -58,14 +58,35 @@ export type ChatOverlay =
     }
   | { kind: 'model'; index: number }
   | { kind: 'skills'; index: number }
+  | { kind: 'migrate'; index: number }
+  | { kind: 'migrate-confirm' }
   | { kind: 'activity'; index: number }
   | { kind: 'color'; index: number }
   | { kind: 'effort'; index: number }
   | { kind: 'preset'; index: number }
   | { kind: 'theme'; index: number }
   | { kind: 'permission'; index: number; snapshot: PermissionPresetSnapshot }
+  /** /permission over a backend's native permission modes (the typed
+   * modes capability; a DSH session answers none and keeps the preset
+   * variant above). The frozen mode list and the live current id ride the
+   * open because the capability read is synchronous. */
+  | { kind: 'mode'; index: number; modes: readonly BackendModeOption[]; currentId: string | undefined }
+  /** 内核选择器（/kernel 与启动页「内核」入口）。只带焦点下标——目录是
+   *  Chat 的派生值（buildKernelCatalog 的输出，含异步探测结果），每次渲染
+   *  现算，所以探测落地后选择器自己就刷新了，不需要把名册冻进 overlay。 */
+  | { kind: 'kernel'; index: number }
+  /** SDK 安装向导（内核选择器的「未安装」行 Enter 进入）。与 kernel 同为
+   *  「盖在落地页之上」的姿态；向导的步骤态（确认/安装中/结果）是异步进程
+   *  状态，按本文件头注释第 3 条的分工留在 Chat.tsx，不冻进 overlay。 */
+  | { kind: 'sdk-install' }
   | { kind: 'plan'; index: number }
   | { kind: 'lang'; index: number }
+  /** `/panel` 无参的选择器：列出「已启用 ∩ 已注册」的面板（含插件）。 */
+  | { kind: 'panel'; index: number }
+  /** `/channel` 渠道档案选择器（仅 channels 能力的后端，即 Claude）：只带
+   *  焦点下标——名册由后端渠道宿主派生，
+   *  切换/导入后选择器自己就刷新成新状态，不需要把名册冻进 overlay。 */
+  | { kind: 'channel'; index: number }
   | { kind: 'history'; query: string; cursor: number; focus: number }
   | {
       kind: 'rewind'
@@ -80,6 +101,15 @@ export type ChatOverlay =
   // closing so n/N keep walking the matches.
   | { kind: 'search' }
   | { kind: 'tips' }
+  /**
+   * 帮助菜单（第八版：用户实测——启动页点「帮助」直接进了聊天页 ✗）。这个
+   * variant 只在**落地页**上打开：HelpMenu 经 Chat 的 pickerPanels 挂进
+   * OverlayAbove，盖在启动页之上（与参数选择器/工作区菜单同一姿态），
+   * Esc / 点空白 / 再点帮助入口收回，回到启动页（草稿/参数/焦点原样）。
+   * 聊天页的 `?`//help` 不走这里：那边的 helpOpen 状态与 PromptInput 内
+   * 渲染保持原样（另一个屏的事，刻意不改）。
+   */
+  | { kind: 'help' }
   /**
    * Click-to-act file menu: opened by clicking a file path in the
    * transcript (tool cards, markdown code spans / plain text, file://
@@ -130,7 +160,7 @@ export type ChatOverlayAction =
    *  with the authoritative focus (model list / preset roster), or a mouse
    *  click on a row of a panel that stays open (effort slider, workspace
    *  flow). Ignored unless that panel is still up. */
-  | { type: 'set-index'; kind: 'model' | 'preset' | 'effort' | 'permission' | 'workspace-flow' | 'rewind' | 'file-actions'; index: number }
+  | { type: 'set-index'; kind: 'model' | 'preset' | 'effort' | 'permission' | 'mode' | 'kernel' | 'workspace-flow' | 'rewind' | 'file-actions' | 'panel' | 'channel'; index: number }
   /** Edit the history-search draft (query text, caret, focused match). */
   | { type: 'history-edit'; query?: string; cursor?: number; focus?: number }
   /** Workspace flow: an action is running (keys except Esc are swallowed). */
@@ -198,14 +228,19 @@ export function chatOverlayReducer(state: ChatOverlay, action: ChatOverlayAction
         || state.kind === 'workspace-flow'
         || state.kind === 'model'
         || state.kind === 'skills'
+        || state.kind === 'migrate'
         || state.kind === 'activity'
         || state.kind === 'color'
         || state.kind === 'effort'
         || state.kind === 'preset'
         || state.kind === 'theme'
         || state.kind === 'permission'
+        || state.kind === 'mode'
         || state.kind === 'plan'
         || state.kind === 'lang'
+        || state.kind === 'panel'
+        || state.kind === 'kernel'
+        || state.kind === 'channel'
         || state.kind === 'file-actions'
       ) {
         return { ...state, index: wrapIndex(state.index, action.delta, action.count) }
@@ -265,6 +300,7 @@ export function dialogOverlayVisible(
     workspaceTargetCount: number
     effortOptionCount: number
     presetOptionCount: number
+    panelCount?: number
   },
 ): boolean {
   switch (overlay.kind) {
@@ -280,8 +316,16 @@ export function dialogOverlayVisible(
       return gates.effortOptionCount > 1
     case 'preset':
       return gates.presetOptionCount > 0
+    case 'panel':
+      return (gates.panelCount ?? 1) > 0
     case 'permission':
       return overlay.snapshot.options.length > 0
+    case 'mode':
+      return overlay.modes.length > 0
+    // The kernel roster always has at least the DSH row (the Claude row is
+    // dim while its probe is in flight), so the wrapper always mounts.
+    case 'kernel':
+      return true
     default:
       return true
   }

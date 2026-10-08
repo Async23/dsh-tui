@@ -612,6 +612,17 @@ export type Screen = Size & {
   noSelect: Uint8Array
 
   /**
+   * Per-cell copy region id (0 = none) and the text each id copies as.
+   * A region stands for content that is not text in its cells — a formula
+   * drawn as a terminal image — so a selection touching it copies the
+   * region's text once instead of its (blank) cells. Reset, blitted and
+   * shifted exactly like noSelect. Optional: hand-built test screens omit
+   * it.
+   */
+  copyRegion?: Int32Array
+  copyTexts?: Map<number, string>
+
+  /**
    * Per-ROW soft-wrap continuation marker. softWrap[r]=N>0 means row r
    * is a word-wrap continuation of row r-1 (the `\n` before it was
    * inserted by wrapAnsi, not in the source), and row r-1's written
@@ -729,6 +740,8 @@ export function createScreen(
     emptyStyleId: styles.none,
     damage: undefined,
     noSelect: new Uint8Array(size),
+    copyRegion: new Int32Array(size),
+    copyTexts: new Map(),
     softWrap: new Int32Array(height),
   }
 }
@@ -768,6 +781,7 @@ export function resetScreen(
     screen.cells = new Int32Array(buf)
     screen.cells64 = new BigInt64Array(buf)
     screen.noSelect = new Uint8Array(size)
+    screen.copyRegion = new Int32Array(size)
   }
   if (screen.softWrap.length < height) {
     screen.softWrap = new Int32Array(height)
@@ -776,6 +790,10 @@ export function resetScreen(
   // Reset all cells — single fill call, no loop
   screen.cells64.fill(EMPTY_CELL_VALUE, 0, size)
   screen.noSelect.fill(0, 0, size)
+  if (screen.copyRegion === undefined || screen.copyRegion.length < size) screen.copyRegion = new Int32Array(size)
+  else screen.copyRegion.fill(0, 0, size)
+  screen.copyTexts ??= new Map()
+  screen.copyTexts.clear()
   screen.softWrap.fill(0, 0, height)
 
   // Update dimensions
@@ -1312,6 +1330,16 @@ export function blitRegion(
   const dstCells = dst.cells
   const srcNoSel = src.noSelect
   const dstNoSel = dst.noSelect
+  // Copy regions travel with their cells — zeros included, so a blitted
+  // overlay clears the region of a formula painted beneath it earlier in
+  // this frame — and their texts come along.
+  const copyRegions = dst.copyRegion === undefined
+    ? undefined
+    : { src: src.copyRegion, dst: dst.copyRegion }
+  if (src.copyTexts !== undefined && src.copyTexts.size > 0) {
+    dst.copyTexts ??= new Map()
+    for (const [id, text] of src.copyTexts) dst.copyTexts.set(id, text)
+  }
 
   // softWrap is per-row — copy the row range regardless of stride/width.
   // Partial-width blits still carry the row's wrap provenance since the
@@ -1330,6 +1358,10 @@ export function blitRegion(
     const nsStart = regionY * src.width
     const nsLen = (maxY - regionY) * src.width
     dstNoSel.set(srcNoSel.subarray(nsStart, nsStart + nsLen), nsStart)
+    if (copyRegions) {
+      if (copyRegions.src) copyRegions.dst.set(copyRegions.src.subarray(nsStart, nsStart + nsLen), nsStart)
+      else copyRegions.dst.fill(0, nsStart, nsStart + nsLen)
+    }
   } else {
     // Per-row copy for partial-width or mismatched-stride regions
     let srcRowCI = regionY * srcStride + (regionX << 1)
@@ -1339,6 +1371,10 @@ export function blitRegion(
     for (let y = regionY; y < maxY; y++) {
       dstCells.set(srcCells.subarray(srcRowCI, srcRowCI + rowBytes), dstRowCI)
       dstNoSel.set(srcNoSel.subarray(srcRowNS, srcRowNS + rowLen), dstRowNS)
+      if (copyRegions) {
+        if (copyRegions.src) copyRegions.dst.set(copyRegions.src.subarray(srcRowNS, srcRowNS + rowLen), dstRowNS)
+        else copyRegions.dst.fill(0, dstRowNS, dstRowNS + rowLen)
+      }
       srcRowCI += srcStride
       dstRowCI += dstStride
       srcRowNS += src.width
@@ -1490,31 +1526,125 @@ export function clearRegion(
 }
 
 /**
+ * Count the DISTINCT columns outside [x1, x2) that hold any non-empty cell
+ * in rows [top, bottom] — the "flank" a full-width row shift would displace.
+ * The DECSTBM scroll fast path uses this to decide whether the hardware
+ * scroll is worth the diff repair it forces on those columns (blank page
+ * margins and the 1-2 column gutter rail are cheap; a whole sibling column
+ * is not). Short-circuits per column on the first painted cell.
+ * @param screen - the screen to inspect.
+ * @param top - the first row (inclusive).
+ * @param bottom - the last row (inclusive).
+ * @param x1 - the start (inclusive) of the excluded column range.
+ * @param x2 - the end (exclusive) of the excluded column range.
+ */
+export function countPaintedFlankColumns(
+  screen: Screen,
+  top: number,
+  bottom: number,
+  x1: number,
+  x2: number,
+): number {
+  const y1 = Math.max(0, top)
+  const y2 = Math.min(screen.height - 1, bottom)
+  if (y2 < y1) return 0
+  const left = Math.max(0, x1)
+  const right = Math.min(screen.width, x2)
+  let count = 0
+  for (let x = 0; x < left; x += 1) {
+    for (let y = y1; y <= y2; y += 1) {
+      if (!isEmptyCellAt(screen, x, y)) { count += 1; break }
+    }
+  }
+  for (let x = right; x < screen.width; x += 1) {
+    for (let y = y1; y <= y2; y += 1) {
+      if (!isEmptyCellAt(screen, x, y)) { count += 1; break }
+    }
+  }
+  return count
+}
+
+/**
  * Shift full-width rows within [top, bottom] (inclusive, 0-indexed) by n.
  * n > 0 shifts UP (simulating CSI n S); n < 0 shifts DOWN (CSI n T).
  * Vacated rows are cleared. Does NOT update damage. Both cells and the
  * noSelect bitmap are shifted so text-selection markers stay aligned when
  * this is applied to next.screen during scroll fast path.
+ *
+ * With columnX/columnWidth the shift applies only to that column slice of
+ * each row (the DECSTBM fast path for a scroll container narrower than the
+ * screen: the terminal's hardware scroll moves WHOLE rows, so the previous
+ * frame is simulated full-width by the caller, while this model-side shift
+ * keeps the columns outside the box at their correct places — the frame
+ * diff then repairs them on the terminal). A column-scoped shift leaves the
+ * per-row softWrap flags alone: they describe the whole row and the flanks'
+ * wrap state is still live.
  * @param screen - the screen to shift.
  * @param top - the first row of the shifted range (inclusive).
  * @param bottom - the last row of the shifted range (inclusive).
  * @param n - the shift in rows; positive shifts up, negative shifts down.
+ * @param columnX - optional start column (inclusive) of a column-scoped shift.
+ * @param columnWidth - optional width of the column-scoped slice.
  */
 export function shiftRows(
   screen: Screen,
   top: number,
   bottom: number,
   n: number,
+  columnX?: number,
+  columnWidth?: number,
 ): void {
   if (n === 0 || top < 0 || bottom >= screen.height || top > bottom) return
   const w = screen.width
+  if (columnX !== undefined || columnWidth !== undefined) {
+    const x1 = Math.max(0, Math.floor(columnX ?? 0))
+    const x2 = Math.min(w, x1 + Math.floor(columnWidth ?? w))
+    if (x2 <= x1) return
+    const cells64 = screen.cells64
+    const noSel = screen.noSelect
+    const copy = screen.copyRegion
+    const span = x2 - x1
+    const absN = Math.abs(n)
+    const clearSlice = (r: number): void => {
+      const base = r * w + x1
+      cells64.fill(EMPTY_CELL_VALUE, base, base + span)
+      noSel.fill(0, base, base + span)
+      copy?.fill(0, base, base + span)
+    }
+    if (absN > bottom - top) {
+      for (let r = top; r <= bottom; r += 1) clearSlice(r)
+      return
+    }
+    if (n > 0) {
+      for (let r = top; r <= bottom - n; r += 1) {
+        const dst = r * w + x1
+        const src = (r + n) * w + x1
+        cells64.copyWithin(dst, src, src + span)
+        noSel.copyWithin(dst, src, src + span)
+        copy?.copyWithin(dst, src, src + span)
+      }
+      for (let r = bottom - n + 1; r <= bottom; r += 1) clearSlice(r)
+    } else {
+      for (let r = bottom; r >= top - n; r -= 1) {
+        const dst = r * w + x1
+        const src = (r + n) * w + x1
+        cells64.copyWithin(dst, src, src + span)
+        noSel.copyWithin(dst, src, src + span)
+        copy?.copyWithin(dst, src, src + span)
+      }
+      for (let r = top; r < top - n; r += 1) clearSlice(r)
+    }
+    return
+  }
   const cells64 = screen.cells64
   const noSel = screen.noSelect
+  const copy = screen.copyRegion
   const sw = screen.softWrap
   const absN = Math.abs(n)
   if (absN > bottom - top) {
     cells64.fill(EMPTY_CELL_VALUE, top * w, (bottom + 1) * w)
     noSel.fill(0, top * w, (bottom + 1) * w)
+    copy?.fill(0, top * w, (bottom + 1) * w)
     sw.fill(0, top, bottom + 1)
     return
   }
@@ -1522,17 +1652,21 @@ export function shiftRows(
     // SU: row top+n..bottom → top..bottom-n; clear bottom-n+1..bottom
     cells64.copyWithin(top * w, (top + n) * w, (bottom + 1) * w)
     noSel.copyWithin(top * w, (top + n) * w, (bottom + 1) * w)
+    copy?.copyWithin(top * w, (top + n) * w, (bottom + 1) * w)
     sw.copyWithin(top, top + n, bottom + 1)
     cells64.fill(EMPTY_CELL_VALUE, (bottom - n + 1) * w, (bottom + 1) * w)
     noSel.fill(0, (bottom - n + 1) * w, (bottom + 1) * w)
+    copy?.fill(0, (bottom - n + 1) * w, (bottom + 1) * w)
     sw.fill(0, bottom - n + 1, bottom + 1)
   } else {
     // SD: row top..bottom+n → top-n..bottom; clear top..top-n-1
     cells64.copyWithin((top - n) * w, top * w, (bottom + n + 1) * w)
     noSel.copyWithin((top - n) * w, top * w, (bottom + n + 1) * w)
+    copy?.copyWithin((top - n) * w, top * w, (bottom + n + 1) * w)
     sw.copyWithin(top - n, top, bottom + n + 1)
     cells64.fill(EMPTY_CELL_VALUE, top * w, (top - n) * w)
     noSel.fill(0, top * w, (top - n) * w)
+    copy?.fill(0, top * w, (top - n) * w)
     sw.fill(0, top, top - n)
   }
 }
@@ -1931,6 +2065,63 @@ function diffDifferentWidth(
   }
 
   return false
+}
+
+let nextCopyRegionId = 1
+
+/**
+ * A fresh copy region id. Ids are unique for the process, so regions blitted
+ * from an earlier frame never collide with new ones.
+ */
+export function allocateCopyRegionId(): number {
+  const id = nextCopyRegionId
+  nextCopyRegionId = nextCopyRegionId >= 0x7fffffff ? 1 : nextCopyRegionId + 1
+  return id
+}
+
+/**
+ * Mark a rectangular region that copies as `text` (see Screen.copyRegion).
+ * Clamps to screen bounds; like noSelect it affects selection only.
+ */
+export function markCopyRegion(
+  screen: Screen,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  text: string,
+  id: number,
+): void {
+  if (screen.copyRegion === undefined) return
+  const maxX = Math.min(x + width, screen.width)
+  const maxY = Math.min(y + height, screen.height)
+  const stride = screen.width
+  for (let row = Math.max(0, y); row < maxY; row++) {
+    const rowStart = row * stride
+    screen.copyRegion.fill(id, rowStart + Math.max(0, x), rowStart + maxX)
+  }
+  ;(screen.copyTexts ??= new Map()).set(id, text)
+}
+
+/** Cells [from, to) of `row` no longer belong to any copy region. */
+export function clearCopyRegionSpan(screen: Screen, row: number, from: number, to: number): void {
+  if (screen.copyRegion === undefined || row < 0 || row >= screen.height) return
+  const rowStart = row * screen.width
+  screen.copyRegion.fill(0, rowStart + Math.max(0, from), rowStart + Math.min(to, screen.width))
+}
+
+/** Drop region texts no cell references any more. */
+export function pruneCopyTexts(screen: Screen): void {
+  const texts = screen.copyTexts
+  if (texts === undefined || texts.size === 0 || screen.copyRegion === undefined) return
+  const live = new Set<number>()
+  const cells = screen.copyRegion
+  const size = screen.width * screen.height
+  for (let index = 0; index < size; index++) {
+    const id = cells[index]!
+    if (id !== 0) live.add(id)
+  }
+  for (const id of texts.keys()) if (!live.has(id)) texts.delete(id)
 }
 
 /**

@@ -9,8 +9,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { SessionModeSpec } from '../sessionModes.js'
-import { DEFAULT_STATUS_BAR, normalizePageMargin, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { isKernelId, type KernelBackendId } from '../kernelPrefs.js'
+import { BTW_CONTEXT_BUDGET_DEFAULT, BTW_CONTEXT_TURNS_DEFAULT, DEFAULT_COMPANION_SKIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, normalizeBtwContextBudget, normalizeBtwContextTurns, normalizeCompanionSkin, normalizePageMargin, normalizeSidePanelPanels, normalizeSidePanelRatio, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SHORTCUT_ACTIONS, type ShortcutActionId } from '../utils/keymap.js'
+import { normalizeSplashFont, type SplashFontSetting } from '../components/splashFonts.js'
+import { normalizeBrandSetting, type BrandSetting } from '../branding.js'
+import { editableConfig, type RuntimeConfig } from './compat/settings.js'
+import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
 
 export const name = 'dsh-tui'
 // `tuiWorkspaces` must stay OUT of this code-level inject (issue #183): the
@@ -31,6 +36,13 @@ export const inject = ['agents']
 export interface Config {
   /** Existing session to attach; a fresh session is created when absent. */
   sessionId?: string
+  /** Agent backend the session runs on: `dsh` (default), the DeepSeek
+   *  Harness agent; `claude`, the experimental Claude Agent backend driving
+   *  the local Claude CLI through the Claude Agent SDK (optional peer
+   *  `@anthropic-ai/claude-agent-sdk`); `codex`, the experimental Codex
+   *  backend driving the user's own `codex` CLI over `codex app-server`.
+   *  `dsh-tui --backend <id>` sets it through `DSH_TUI_BACKEND`. */
+  backend?: KernelBackendId
   /** LLM provider route. The route resolves atomically (issue #67): when
    *  cordis.yml names BOTH `provider` and `model`, that pair wins; otherwise
    *  the `/model` choice persisted in `~/.dsh-tui/model.json` wins whole;
@@ -54,6 +66,24 @@ export interface Config {
    *  the startup status line until the first request header reports the
    *  live value. */
   effort?: string
+  /** Settings default for future sessions; overrides the `effort` fallback. */
+  effortDefault?: string
+  /** Show the header whale and its idle animation. */
+  whale?: boolean
+  whaleIdle?: boolean
+  /** Big-text face on the header splash (settings `dsh-tui.splashFont`):
+   *  `daily` (the default) rotates by local date, any other value is a font
+   *  id from `components/splashFonts.ts` (`bold`/`square`/…) pinning that one
+   *  face. An unknown value falls back to `daily`. */
+  splashFont?: SplashFontSetting
+  /** Brand look of the splash and theme (settings `dsh-tui.brand`): `auto`
+   *  (the default) follows the active backend — Claude boots orange;
+   *  `deepseek`/`claude` pin one look. Junk normalizes to `auto`. */
+  brand?: BrandSetting
+  /** Swap the header's pixel whale for the static maid portrait. */
+  whaleGirl?: boolean
+  /** Reduce decorative header content and colors. */
+  minimal?: boolean
   /** Show the live working line derived in-process from base session events. */
   activity?: boolean
   /** Working-activity indicator preset (`moon8`/`moon`/`comet`/`dots`/…
@@ -91,6 +121,12 @@ export interface Config {
    *  preview and folds each step when it settles; `full` keeps thinking
    *  expanded until the whole turn ends. Editable live from `/settings`. */
   thinkingFold?: 'preview' | 'full'
+  /** Grouping/folding of consecutive background-job cards: `auto` (default)
+   *  groups any run of ≥2 adjacent job cards and folds a run of 3+ into its
+   *  summary line once every member settled; `always` folds any run of 2+
+   *  immediately; `never` never folds on its own (a click on the group
+   *  header still folds one run). Editable live from `/settings`. */
+  jobGroupFold?: 'auto' | 'always' | 'never'
   /** Tool-card background strength; defaults to no added background. */
   toolBackground?: ToolBackground
   /** What the fullscreen transcript's right gutter shows (settings
@@ -111,6 +147,11 @@ export interface Config {
    *  `+N lines` hint; Ctrl+O / clicking the card expands it. Default off —
    *  the full title keeps rendering. */
   foldTerminalCommand?: boolean
+  /** Turn-usage ledger row (settings `dsh-tui.turnUsageRow`): the quiet
+   *  right-aligned line that closes each turn in the transcript (tokens
+   *  in/out, cache split, span, retries). Off by default; the ledger data
+   *  feeds /tokens, /status and the footer hover regardless. */
+  turnUsageRow?: boolean
   /** Show the session name as a chip on the prompt top border's right side
    *  (settings `dsh-tui.promptSessionLabel`); off by default. */
   promptSessionLabel?: boolean
@@ -131,8 +172,78 @@ export interface Config {
    *  than the viewport or of an unsupported type keeps the fenced source.
    *  On by default; off always shows the source. */
   mermaidDiagrams?: boolean
+  /** Code-frame shape (settings `dsh-tui.codeFrameStyle`): `light`
+   *  (default) is the open rail frame — corner + language label on top,
+   *  a left rail with one padding column per row, no right wall or
+   *  bottom edge; `full` closes the box with a right wall (continuous
+   *  across wrapped rows) and a bottom edge. The narrow fallback (net
+   *  body width < 8) always stays the plain ANSI fence. */
+  codeFrameStyle?: CodeFrameStyle
+  /** LaTeX math (settings `dsh-tui.mathRendering`): `$…$` / `\(…\)` inline
+   *  and `$$…$$` / `\[…\]` blocks in replies. `auto` (default) uses the best
+   *  available renderer — today Unicode text: Greek and operator symbols,
+   *  scripts, fractions and operator limits stacked in display blocks,
+   *  matrices, cases; `unicode` pins it; `source` always shows the TeX.
+   *  Unsupported, still-streaming, or too-wide formulas keep their source. */
+  mathRendering?: MathRendering
+  /** Display-formula image size (settings `dsh-tui.mathImageScale`), used
+   *  with `mathRendering: image`: `auto` matches the body text, `large` and
+   *  `xlarge` set display math bigger — which also hands the terminal more
+   *  device pixels per stroke, the only sharpness lever a terminal image has.
+   *  Inline formulas keep the base scale. */
+  mathImageScale?: MathImageScale
+  /** Formula-image backing (settings `dsh-tui.mathImageBacking`): `transparent`
+   *  paints only the formula and lets the terminal background show through;
+   *  `terminal` composites it onto the terminal's background colour. */
+  mathImageBacking?: MathImageBacking
+  /** Transcript-image backing (settings `dsh-tui.imageBacking`): `transparent`
+   *  floats photos and illustrations on whatever the terminal shows;
+   *  `terminal` composites them onto the terminal's background colour. */
+  imageBacking?: ImageBacking
+  /** @deprecated Use `mathRendering`; `false` still means `source`. */
+  latexMath?: boolean
+  /** Auto recap on open (settings `dsh-tui.recapOnOpen`): opening or resuming a
+   *  session summarizes its recent activity into a dim line at the bottom of
+   *  the transcript. On by default; off leaves `/recap` as the manual path. */
+  recapOnOpen?: boolean
   /** Status-footer field visibility and compact presentation preferences. */
   statusBar?: Partial<StatusBarConfig>
+  /** Side panel (settings `dsh-tui.sidePanel.*`): the two-column layout's
+   *  master switch, its startup state, the chat-column fraction, and the
+   *  enabled panels in PanelBar order. Every member is normalized at parse
+   *  time, so a hand-edited value can never wedge the layout. */
+  sidePanel?: {
+    /** Master switch of the split layout; on by default. Off makes /panel
+     *  and Ctrl+B fall back to the fullscreen panels. */
+    splitEnabled?: boolean
+    /** Whether a session opens with the sidebar expanded (off by default, so
+     *  the upgrade leaves the layout alone); Ctrl+B toggles it live. */
+    open?: boolean
+    /** Chat column as a fraction of the content width, clamped to 0.1–0.95
+     *  (default 0.68); +/- while the panel is focused nudges it live. */
+    ratio?: number
+    /** Enabled panel ids, comma-separated, in PanelBar order (default:
+     *  all eight built-in panels). A
+     *  malformed id is dropped, an unknown one survives for a plugin. */
+    panels?: string
+  }
+  /** Companion pet (settings `dsh-tui.companion.*`): which skin the panel
+   *  pet wears. */
+  companion?: {
+    /** 'deepy' (default, the deepy whale kit) or 'whale' (the splash's
+     *  layered pixel whale). Unknown ids normalize to deepy. */
+    skin?: string
+  }
+  /** btw thread context (settings `dsh-tui.btw.*`): how much of the side
+   *  thread follows into the next ask. Members normalize (turns clamp
+   *  1-8, budget clamps 1k-200k), so junk cannot wedge the thread. */
+  btw?: {
+    /** Completed Q/A pairs carried into a follow-up ask, 1-8 (default 4). */
+    contextTurns?: number
+    /** Total character budget of that carried context (default 24000;
+     *  the per-answer cap derives internally as min(8k, budget/2)). */
+    contextBudget?: number
+  }
   /** Built-in action-shortcut overrides (`paste: 'alt+v'`), keyed by action
    *  id (see the keymap utility). Combos are `ctrl+`/`alt+`/`shift+` plus a
    *  key; several combos may be comma-separated. Unset actions keep their
@@ -146,8 +257,20 @@ export interface Config {
   modes?: SessionModeSpec[]
 }
 
-export const Config: Schema<Config> = Schema.object({
+/** The backend a configured value names: case-insensitive, trimmed;
+ *  empty or unknown → undefined (the DSH default). */
+export function normalizeBackendChoice(value: unknown): KernelBackendId | undefined {
+  if (typeof value !== 'string') return undefined
+  const id = value.trim().toLowerCase()
+  return isKernelId(id) ? id : undefined
+}
+
+export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Config>(Schema.object({
   sessionId: Schema.string().required(false),
+  // A transform, not a union: the row reads `DSH_TUI_BACKEND`, and a stray
+  // export (`Claude`, a typo) must not fail the whole boot — case and blanks
+  // are normalized and anything unknown means the default (plugin.ts warns).
+  backend: Schema.transform(Schema.string(), value => normalizeBackendChoice(value)),
   // No schema defaults on the route: a `.default()` here would make an
   // unset key indistinguishable from an explicit cordis.yml choice and the
   // persisted `/model` preference could never win (issue #30). The defaults
@@ -157,6 +280,28 @@ export const Config: Schema<Config> = Schema.object({
   cwd: Schema.string().required(false),
   workspace: Schema.string().required(false),
   effort: Schema.string().required(false),
+  effortDefault: Schema.string().required(false),
+  whale: Schema.boolean().default(true),
+  whaleIdle: Schema.boolean().default(true),
+  // The face registry grows with new releases, so this is a transform rather
+  // than a union: any string parses and junk lands on `daily` at parse time
+  // (a union would fail the whole boot on a stale id). The `/settings` field
+  // offers exactly the registry's ids. The default is deliberately NOT a
+  // `.default()` here — the volatile wrapper swallows it (same shape as
+  // pageMargin, whose unset value also reads `undefined`), so `daily` comes
+  // from `normalizeSplashFont` at every read site.
+  splashFont: Schema.transform(
+    Schema.string(),
+    value => normalizeSplashFont(value),
+  ),
+  // 同 splashFont 的 transform 而非 union：cordis.yml 保持决定权，`auto`
+  // 的默认值由 `normalizeBrandSetting` 在每个读取点给出。
+  brand: Schema.transform(
+    Schema.string(),
+    value => normalizeBrandSetting(value),
+  ),
+  whaleGirl: Schema.boolean().default(false),
+  minimal: Schema.boolean().default(false),
   activity: Schema.boolean().default(true),
   activityFrames: Schema.string().required(false),
   contextBar: Schema.boolean().default(true),
@@ -166,6 +311,7 @@ export const Config: Schema<Config> = Schema.object({
   preset: Schema.string().required(false),
   diffLayout: Schema.union(['auto', 'split', 'unified']).default('auto'),
   thinkingFold: Schema.union(['preview', 'full']).default('preview'),
+  jobGroupFold: Schema.union(['auto', 'always', 'never']).default('auto'),
   toolBackground: Schema.union(['none', 'subtle', 'strong']).default('none'),
   scrollGutter: Schema.union(['timeline', 'scrollbar', 'hidden']).default('timeline'),
   showBackToBottom: Schema.boolean().default(true),
@@ -177,10 +323,22 @@ export const Config: Schema<Config> = Schema.object({
     value => normalizePageMargin(value),
   ),
   foldTerminalCommand: Schema.boolean().default(false),
+  turnUsageRow: Schema.boolean().default(false),
   promptSessionLabel: Schema.boolean().default(false),
   expandEditor: Schema.boolean().default(true),
   smoothStreaming: Schema.boolean().default(true),
   mermaidDiagrams: Schema.boolean().default(true),
+  codeFrameStyle: Schema.union(['light', 'full']),
+  mathRendering: Schema.union(['auto', 'image', 'unicode', 'source']),
+  mathImageScale: Schema.union(['auto', 'large', 'xlarge']),
+  mathImageBacking: Schema.union(['transparent', 'terminal']),
+  imageBacking: Schema.union(['transparent', 'terminal']),
+  latexMath: Schema.boolean(),
+  // No `.default()` on purpose (the volatile wrapper swallows it; same rule as
+  // splashFont): an unset key must stay distinguishable from an explicit
+  // `false`, and the read site already treats undefined as on
+  // (`describe().value.recapOnOpen !== false`, see channel.ts).
+  recapOnOpen: Schema.boolean(),
   statusBar: Schema.object({
     compact: Schema.boolean().default(DEFAULT_STATUS_BAR.compact),
     model: Schema.boolean().default(DEFAULT_STATUS_BAR.model),
@@ -189,6 +347,11 @@ export const Config: Schema<Config> = Schema.object({
     contextUsage: Schema.boolean().default(DEFAULT_STATUS_BAR.contextUsage),
     cache: Schema.boolean().default(DEFAULT_STATUS_BAR.cache),
     tokens: Schema.boolean().default(DEFAULT_STATUS_BAR.tokens),
+    // Session cost estimate (≈¥) beside the token totals; StatusLine gates the
+    // chip on it. The slot must be declared here: schemastery drops an
+    // undeclared key on the way back in, so the /settings row would read
+    // "(unset)" and every edit would silently revert.
+    cost: Schema.boolean().default(DEFAULT_STATUS_BAR.cost),
     tps: Schema.boolean().default(DEFAULT_STATUS_BAR.tps),
     gitBranch: Schema.boolean().default(DEFAULT_STATUS_BAR.gitBranch),
     sessionTitle: Schema.boolean().default(DEFAULT_STATUS_BAR.sessionTitle),
@@ -200,6 +363,42 @@ export const Config: Schema<Config> = Schema.object({
     trajectory: Schema.boolean().default(DEFAULT_STATUS_BAR.trajectory),
     shortcutHint: Schema.boolean().default(DEFAULT_STATUS_BAR.shortcutHint),
   }).default({ ...DEFAULT_STATUS_BAR }),
+  // Side-panel preferences, same shape as statusBar: every member carries a
+  // default so an unset cordis.yml block and a partially hand-written one
+  // both resolve, and the transforms keep junk (a string ratio, an id with
+  // illegal characters) out of the live stores.
+  sidePanel: Schema.object({
+    splitEnabled: Schema.boolean().default(true),
+    open: Schema.boolean().default(false),
+    ratio: Schema.transform(
+      Schema.number().default(0.68),
+      value => normalizeSidePanelRatio(value),
+    ),
+    panels: Schema.transform(
+      Schema.string().default(DEFAULT_SIDE_PANEL_IDS),
+      value => normalizeSidePanelPanels(value),
+    ),
+  }).default({ splitEnabled: true, open: false, ratio: 0.68, panels: DEFAULT_SIDE_PANEL_IDS }),
+  companion: Schema.object({
+    skin: Schema.transform(
+      Schema.string().default(DEFAULT_COMPANION_SKIN),
+      value => normalizeCompanionSkin(value),
+    ),
+  }).default({ skin: DEFAULT_COMPANION_SKIN }),
+  // btw thread context: schema defaults + transforms (same shape as
+  // sidePanel above) so an unset cordis.yml block and junk values both
+  // resolve to the documented 4 turns / 24k chars before the stores see
+  // them (the store normalize remains the second, identical gate).
+  btw: Schema.object({
+    contextTurns: Schema.transform(
+      Schema.number().default(BTW_CONTEXT_TURNS_DEFAULT),
+      value => normalizeBtwContextTurns(value),
+    ),
+    contextBudget: Schema.transform(
+      Schema.number().default(BTW_CONTEXT_BUDGET_DEFAULT),
+      value => normalizeBtwContextBudget(value),
+    ),
+  }).default({ contextTurns: BTW_CONTEXT_TURNS_DEFAULT, contextBudget: BTW_CONTEXT_BUDGET_DEFAULT }),
   // One optional combo string per customizable action (no defaults: unset
   // keeps the built-in binding; see Config.shortcuts).
   shortcuts: Schema.object(
@@ -215,22 +414,36 @@ export const Config: Schema<Config> = Schema.object({
       permission: Schema.string().required(false),
     }),
   ).required(false),
-})
+}), EDITABLE_CONFIG_KEYS as readonly (keyof Config)[])
 
 /**
  * Start the interactive TUI front door, delegating to the JSX implementation
  * in `./plugin.tsx` (see its module doc for the full contract).
  * @param ctx - the plugin context.
  * @param config - the validated dsh-tui configuration.
- * @returns a promise settling when the TUI teardown completes.
+ * @returns a promise settling when the Loader entry has scheduled its runtime.
  */
-export async function apply(ctx: Context, config: Config): Promise<void> {
+export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promise<void> {
   // Upstream drift is NO LONGER spammed to stderr here: per-package
   // console.warn lines interleave with the TUI frame redraw and arrive
   // garbled (typewriter animation repaints over them). The merged,
   // natural-language notice now renders in the logo header under the
   // startup tip (LogoV2 ← upstreamDriftSummary); CI keeps the hard gate
   // via scripts/verify-upstream-contract.ts.
-  const { apply: tuiApply } = await import('./plugin.js')
-  return tuiApply(ctx, config)
+  const { apply: tuiApply, handleStartupError } = await import('./plugin.js')
+  let disposed = false
+  ctx.effect(() => () => { disposed = true })
+  // Registry diagnostics can await the whole Loader. Do not make this Host
+  // row await the runtime in return. Let Host providers settle before starting
+  // a Cordis-owned child; the original row still owns volatile Config.
+  const loader = ctx.get('loader') as { await(): Promise<unknown> } | undefined
+  void (loader?.await() ?? ctx.fiber.await()).then(() => {
+    if (disposed) return
+    return ctx.plugin({
+      name: 'dsh-tui-runtime',
+      apply: (runtimeCtx: Context) => tuiApply(runtimeCtx, config, ctx),
+    })
+  }).catch(error => {
+    if (!disposed) handleStartupError(ctx, error)
+  })
 }

@@ -11,7 +11,7 @@
  *   - transcript: durable transcript/event access.
  *
  * Boundary rules:
- * - These are TUI host-internal interfaces, not dsh-std/dsh-ecosystem-spec
+ * - These are TUI host-internal interfaces, not dsh-std/tui-profile
  *   protocol definitions. No apiVersion/kind/negotiation/permission/manifest
  *   semantics appear here.
  * - No caller-supplied owner/principal/activation identity is accepted;
@@ -93,6 +93,10 @@ export interface HostChannelStateSnapshot {
   readonly sessionTitle: string
   readonly sessionColor: string
   readonly agentId: string
+  /** Session identity behind the bound agent, when the host knows one. Optional
+   *  so a minimal/embedded channel can omit it; the working line then simply has
+   *  no session to read a projection for. */
+  readonly sessionId?: string
   readonly agentBindingGeneration: number
   readonly model: string
   readonly provider: string
@@ -108,7 +112,6 @@ export interface HostChannelStateSnapshot {
   readonly lastUserText: string
   readonly tokens: Readonly<Record<string, number>>
   readonly lastUsage?: Readonly<Record<string, number>>
-  readonly workingActivity?: Readonly<Record<string, unknown>>
   readonly activityFrames?: string
   readonly goal?: Readonly<Record<string, unknown>>
   readonly todos: readonly Readonly<Record<string, unknown>>[]

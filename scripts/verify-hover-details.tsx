@@ -8,6 +8,8 @@
  *     未截断时浮层不重复标题（只带时间 + cwd）。
  *  H. 状态栏 model/git 字段：悬停 model 弹 provider + ctx 窗口明细；
  *     悬停 git 弹完整分支名（原地明细行契约，与 tps/cost 同款）。
+ *  H2. 状态栏 cache 字段：明细只列非零的缓存分项——DeepSeek 路由从不上报
+ *     缓存写入（write 恒 0 或整键缺席），旧代码把它写成「write 0」。
  *  I. 上下文进度条：条上不再有任何文字（内容类型只由颜色表达，唯一的
  *     文本是最右占比）；空闲时默认显示占比、已用量、剩余量和分类明细。
  *     悬停进度条显示彩色图例；悬停其他字段或出现操作提示时临时切换，
@@ -81,6 +83,7 @@ const { FileSuggestions } = await import('../src/components/FileSuggestions.js')
 const { SessionListRow } = await import('../src/components/sessions/SessionListRow.js')
 const { StatusLine } = await import('../src/screens/StatusLine.js')
 const { formatAbsolute } = await import('../src/sessions/format.js')
+const { formatTokens } = await import('../src/terminal-utils/format.js')
 
 try {
   const COLS = 50
@@ -173,7 +176,7 @@ try {
 
   // --- H. 状态栏字段：model/git 悬停明细 ---------------------------------
   const channelStub = {
-    minimal: false,
+    minimalUi: false,
     statusBar: { gitBranch: true },
     model: 'TM',
     provider: 'test-provider',
@@ -188,7 +191,6 @@ try {
     backgroundJobs: [],
     contextSegments: {},
     working: false,
-    workingActivity: undefined,
     activityFrames: [],
     goal: undefined,
     sessionTitle: undefined,
@@ -218,6 +220,54 @@ try {
     await settled(() => screenHas(term, 'git test-branch-long')))
   check('H 明细随悬停目标切换（model 明细已离开）',
     await settled(() => !screenHas(term, 'provider test-provider')))
+  hover(stdin, 1, 1)
+
+  // --- H2. cache 字段悬停：为零/缺席的缓存分项不进明细 --------------------
+  // 实证（本机 500 个会话日志、133 个 provider 会话）：官方 deepseek-official
+  // 与第三方 commandcode 两条 DeepSeek 路由的 cacheWriteTokens 恒为 0 或整键
+  // 缺席（官方 4368 条记录里 0 条为正），旧代码把两者都渲染成「write 0」——
+  // 等于宣称一个 provider 从未给过的数字。现在 read/write 只在 > 0 时出现，
+  // 命中率与 input 始终在（footer 字段本身不变）。
+  const CACHE_USAGE = { input: 2_217, output: 325, cacheRead: 18_432, cacheWrite: 0 }
+  const cacheTree = (lastUsage: typeof CACHE_USAGE) => (
+    <AlternateScreen>
+      <Box flexDirection="column">
+        <KeySink />
+        <StatusLine
+          channel={{ ...channelStub, statusBar: { cache: true }, lastUsage } as never}
+        />
+        <tooltip.TooltipLayer />
+      </Box>
+    </AlternateScreen>
+  )
+  instance.rerender(cacheTree(CACHE_USAGE))
+  check('场景 H2 就绪：cache 字段（命中率）在屏', await settled(() => screenHas(term, '缓存')))
+  hoverText(stdin, term, '缓存')
+  {
+    const read = `read ${formatTokens(CACHE_USAGE.cacheRead)}`
+    const input = `input ${formatTokens(CACHE_USAGE.input)}`
+    check('H2 cacheWrite=0 时明细不给 write，read/input 仍在',
+      await settled(() => screenHas(term, read) && screenHas(term, input) && !screenHas(term, 'write')),
+      `${read} / ${input}`)
+  }
+  {
+    const WRITE_USAGE = { ...CACHE_USAGE, cacheWrite: 6_000 }
+    instance.rerender(cacheTree(WRITE_USAGE))
+    check('场景 H2b 就绪：cache 字段仍在屏', await settled(() => screenHas(term, '缓存')))
+    hoverText(stdin, term, '缓存')
+    const write = `write ${formatTokens(WRITE_USAGE.cacheWrite)}`
+    check('H2 cacheWrite>0 时明细给出 write', await settled(() => screenHas(term, write)), write)
+  }
+  {
+    const COLD_USAGE = { input: 4_228, output: 15, cacheRead: 0, cacheWrite: 0 }
+    instance.rerender(cacheTree(COLD_USAGE))
+    check('场景 H2c 就绪：cache 字段仍在屏', await settled(() => screenHas(term, '缓存')))
+    hoverText(stdin, term, '缓存')
+    const input = `input ${formatTokens(COLD_USAGE.input)}`
+    check('H2 冷启动（read/write 皆 0）明细只给 input',
+      await settled(() => screenHas(term, input) && !screenHas(term, 'read') && !screenHas(term, 'write')),
+      input)
+  }
   hover(stdin, 1, 1)
 
   // --- I. 上下文进度条：无标签 + 整条悬停给全量明细 ----------------------
@@ -428,10 +478,10 @@ try {
       mounted.rerender(draw({ channel: withHints as never, helpOpen: true }))
       check(`${label} 快捷键提示隐藏后恢复完整明细`, await settled(hasSummary))
 
-      mounted.rerender(draw({ channel: {
-        ...barStub, statusBar: { ...barStub.statusBar, activity: true },
-        workingActivity: { phase: 'done', line: 'Finished fixture task' },
-      } as never }))
+      mounted.rerender(draw({
+        channel: { ...barStub, statusBar: { ...barStub.statusBar, activity: true } } as never,
+        activity: { phase: 'done', line: 'Finished fixture task' },
+      }))
       check(`${label} 活动摘要不被默认明细挤占`,
         await settled(() => screenHas(rig.term, 'Finished fixture task') && !hasSummary()))
       mounted.rerender(draw({ channel: { ...barStub, contextBarEnabled: false } as never }))
@@ -443,11 +493,232 @@ try {
       check(`${label} 新会话无用量时不显示虚构明细`, await settled(() => !hasSummary()))
       mounted.rerender(draw())
       check(`${label} 获取用量后恢复完整明细`, await settled(hasSummary))
-      mounted.rerender(draw({ channel: { ...barStub, minimal: true } as never }))
+      mounted.rerender(draw({ channel: { ...barStub, minimalUi: true } as never }))
       check(`${label} 极简模式不新增默认明细`, await settled(() => !hasSummary()))
       mounted.unmount()
       await sleep(100) // 固定窗:pacing 前一终端实例卸载完成后再创建下一实例
       rig.term.dispose()
+    }
+  }
+
+  // --- K. 底栏权限模式段：后端原生权限模式（Claude 等）------------------
+  // 契约（Chat 侧装配 backendMode 后）：
+  //   · 存在 → 该段恒显示（不再看 modeMarked/基础模式）、文本＝后端给的
+  //     可读名、点击＝onOpen；颜色只由后端 id 决定——bypassPermissions/
+  //     dontAsk → warning，plan → planMode，其余 → inactiveShimmer（DSH
+  //     的 plan/marked 规则一概不参与）。
+  //   · 缺席 → DSH 语义逐字节不变：下表的金标准是**改动前**的 src 渲染结果
+  //     （字符 + 逐格前景色/背景色），钉住「DSH 会话渲染零变化」。
+  // 交互面（悬停详情、点击）在同一个 rig 上按后端模式验收。
+  const K_COLS = 60
+  const K_ROWS = 12
+  /** 空行签名：金标准只钉状态行那一行，其余行必须仍是这张白纸。 */
+  const K_BLANK_SIG = '60@ffffff/ffffff'
+  const K_STUB = {
+    minimalUi: false,
+    statusBar: { mode: true },
+    model: 'TM',
+    provider: 'test-provider',
+    contextWindow: 64_000,
+    gitBranch: 'main',
+    displayCwd: 'D:\\work\\dsh-tui',
+    cwd: 'D:\\work\\dsh-tui',
+    mode: { id: 'default', plan: false, sandbox: 'workspace-write', approval: 'ask' },
+    modeIndex: 0,
+    tokens: { input: 0, output: 0 },
+    tpsSamples: [],
+    backgroundJobs: [],
+    contextSegments: {},
+    working: false,
+    activityFrames: [],
+    goal: undefined,
+    sessionTitle: undefined,
+    agentId: 'abcdef0123456789',
+    reasoningEffort: undefined,
+    tps: undefined,
+    lastUsage: undefined,
+    contextBarEnabled: false,
+  }
+  type ModeSegment = { readonly id: string, readonly name: string, readonly onOpen: () => void }
+  const modeScreen = (channel: unknown, backendMode?: ModeSegment) => (
+    <AlternateScreen>
+      <Box flexDirection="column">
+        <KeySink />
+        <ui.ThemeProvider theme="dark">
+          <StatusLine channel={channel as never} {...(backendMode === undefined ? {} : { backendMode })} />
+        </ui.ThemeProvider>
+        <tooltip.TooltipLayer />
+      </Box>
+    </AlternateScreen>
+  )
+  /** 字符行（去尾空格）+ 每行「等色行程」签名：改了字或改了色都算漂移。 */
+  const dumpMode = (term: XTerm) => {
+    const lines: string[] = []
+    const sigs: string[] = []
+    for (let y = 0; y < K_ROWS; y++) {
+      const line = term.buffer.active.getLine(y)
+      lines.push(line ? line.translateToString(true) : '')
+      let sig = ''
+      let runColor: string | null = null
+      let runLen = 0
+      for (let x = 0; x < K_COLS; x++) {
+        const cell = line?.getCell(x)
+        const colour = ((cell?.getFgColor() ?? 0) & 0xffffff).toString(16)
+          + '/' + ((cell?.getBgColor() ?? 0) & 0xffffff).toString(16)
+        if (colour === runColor) { runLen++ } else {
+          if (runColor !== null) sig += runLen + '@' + runColor + ' '
+          runColor = colour
+          runLen = 1
+        }
+      }
+      if (runColor !== null) sig += runLen + '@' + runColor
+      sigs.push(sig.trim())
+    }
+    return { lines: lines.filter(l => l !== ''), sigs }
+  }
+  const fgAt = (term: XTerm, col: number, row: number): number =>
+    (term.buffer.active.getLine(row)?.getCell(col)?.getFgColor() ?? 0) & 0xffffff
+  /** 后端模式段的颜色断言：等到名字在屏、且它首格前景色就是期望值。 */
+  const modeColourSettles = (term: XTerm, name: string, expected: number) =>
+    settled(() => {
+      const at = findText(term, name)
+      return at !== null && fgAt(term, at.col, at.row) === expected
+    })
+
+  const openModeRig = async (channel: unknown, backendMode?: ModeSegment) => {
+    const rig = makeRig(K_COLS, K_ROWS)
+    const instance = await render(modeScreen(channel, backendMode), {
+      stdout: rig.stdout, stdin: rig.stdin, exitOnCtrlC: false, patchConsole: false,
+    })
+    return { rig, instance }
+  }
+
+  // K1. 后端模式：基础模式也显示 + 悬停详情 + 点击 + 三种颜色。
+  {
+    let opened = 0
+    const segment = (id: string, name: string): ModeSegment => ({ id, name, onOpen: () => { opened++ } })
+    const { rig, instance } = await openModeRig(K_STUB, segment('acceptEdits', '自动接受编辑'))
+    const { term, stdin } = rig
+    check('K1 后端模式名在屏（DSH 基础模式也会显示）',
+      await settled(() => screenHas(term, '自动接受编辑')), 'name=自动接受编辑')
+    check('K1 acceptEdits → inactiveShimmer #AAB2C2',
+      await modeColourSettles(term, '自动接受编辑', 0xaab2c2),
+      'fg=' + fgAt(term, findText(term, '自动接受编辑')?.col ?? 0, findText(term, '自动接受编辑')?.row ?? 0).toString(16))
+    hoverText(stdin, term, '自动接受编辑')
+    check('K1 悬停详情用后端模式名 + 既有 affordance 文案',
+      await settled(() => screenHas(term, 'mode 自动接受编辑 · 点击或 /permission 切换权限模式')))
+    hover(stdin, 1, 1)
+    check('K1 移开后详情行撤下', await settled(() => !screenHas(term, '切换权限模式')))
+    {
+      const at = findText(term, '自动接受编辑')
+      if (at === null) check('K1 点击目标仍在屏', false)
+      else {
+        stdin.write('\x1b[<0;' + (at.col + 1) + ';' + (at.row + 1) + 'M')
+        stdin.write('\x1b[<0;' + (at.col + 1) + ';' + (at.row + 1) + 'm')
+      }
+      check('K1 点击模式段调用 onOpen', await settled(() => opened === 1), 'opened=' + opened)
+    }
+    instance.rerender(modeScreen(K_STUB, segment('bypassPermissions', '跳过权限')))
+    check('K1 bypassPermissions → warning #D8B270',
+      await modeColourSettles(term, '跳过权限', 0xd8b270))
+    instance.rerender(modeScreen(K_STUB, segment('dontAsk', '不询问')))
+    check('K1 dontAsk → warning #D8B270', await modeColourSettles(term, '不询问', 0xd8b270))
+    instance.rerender(modeScreen(K_STUB, segment('plan', '计划模式')))
+    check('K1 后端 plan → planMode #7FAE99', await modeColourSettles(term, '计划模式', 0x7fae99))
+    // DSH 自身的 plan 标记不得泄进后端模式的颜色：id 不认识就是 inactiveShimmer。
+    instance.rerender(modeScreen(
+      { ...K_STUB, mode: { id: 'plan', plan: true, sandbox: 'read-only', approval: 'ask' } },
+      segment('default', '默认'),
+    ))
+    check('K1 DSH 标记不泄漏进后端模式颜色（default → inactiveShimmer）',
+      await modeColourSettles(term, '默认', 0xaab2c2))
+    instance.unmount()
+    await sleep(150) // 固定窗:pacing 换实例前等上一个卸载收尾
+  }
+
+  // K2. 缺席（DSH 会话）：渲染逐字节等于改动前的输出。
+  const DSH_GOLDEN = [
+    {
+      key: '基础模式（不显示 mode 段）',
+      channel: { ...K_STUB, modeIndex: 0 },
+      line: ' TM · dsh-tui',
+      sig: '1@ffffff/ffffff 2@aab2c2/ffffff 3@8d95a6/ffffff 7@aab2c2/ffffff 47@ffffff/ffffff',
+    },
+    {
+      key: '标记模式（Shift+Tab 到第 2 档）',
+      channel: { ...K_STUB, modeIndex: 1 },
+      line: ' TM · 默认 · dsh-tui',
+      sig: '1@ffffff/ffffff 2@aab2c2/ffffff 3@8d95a6/ffffff 4@d8b270/ffffff 3@8d95a6/ffffff 7@aab2c2/ffffff 40@ffffff/ffffff',
+    },
+    {
+      key: '计划模式',
+      channel: { ...K_STUB, mode: { id: 'plan', plan: true, sandbox: 'read-only', approval: 'ask' } },
+      line: ' TM · 计划模式 · dsh-tui',
+      sig: '1@ffffff/ffffff 2@aab2c2/ffffff 3@8d95a6/ffffff 8@7fae99/ffffff 3@8d95a6/ffffff 7@aab2c2/ffffff 36@ffffff/ffffff',
+    },
+    {
+      key: '完全访问（danger-full-access + approval never）',
+      channel: { ...K_STUB, mode: { id: 'full', plan: false, sandbox: 'danger-full-access', approval: 'never' } },
+      line: ' TM · 完全访问 · dsh-tui',
+      sig: '1@ffffff/ffffff 2@aab2c2/ffffff 3@8d95a6/ffffff 8@d8b270/ffffff 3@8d95a6/ffffff 7@aab2c2/ffffff 36@ffffff/ffffff',
+    },
+  ]
+  for (const golden of DSH_GOLDEN) {
+    const { rig, instance } = await openModeRig(golden.channel)
+    const { term } = rig
+    check('K2 就绪：' + golden.key, await settled(() => screenHas(term, 'dsh-tui')))
+    await sleep(250) // 固定窗:探针 末帧落定：金标准比对的是「整行字节」，不能比对半帧
+    const dump = dumpMode(term)
+    check('K2 ' + golden.key + ' 字符行逐字节不变',
+      dump.lines.join('\n') === golden.line, 'got=' + JSON.stringify(dump.lines))
+    check('K2 ' + golden.key + ' 状态行配色逐格不变',
+      dump.sigs[0] === golden.sig, 'got=' + JSON.stringify(dump.sigs[0]))
+    check('K2 ' + golden.key + ' 其余行仍是空屏',
+      dump.sigs.slice(1).every(s => s === K_BLANK_SIG))
+    instance.unmount()
+    await sleep(120) // 固定窗:pacing 换实例前等上一个卸载收尾
+  }
+
+
+
+  // K3. 优先级：安全读数压过字段开关，但压不过极简界面。
+  {
+    const seg: ModeSegment = { id: 'acceptEdits', name: '自动接受编辑', onOpen: () => undefined }
+    // (a) statusBar.mode=false + backendMode → 段仍然显示（安全读数压过字段开关）。
+    {
+      const { rig, instance } = await openModeRig({ ...K_STUB, statusBar: { mode: false } }, seg)
+      check('K3a statusBar.mode=false 时后端模式段仍显示',
+        await settled(() => screenHas(rig.term, '自动接受编辑')), rig.term.buffer.active.getLine(0)?.translateToString(true) ?? '')
+      instance.unmount()
+      await sleep(120) // 固定窗:pacing 换实例前等上一个卸载收尾
+    }
+    // (b) minimalUi=true + backendMode → 段不显示：极简界面是用户显式选的
+    // 「只要模型 + 目录」，不能被安全读数顶掉。
+    {
+      const { rig, instance } = await openModeRig({ ...K_STUB, minimalUi: true }, seg)
+      check('K3b minimalUi 就绪', await settled(() => screenHas(rig.term, 'dsh-tui')))
+      await sleep(250) // 固定窗:探针 末帧落定：金标准比对的是「整行字节」，不能比对半帧
+      const dump = dumpMode(rig.term)
+      check('K3b minimalUi：底栏只剩模型+目录（模式段不显示）',
+        dump.lines.join('\n') === ' TM · dsh-tui', 'got=' + JSON.stringify(dump.lines))
+      check('K3b minimalUi：屏上无后端模式名', !dump.lines.join('\n').includes('自动接受编辑'))
+      instance.unmount()
+      await sleep(120) // 固定窗:pacing 换实例前等上一个卸载收尾
+    }
+    // (c) DSH（backendMode 缺席）+ statusBar.mode=false → 与改动前逐字节
+    // 一致：标记模式照样藏起，行内容等于基础模式金标准。
+    {
+      const { rig, instance } = await openModeRig({ ...K_STUB, statusBar: { mode: false }, modeIndex: 1 })
+      check('K3c DSH mode:false 就绪', await settled(() => screenHas(rig.term, 'dsh-tui')))
+      await sleep(250) // 固定窗:探针 末帧落定：金标准比对的是「整行字节」，不能比对半帧
+      const dump = dumpMode(rig.term)
+      check('K3c DSH 关掉字段开关时标记模式不显示（逐字节同基础模式）',
+        dump.lines.join('\n') === ' TM · dsh-tui', 'got=' + JSON.stringify(dump.lines))
+      check('K3c 状态行配色逐格不变',
+        dump.sigs[0] === DSH_GOLDEN[0].sig, 'got=' + JSON.stringify(dump.sigs[0]))
+      check('K3c 其余行仍是空屏', dump.sigs.slice(1).every(s => s === K_BLANK_SIG))
+      instance.unmount()
+      await sleep(120) // 固定窗:pacing 换实例前等上一个卸载收尾
     }
   }
 

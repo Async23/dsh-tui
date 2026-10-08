@@ -21,6 +21,7 @@
  * exactly what it did, so the caller can tell the user instead of silently
  * rewriting their image.
  */
+import { loadSharp } from '../dsh-adapter/sharp.js'
 
 export interface ImageSizeProbe {
   readonly width: number
@@ -104,6 +105,23 @@ function probeGif(b: Uint8Array): ImageSizeProbe | null {
   const width = b[6]! | (b[7]! << 8)
   const height = b[8]! | (b[9]! << 8)
   return width > 0 && height > 0 ? { width, height } : null
+}
+
+/**
+ * The image media type the encoded bytes actually are, from the magic
+ * bytes alone (the same signatures {@link probeImageSize} dispatches on):
+ * PNG, JPEG, WebP (RIFF/WEBP) or GIF; anything else is undefined and the
+ * caller keeps its own label (those bytes take the decode-or-refuse path
+ * anyway). Used to keep a renamed file from travelling under a label its
+ * content contradicts.
+ */
+export function sniffImageMediaType(bytes: Uint8Array): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | undefined {
+  if (bytes.length >= 8 && PNG_SIGNATURE.every((v, i) => bytes[i] === v)) return 'image/png'
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg'
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return 'image/webp'
+  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return 'image/gif'
+  return undefined
 }
 
 /**
@@ -221,9 +239,8 @@ export type AdaptOutcome =
     readonly detail: string
   }
 
-/** Minimal structural types for the sharp calls used here — keeps the
- * module typechecking without depending on the optional package's d.ts
- * resolution in every tsconfig that pulls it in. */
+/** Structural subset of sharp's image pipeline. The dynamic output format
+ * comes from profile admission and remains runtime-validated by sharp. */
 interface SharpPipeline {
   flatten(options: { background: { r: number; g: number; b: number } }): SharpPipeline
   toFormat(format: string, options?: unknown): { toBuffer(): Promise<Uint8Array> }
@@ -233,23 +250,6 @@ interface SharpInstance extends SharpPipeline {
   resize(width: number, height: number, options: { fit: string }): SharpPipeline
 }
 type SharpFactory = (input: Uint8Array, options?: { animated?: boolean }) => SharpInstance
-
-/** Load sharp lazily so a missing optionalDependency stays a typed outcome. */
-async function loadSharp(): Promise<SharpFactory | null> {
-  try {
-    // The ESM build exposes the factory as the namespace's default; some
-    // bundlers hand the function itself. Handle both without trusting either.
-    const mod: unknown = await import('sharp')
-    if (typeof mod === 'function') return mod as SharpFactory
-    if (typeof mod === 'object' && mod !== null) {
-      const candidate = (mod as { default?: unknown }).default
-      if (typeof candidate === 'function') return candidate as SharpFactory
-    }
-    return null
-  } catch {
-    return null
-  }
-}
 
 /**
  * Produce bytes the profile can admit, and report what had to change.
@@ -275,8 +275,10 @@ export async function adaptImageForAdmission(
   acceptedMediaTypes: readonly string[],
 ): Promise<AdaptOutcome> {
   const probe = probeImageSize(bytes)
-  const sharp = await loadSharp()
-  if (sharp === null) {
+  // Share the host-first decoder with previews; a bare import here can load
+  // a second libvips and write native warnings straight into the live TUI.
+  const sharp = await loadSharp() as SharpFactory | undefined
+  if (sharp === undefined) {
     return { kind: 'unavailable', reason: 'sharp-missing', detail: 'sharp is not installed in this environment' }
   }
   try {

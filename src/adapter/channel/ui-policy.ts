@@ -7,32 +7,48 @@ import type { HostEffectClass } from '../ports/owner.js'
 
 type MethodKeys<T> = { [K in keyof T]: T[K] extends (...args: never[]) => unknown ? K : never }[keyof T]
 export type ChannelPreferences = Pick<ChannelUi,
-  | 'setDiffLayout' | 'setThinkingFold' | 'setToolBackground' | 'setScrollGutter'
+  | 'setDiffLayout' | 'setThinkingFold' | 'setJobGroupFold' | 'setToolBackground' | 'setScrollGutter'
   | 'setShowBackToBottom'
   | 'setPageMargin' | 'setFoldTerminalCommand' | 'setPromptSessionLabel'
-  | 'setExpandEditor' | 'setSmoothStreaming' | 'setStatusBar' | 'setWhale' | 'setWhaleIdle' | 'setMinimal'
+  | 'setExpandEditor' | 'setSmoothStreaming' | 'setStatusBar' | 'setWhale' | 'setWhaleIdle' | 'setWhaleGirl' | 'setMinimalUi' | 'setMinimal' | 'setSplashFont' | 'setBrand'
 >
 export const CHANNEL_UI_EFFECTS = Object.freeze({
   'setDiffLayout': 'mutate',
   'setThinkingFold': 'mutate',
+  'setJobGroupFold': 'mutate',
   'setToolBackground': 'mutate',
   'setScrollGutter': 'mutate',
   'setShowBackToBottom': 'mutate',
   'setPageMargin': 'mutate',
   'setFoldTerminalCommand': 'mutate',
+  'setTurnUsageRow': 'mutate',
   'setPromptSessionLabel': 'mutate',
   'setExpandEditor': 'mutate',
   'setSmoothStreaming': 'mutate',
   'setStatusBar': 'mutate',
   'setWhale': 'mutate',
   'setWhaleIdle': 'mutate',
+  'setSplashFont': 'mutate',
+  'setBrand': 'mutate',
+  'setWhaleGirl': 'mutate',
+  'setMinimalUi': 'mutate',
+  // Deprecated pre-rename alias of setMinimalUi (see the port's doc comment).
   'setMinimal': 'mutate',
   'commandCompletions': 'mutate',
+  // Pure description of the agent's mounted capabilities: no service is
+  // acquired, no cache warmed, no notice published (see
+  // dsh-adapter/channel/capabilities.ts).
+  'capabilities': 'read-only',
   'runExternalCommand': 'mutate',
   'runExternalCommandOutcome': 'mutate',
   'openPluginScene': 'mutate',
   'closePluginScene': 'mutate',
   'sideQuestion': 'mutate',
+  // "Send to Chat" (side-panel §6.7): staging/removing a context chip is a
+  // composer mutation; the projection itself is the read-only
+  // `attachedContexts` property below.
+  'attachContext': 'mutate',
+  'detachContext': 'mutate',
   'stagedImageGeneration': 'read-only',
   'stageImage': 'mutate',
   'stageComposerImage': 'mutate',
@@ -45,6 +61,9 @@ export const CHANNEL_UI_EFFECTS = Object.freeze({
   'removePending': 'mutate',
   'cancel': 'mutate',
   'interruptAndDeliver': 'mutate',
+  'interruptAndDock': 'mutate',
+  'deliverDocked': 'mutate',
+  'swapDockedForDraft': 'mutate',
   'rewindTo': 'mutate',
   'promptRewind': 'mutate',
   'buildSessionTree': 'mutate',
@@ -82,13 +101,23 @@ export const CHANNEL_UI_EFFECTS = Object.freeze({
   'balanceInfo': 'mutate',
   'providerSetup': 'read-only',
   'oauthProviderStatuses': 'read-only',
+  'backendAuth': 'read-only',
+  'backendChannels': 'read-only',
+  'backendModes': 'read-only',
+  'backendMcp': 'read-only',
+  'backendGoals': 'read-only',
+  'backendInit': 'read-only',
   'settingsHost': 'read-only',
   'settingsSections': 'read-only',
   'subscribeSettingsSections': 'subscribe',
   'listFileCandidates': 'read-only',
   'listFiles': 'read-only',
+  'cachedSessions': 'read-only',
   'listSessions': 'read-only',
   'previewSession': 'read-only',
+  'listForeignSources': 'read-only',
+  'listForeignSessions': 'read-only',
+  'importForeignSession': 'mutate',
   'setResumeTarget': 'mutate',
   'renameSession': 'mutate',
   'setSessionColor': 'mutate',
@@ -96,6 +125,7 @@ export const CHANNEL_UI_EFFECTS = Object.freeze({
   'deleteSession': 'mutate',
   'renameSessionTo': 'mutate',
   'compact': 'mutate',
+  'cancelCompact': 'mutate',
   'pushLocal': 'mutate',
   'mcpStatus': 'read-only',
   'exportSession': 'mutate',
@@ -112,6 +142,15 @@ export const CHANNEL_UI_EFFECTS = Object.freeze({
   'backgroundCurrent': 'mutate',
   'replyToAgent': 'mutate',
   'traceEvents': 'read-only',
+  // Pure composition fact (which trajectory source is mounted); no service
+  // is acquired and no cache warmed by answering it.
+  'trajectorySource': 'read-only',
+  // Lane drilldown reads over the fold's own logs: the same append-only
+  // snapshots traceEvents hands back, plus a small roster. No upstream
+  // service, no host cache.
+  'trajectoryLanes': 'read-only',
+  'trajectoryLaneEvents': 'read-only',
+  'trajectoryBackendLabel': 'read-only',
   'subscribe': 'subscribe'
 } satisfies Record<MethodKeys<ChannelUi>, HostEffectClass>)
 
@@ -122,8 +161,15 @@ export const CHANNEL_UI_PROPERTIES = [
   'sessionTitle',
   'sessionColor',
   'agentId',
+  'sessionId',
   'agentBindingGeneration',
+  'sessionRef',
+  'backendCapabilities',
+  'costReport',
+  'rateLimit',
+  'olderHistory',
   'autoRecapOnOpen',
+  'settingsNamespace',
   'model',
   'provider',
   'configuredProvider',
@@ -132,10 +178,13 @@ export const CHANNEL_UI_PROPERTIES = [
   'configuredActivityFrames',
   'configuredLang',
   'tokens',
+  'mainCost',
+  'subagentCost',
   'cwd',
   'displayCwd',
   'gitBranch',
   'working',
+  'compaction',
   'cancelPending',
   'spinnerMode',
   'responseChars',
@@ -147,23 +196,31 @@ export const CHANNEL_UI_PROPERTIES = [
   'reasoningEffort',
   'effortLevels',
   'lastUsage',
+  'turnUsage',
+  'contextOccupancy',
   'tps',
   'tpsSamples',
-  'workingActivity',
   'activityFrames',
   'diffLayout',
   'thinkingFold',
+  'jobGroupFold',
   'toolBackground',
   'scrollGutter',
   'showBackToBottom',
   'pageMargin',
   'foldTerminalCommand',
+  'turnUsageRow',
   'promptSessionLabel',
   'expandEditor',
   'smoothStreaming',
   'statusBar',
   'whale',
   'whaleIdle',
+  'splashFont',
+  'brand',
+  'whaleGirl',
+  'minimalUi',
+  // Deprecated pre-rename alias of minimalUi (see the port's doc comment).
   'minimal',
   'activityEnabled',
   'contextBarEnabled',
@@ -180,8 +237,10 @@ export const CHANNEL_UI_PROPERTIES = [
   'jobControl',
   'mode',
   'modeIndex',
+  'modelDisplay',
   'agentPreset',
-  'selection'
+  'selection',
+  'attachedContexts'
 ] as const satisfies readonly (keyof ChannelUi)[]
 
 // Both inventories are exhaustive: adding a public property is a compile error

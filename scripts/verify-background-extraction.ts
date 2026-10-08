@@ -1,14 +1,18 @@
 /** Structural and behavioral guard for L4 background extraction. */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { compositionSource } from './lib/channel-composition.mjs'
 import { createAgentViewProjection } from '../src/dsh-adapter/channel/agent-view-projection.js'
 import { createBackgroundCurrentAction } from '../src/dsh-adapter/channel/background-action.js'
+import { createChannelBinding } from '../src/dsh-adapter/channel/binding.js'
+import { createDshSession } from '../src/dsh-adapter/backend/session.js'
 import { createJobProjection } from '../src/dsh-adapter/channel/job-projection.js'
 import { createChannelOwner } from '../src/dsh-adapter/channel/owner.js'
 import { createSubagentProjection } from '../src/dsh-adapter/channel/subagent-projection.js'
 
 const source = (path: string) => readFileSync(new URL(`../src/dsh-adapter/${path}`, import.meta.url), 'utf8')
-const root = source('channel.ts')
+// Phase 4a: the root is the composition (channel.ts + core/compose.ts + extensions.ts).
+const root = compositionSource()
 const agentView = source('channel/agent-view-projection.ts')
 const background = source('channel/background-action.ts')
 const jobs = source('channel/job-projection.ts')
@@ -144,6 +148,7 @@ for (const label of ['ctx lookup throws', 'agents.get throws']) {
   let current = first
   let releaseDecision!: () => void
   const decision = new Promise<void>(resolve => { releaseDecision = resolve })
+  const enteredDecision = Promise.withResolvers<void>()
   let adopted = 0
   const projection = createAgentViewProjection({
     on: () => () => undefined,
@@ -151,12 +156,13 @@ for (const label of ['ctx lookup throws', 'agents.get throws']) {
       return name === 'agents' ? { list: () => [], get: () => current, create: async () => ({}) } : undefined
     },
   } as never, {
-    owner, binding: { agent: main } as never, cwd: () => '/tmp', provider: 'provider', model: 'model',
+    owner, binding: createChannelBinding(createDshSession({} as never, { agent: main as never, handle: undefined }), owner), cwd: () => '/tmp', provider: 'provider', model: 'model',
     notify() {}, listPersisted: async () => [], createDetached: async () => { throw new Error('unused') },
-    sessionSwitchVetoed: async () => { await decision; return false },
+    sessionSwitchVetoed: async () => { enteredDecision.resolve(); await decision; return false },
     adoptLive: async () => { adopted += 1; return { ok: true } }, resumeInto: async () => ({ ok: true }),
   })
   const pending = projection.attach('selected')
+  await enteredDecision.promise
   current = replacement
   releaseDecision()
   assert.deepEqual(await pending, { ok: false, reason: 'cancelled' })
@@ -195,7 +201,7 @@ for (const label of ['ctx lookup throws', 'agents.get throws']) {
       async abandon(handle) { await handle.dispose() },
       adopt() { throw new Error('must not adopt revoked candidate') },
     } as never,
-    backgroundHandles: new Map(), rowIds: { value: 0 }, resetProjector() {}, resetSubagents() {}, resetJobs() {},
+    backgroundHandles: new Map(), rowIds: { value: 0 }, resetProjector() {}, resetSubagents() {}, parkSubagents() {}, resetJobs() {},
     refreshEffortLevels() {}, bindAgent() {}, refreshCommands() {}, async refreshLoadedContext() {}, async refreshSkillCommands() {},
     clearStagedImages() {}, notifySessionSwitched() {}, notify() {}, notifyAgentView() {},
   })
@@ -215,7 +221,7 @@ for (const label of ['ctx lookup throws', 'agents.get throws']) {
     const main = fakeAgent('main')
     const ctx = { on: () => () => undefined, get: () => ({ list: () => [], get: () => undefined, create: async () => ({}) }) }
     const projection = createAgentViewProjection(ctx as never, {
-      owner, binding: { agent: main } as never, cwd: () => '/tmp', provider: 'provider', model: 'model',
+      owner, binding: createChannelBinding(createDshSession({} as never, { agent: main as never, handle: undefined }), owner), cwd: () => '/tmp', provider: 'provider', model: 'model',
       notify() {}, listPersisted: async () => [], createDetached: async () => { throw new Error('unused') },
       sessionSwitchVetoed: async () => false, adoptLive: async () => ({ ok: true }), resumeInto: async () => ({ ok: true }),
     })

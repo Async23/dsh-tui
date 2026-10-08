@@ -1,4 +1,4 @@
-/** V3 adapter regressions against real Session, JSONL and CommandRuntime APIs.
+/** V3+ adapter regressions against real Session, JSONL and CommandRuntime APIs.
  * Run: node --import tsx/esm scripts/verify-session-v3.ts
  * All files and preferences are isolated under a disposable temporary root.
  */
@@ -25,6 +25,7 @@ const { createInitialChannelView } = await import('../src/dsh-adapter/channel/st
 const { createSessionMetadataActions } = await import('../src/dsh-adapter/channel/session-metadata.js')
 const { createSessionTreeReader } = await import('../src/dsh-adapter/channel/session-tree.js')
 const { createTreeRewindAction } = await import('../src/dsh-adapter/channel/session-tree-actions.js')
+const { createDshSession } = await import('../src/dsh-adapter/backend/session.js')
 const { createExternalCommandInvoker } = await import('../src/dsh-adapter/channel/external-commands.js')
 const { createChannelOwner } = await import('../src/dsh-adapter/channel/owner.js')
 const { foldRows, foldBack } = await import('../src/dsh-adapter/channel/transcript.js')
@@ -38,7 +39,7 @@ const { SubagentActivityStore } = await import('../src/dsh-adapter/subagents.js'
 function session(id: string, parent?: Session) {
   const seed = parent?.snapshotEvents() ?? []
   return Session.create(SessionId(id), seed, {
-    version: 3, id: SessionId(id), createdAt: 1, cwd, agentPreset: 'liangshen', isSeeded: parent !== undefined,
+    ...Session.create(SessionId(id)).header, createdAt: 1, cwd, agentPreset: 'liangshen', isSeeded: parent !== undefined,
     ...(parent === undefined ? {} : { parentSession: parent.id, isSeeded: true }),
   }, SessionLogOffset(seed.length))
 }
@@ -100,14 +101,32 @@ try {
     p.chunk('text-delta', 'A'.repeat(450))
     const event = answer(s, 'A'.repeat(450), 'R'.repeat(450))
     p.projector.renderEvent(event)
+    const reasoningRow = p.state.rows.find(row => row.kind === 'reasoning')
+    assert.equal(reasoningRow?.streaming, false, 'a settled reasoning step stops its transcript spinner')
+    assert.equal(Boolean(reasoningRow?.thinkingOpen), thinkingFold === 'full', 'full mode keeps settled reasoning open without marking it streaming')
     p.end({ kind: 'committed', eventType: 'assistant/message', seq: event.seq })
     p.projector.settleStreaming()
+    assert.equal(Boolean(reasoningRow?.thinkingOpen), false, 'turn settlement closes full-mode reasoning')
     assert.equal(p.state.rows.length, 2)
     assert.ok(p.state.rows.every(row => row.seq === event.seq), 'all live rows gain durable anchors')
     foldRows(p.state.rows, 0)
     assert.equal(p.state.rows[0]!.text.length, 201)
     assert.equal(foldBack(p.state.rows, s.snapshotEvents()), 2)
     assert.ok(p.state.rows.every(row => row.text.length === 450), 'both folded bodies restore fully')
+  }
+  {
+    const p = projection(session('full-thinking-tool'))
+    p.state.thinkingFold = 'full'
+    p.start()
+    p.chunk('reasoning-delta', 'reasoning before tool')
+    p.projector.renderEvent({
+      type: 'tool/call', seq: 1, time: Date.now(),
+      data: { turn: 1, step: 1, callId: 'call-1', name: 'Bash', arguments: '{}' },
+    } as never)
+    const reasoningRow = p.state.rows.find(row => row.kind === 'reasoning')
+    assert.equal(reasoningRow?.streaming, false, 'a tool call stops the completed reasoning spinner')
+    assert.equal(reasoningRow?.thinkingOpen, true, 'full mode keeps tool-prefixed reasoning expanded')
+    assert.equal(p.state.spinnerMode, 'tool-use', 'the global spinner follows the active tool')
   }
   {
     const s = session('canonical-empty')
@@ -216,12 +235,15 @@ try {
     prompt(child, 'child prompt')
     const grandchild = session('grandchild', child)
     prompt(grandchild, 'grandchild prompt')
+    grandchild.append('turn/start', { turn: 1 })
     grandchild.append('request/header', { reason: 'initial', header: { config: { provider: 'deepseek', model: 'saved-model' } } })
+    grandchild.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     for (const s of [parent, child, grandchild]) {
       const writer = await store.create(s.header, { inheritedEventCount: s.inheritedEventCount })
       try { await writer.append(s.snapshotEvents()); await writer.flush() }
       finally { await writer.close() }
     }
+    assert.equal((await readPersistedSession(store, grandchild.id)).meta.agentPreset, 'liangshen')
     assert.equal(await resolvePersistedPreset(ctx, grandchild.id), 'liangshen')
     assert.deepEqual(await resolvePersistedRoute(ctx, grandchild.id), { provider: 'deepseek', model: 'saved-model' })
     const grandchildPath = await locateSession(store as never, String(grandchild.id))
@@ -260,7 +282,8 @@ try {
       create: async () => { throw new Error('unused by binding fixture') },
     } : undefined } as never, { working: false, cwd, provider: 'deepseek', model: 'model' }, {
       owner, binding: { agent, capture: () => capture, isCurrent: () => true,
-        prepare: async (_capture: unknown, _create: unknown) => { prepared = true; return { agent } }, abandon: async () => {} } as never,
+        // The binding hands back a session; this one owns a no-op handle.
+        prepare: async (_capture: unknown, _create: unknown) => { prepared = true; return createDshSession({} as never, { agent, dispose: async () => {} } as never) }, abandon: async () => {} } as never,
       settleCompaction: async () => {}, notify: noop, adoptForkedAgent: () => 'child', notifySessionSwitched: noop,
     })
     assert.equal(await rewind(String(child.id), child.seq - 1, 'fork'), '')

@@ -100,6 +100,9 @@ export interface ConfiguredProvider {
   /** Explicit `api` override in the stored profile; catalog routes can
    *  carry one too, so this alone does not classify the route. */
   readonly api?: string
+  /** Effective profile needs custom request headers that the anonymous
+   *  discovery request cannot inherit from the named route. */
+  readonly hasCustomHeaders?: boolean
   /** Enabled model ids; undefined means the whole catalog stays served. */
   readonly models?: readonly string[]
   /**
@@ -108,6 +111,28 @@ export interface ConfiguredProvider {
    * wizard never learned about (`input`, `compat`, …) survive the edit.
    */
   readonly modelEntries?: readonly Record<string, unknown>[]
+  /** Per-model overrides on a route that still serves its whole catalog. */
+  readonly modelOverrides?: Readonly<Record<string, Record<string, unknown>>>
+}
+
+/** The capability fields exposed by the local /provider model editor. */
+export interface ProviderModelCapabilities {
+  readonly contextWindow?: number
+  readonly maxTokens?: number
+  readonly reasoningEfforts?: false | Readonly<Record<string, string | null>>
+  readonly input?: readonly ('text' | 'image')[]
+}
+
+/** In-process, draft-only option editor; never part of a model-facing ask. */
+export interface ProviderModelEditor {
+  readonly reasoningEditable: boolean
+  read(id: string): {
+    readonly values: ProviderModelCapabilities
+    readonly defaults: ProviderModelCapabilities
+  }
+  /** Replace the four editable overrides in the draft, preserving other fields. */
+  save(id: string, values: ProviderModelCapabilities): void
+  edited(id: string): boolean
 }
 
 /** One path op inside a provider profile, relative to the profile object. */
@@ -141,7 +166,8 @@ export interface OAuthProviderStatus {
 export interface OAuthLoginResult {
   readonly provider: string
   readonly oauthLabel: string
-  readonly expiresAt: number
+  /** Undefined for Host-owned account grants without a token expiry. */
+  readonly expiresAt: number | undefined
 }
 
 /**
@@ -204,6 +230,15 @@ export interface TuiSettingsGroup {
   title: string
   /** Provider-owned translations for the title. */
   descriptions?: LocalizedDescriptions
+  /**
+   * Root-page presentation. 'page' (the default) renders one navigation
+   * row that opens the group's fields on a subpage — for deep, cohesive
+   * domains. 'inline' renders the fields directly on the root page under
+   * a small header — for shallow topics where a subpage round-trip costs
+   * more clicks than the ordering buys. Subpage navigation (Esc back,
+   * focus reset) only exists for 'page' groups.
+   */
+  mode?: 'inline' | 'page'
 }
 
 export interface TuiSettingsField {

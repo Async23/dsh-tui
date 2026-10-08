@@ -7,13 +7,17 @@ import { isMouseClicksDisabled } from "../../utils/fullscreen.js";
 import { isInputSuppressed } from "../input-suppression.js";
 import { logMouseDebug } from "../../utils/debug.js";
 import { logError } from "../../utils/log.js";
+import { appendCrashLog, serializeCrashDetail } from "../../utils/crashDetail.js";
+import { isNestedUpdateOverflow, noteBoundaryRecoveryRemount, shouldRecoverBoundaryOverflow } from "../update-overflow-guard.js";
 import { EventEmitter } from "../events/emitter.js";
 import { InputEvent } from "../events/input-event.js";
+import instances from "../instances.js";
 import { TerminalFocusEvent } from "../events/terminal-focus-event.js";
 import { DragEvent } from "../events/drag-event.js";
 import type { DOMElement } from "../dom.js";
 import {
 	INITIAL_STATE,
+	type KeyParseState,
 	type ParsedInput,
 	type ParsedKey,
 	type ParsedMouse,
@@ -24,7 +28,6 @@ import {
 	finishSelection,
 	hasSelection,
 	type SelectionState,
-	startSelection,
 } from "../selection.js";
 import {
 	isXtermJs,
@@ -50,7 +53,6 @@ import {
 import {
 	DBP,
 	DFE,
-	DISABLE_MOUSE_TRACKING,
 	EBP,
 	EFE,
 	HIDE_CURSOR,
@@ -67,15 +69,13 @@ import { TerminalFocusProvider } from "./TerminalFocusContext.js";
 import { TerminalSizeContext } from "./TerminalSizeContext.js";
 import { TerminalWriteProvider } from "../useTerminalNotification.js";
 
-// Platforms that support Unix-style process suspension (SIGSTOP/SIGCONT)
-const SUPPORTS_SUSPEND = process.platform !== "win32";
-
 // After this many milliseconds of stdin silence, the next chunk triggers
 // a terminal mode re-assert (mouse tracking). Catches tmux detach→attach,
 // ssh reconnect, and laptop wake — the terminal resets DEC private modes
 // but no signal reaches us. 5s is well above normal inter-keystroke gaps
 // but short enough that the first scroll after reattach works.
 const STDIN_RESUME_GAP_MS = 5000;
+
 type Props = {
 	readonly children: ReactNode;
 	readonly stdin: NodeJS.ReadStream;
@@ -134,6 +134,13 @@ type Props = {
 	// screen buffer to find word/line boundaries and mutates selection,
 	// setting isDragging=true so a subsequent drag extends by word/line.
 	readonly onMultiClick: (col: number, row: number, count: 2 | 3) => void;
+	// Called on a left press that begins a text selection (fresh press,
+	// modifier press, dormant-drag replay). Lives on Ink like
+	// onSelectionDrag: seeding the gesture needs the screen buffer to read
+	// the anchor cell's noSelect bit (the direction fence — a drag anchored
+	// inside a noSelect region, e.g. the side-panel column, selects that
+	// region's text; chat-origin drags keep excluding it).
+	readonly onSelectionStart: (col: number, row: number) => void;
 	// Called on drag-motion. Mode-aware: char mode updates focus to the
 	// exact cell; word/line mode snaps to word/line boundaries. Needs
 	// screen-buffer access (word boundaries) so lives on Ink, not here.
@@ -199,6 +206,22 @@ type State = {
 	readonly error?: Error;
 };
 
+/**
+ * App-side protocol-candidate latch input (fed to Ink's
+ * onProtocolCandidateChange). A gated parser (mouseReportingActive === true)
+ * may hold a bare `ESC[` head in the tokenizer before the flush moves it into
+ * mouseTailHold; under the gate that buffer is SGR-report-shaped too. A closed
+ * gate cannot receive reports, and an absent gate (direct callers) keeps the
+ * original `ESC[<`-only test.
+ */
+function hasMouseProtocolCandidate(state: KeyParseState): boolean {
+	if (state.mouseTailHold !== undefined) return true;
+	if (state.mouseReportingActive === true)
+		return state.incomplete.startsWith("\x1b[");
+	if (state.mouseReportingActive === false) return false;
+	return state.incomplete.startsWith("\x1b[<");
+}
+
 // Root component for all Ink apps
 // It renders stdin and stdout contexts, so that children can access them if needed
 // It also handles Ctrl+C exiting and cursor visibility
@@ -217,7 +240,11 @@ export default class App extends PureComponent<Props, State> {
 	// raw mode until all components don't need it anymore
 	rawModeEnabledCount = 0;
 	internal_eventEmitter = new EventEmitter();
-	keyParseState = INITIAL_STATE;
+	keyParseState: KeyParseState = {
+		...INITIAL_STATE,
+		// Capability gate only — the parser lights up once it decodes a record.
+		win32Capable: supportsWin32InputMode(),
+	};
 	// Timer for flushing incomplete escape sequences
 	incompleteEscapeTimer: NodeJS.Timeout | null = null;
 	// Deferred XTVERSION probe (setImmediate). Cleared on unmount so the
@@ -369,6 +396,22 @@ export default class App extends PureComponent<Props, State> {
 	// Initialized to now so startup doesn't false-trigger.
 	lastStdinTime = Date.now();
 
+	// TerminalSizeContext value, renewed only when the dimensions change.
+	// A fresh object per App render would re-render every width-aware
+	// consumer (MarkdownTable, CodeBlockFrame, panel geometry) on each
+	// streaming frame.
+	private terminalSizeValue: { columns: number; rows: number } | null = null
+	private terminalSizeFor(columns: number, rows: number): { columns: number; rows: number } {
+		if (
+			this.terminalSizeValue === null ||
+			this.terminalSizeValue.columns !== columns ||
+			this.terminalSizeValue.rows !== rows
+		) {
+			this.terminalSizeValue = { columns, rows }
+		}
+		return this.terminalSizeValue
+	}
+
 	// Raw stdout writer for control sequences that must bypass the frame
 	// pipeline (alt-screen enter/exit, mouse-tracking toggles, notifications).
 	// A class property (not a render-local closure) so the context value keeps
@@ -390,10 +433,7 @@ export default class App extends PureComponent<Props, State> {
 		return (
 			<TerminalWriteProvider value={this.writeRaw}>
 			<TerminalSizeContext.Provider
-				value={{
-					columns: this.props.terminalColumns,
-					rows: this.props.terminalRows,
-				}}
+				value={this.terminalSizeFor(this.props.terminalColumns, this.props.terminalRows)}
 			>
 				<AppContext.Provider
 					value={{
@@ -467,7 +507,46 @@ export default class App extends PureComponent<Props, State> {
 			while (this.rawModeEnabledCount > 0) this.handleSetRawMode(false);
 		}
 	}
-	override componentDidCatch(error: Error) {
+	override componentDidCatch(error: Error, errorInfo: { componentStack?: string }) {
+		// A #185 that reaches the root boundary escaped every enqueue-site
+		// guard and was thrown inside React's own commit (e.g. updates
+		// chained through an effect); the process-level guard never sees it
+		// because the boundary consumes the error. react-reconciler resets
+		// its nested-update counter before throwing, so clearing the error
+		// remounts the tree from a clean counter and the session survives;
+		// the detail goes to crash.log. Recoveries are capped per window;
+		// past the cap the error goes to handleExit instead of remounting in
+		// a loop.
+		if (isNestedUpdateOverflow(error)) {
+			if (
+				typeof errorInfo?.componentStack === "string" &&
+				(error as Error & { componentStack?: string }).componentStack === undefined
+			) {
+				try {
+					(error as Error & { componentStack?: string }).componentStack = errorInfo.componentStack;
+				} catch {
+					// Frozen error object — the boundary stack is best-effort.
+				}
+			}
+			if (shouldRecoverBoundaryOverflow()) {
+				logError(
+					new Error(
+						"Recovered from React nested-update overflow (#185) at the root boundary — the UI remounts (widget state resets; session data is intact). Full detail in crash.log.",
+					),
+				);
+				try {
+					appendCrashLog(serializeCrashDetail(error));
+				} catch {
+					// Diagnostics must never break the recovery itself.
+				}
+				// The remount this triggers is a RECOVERY, not a boot: the screen
+				// layer reads the mark to keep boot-only surfaces (launchpad,
+				// onboarding) closed, so the user lands back in the conversation.
+				noteBoundaryRecoveryRemount();
+				this.setState({ error: undefined });
+				return;
+			}
+		}
 		this.handleExit(error);
 	}
 	scheduleXtversionProbe = (): void => {
@@ -506,7 +585,9 @@ export default class App extends PureComponent<Props, State> {
 				);
 			}
 		}
-		stdin.setEncoding("utf8");
+		// Only once: each setEncoding() swaps in a fresh StringDecoder and drops
+		// the half of a CJK char still buffered from the last chunk (#1227).
+		if (stdin.readableEncoding !== "utf8") stdin.setEncoding("utf8");
 		if (isEnabled) {
 			// Ensure raw mode is enabled only once
 			if (this.rawModeEnabledCount === 0) {
@@ -601,8 +682,34 @@ export default class App extends PureComponent<Props, State> {
 
 	// Process input through the parser and handle the results
 	processInput = (input: string | Buffer | null): void => {
-		// Parse input using our state machine
-		const [keys, newState] = parseMultipleKeypresses(this.keyParseState, input);
+		// SGR head-claim provenance (ADR-0007 D2) — the ONLY injection point.
+		// Re-read Ink's live altScreenMouseTracking on every chunk because
+		// <AlternateScreen> flips it on mount/unmount; a stale value would
+		// either swallow literal input (stale true) or leak a report head
+		// (stale false). The renderer lookup mirrors <AlternateScreen>'s
+		// instances.get() resolution; no renderer → false (inline / no
+		// mouse tracking → pre-gate behavior).
+		const renderer =
+			instances.get(this.props.stdout) ??
+			(instances.size === 1 ? instances.values().next().value : undefined);
+		// Host-injected query evidence (#1142 pattern): the parser only claims
+		// a terminal-response tail when a query of the matching expected type
+		// is genuinely awaiting an answer. This is the live query lifecycle,
+		// not a recency window — a settled query stops authorizing at once.
+		// Injected per call — newState replaces the whole state object, so a
+		// value stored once would go stale. Read-only for the parser.
+		const terminalExpectedResponseTypes = [
+			...this.querier.pendingResponseTypes,
+		];
+		// Both host evidence channels ride the SAME state snapshot, so a
+		// single processInput cannot see one side's evidence without the
+		// other. Parse input using our state machine.
+		const prevState: KeyParseState = {
+			...this.keyParseState,
+			mouseReportingActive: renderer?.isAltScreenMouseTracking === true,
+			terminalExpectedResponseTypes,
+		};
+		const [keys, newState] = parseMultipleKeypresses(prevState, input);
 		// Gesture latch: a parser-captured SGR mouse prefix (mouseTailHold
 		// transitioned to a value, or the tokenizer's `incomplete` buffer
 		// starts with an SGR prefix) is byte-level evidence of a mouse event
@@ -617,8 +724,8 @@ export default class App extends PureComponent<Props, State> {
 		// a flush can move the prefix from `incomplete` into `mouseTailHold`
 		// (or back), and treating either transition alone as a falling edge
 		// would drop the latch mid-report.
-		const hadCandidate = this.keyParseState.mouseTailHold !== undefined || this.keyParseState.incomplete.startsWith('\x1b[<');
-		const hasCandidate = newState.mouseTailHold !== undefined || newState.incomplete.startsWith('\x1b[<');
+		const hadCandidate = hasMouseProtocolCandidate(prevState);
+		const hasCandidate = hasMouseProtocolCandidate(newState);
 		if (!hadCandidate && hasCandidate) {
 			this.props.onProtocolCandidateChange?.(true);
 		} else if (hadCandidate && !hasCandidate) {
@@ -720,10 +827,6 @@ export default class App extends PureComponent<Props, State> {
 		if (input === "\x03" && this.props.exitOnCtrlC) {
 			this.handleExit();
 		}
-
-		// Note: Ctrl+Z (suspend) is now handled in processKeysInBatch using the
-		// parsed key to support both raw (\x1a) and CSI u format from Kitty
-		// keyboard protocol terminals (Ghostty, iTerm2, kitty, WezTerm)
 	};
 	handleExit = (error?: Error): void => {
 		if (this.isRawModeSupported()) {
@@ -736,55 +839,23 @@ export default class App extends PureComponent<Props, State> {
 		// and Clock (interval speed) — no App setState needed.
 		setTerminalFocused(isFocused);
 	};
-	handleSuspend = (): void => {
-		if (!this.isRawModeSupported()) {
+	/**
+	 * Re-assert raw mode after an EXTERNAL stop+continue (SIGCONT). While the
+	 * job is stopped the shell owns the tty and leaves it in its own cooked
+	 * modes; the job is expected to restore its termios when it continues.
+	 * The readable listener survives the stop, so only the termios flag comes
+	 * back — deliberately not through handleSetRawMode, which would
+	 * double-count the raw-mode requests and re-add listeners.
+	 *
+	 * No `stdin.isRaw` guard: Node caches that flag as a plain property on the
+	 * stream, so it still reads `true` after the shell reset termios behind our
+	 * back. `setRawMode(true)` is an idempotent ioctl.
+	 */
+	reassertRawMode = (): void => {
+		if (this.rawModeEnabledCount === 0 || !this.isRawModeSupported()) {
 			return;
 		}
-
-		// Store the exact raw mode count to restore it properly
-		const rawModeCountBeforeSuspend = this.rawModeEnabledCount;
-
-		// Completely disable raw mode before suspending
-		while (this.rawModeEnabledCount > 0) {
-			this.handleSetRawMode(false);
-		}
-
-		// Show cursor, disable focus reporting, and disable mouse tracking
-		// before suspending. DISABLE_MOUSE_TRACKING is a no-op if tracking
-		// wasn't enabled, so it's safe to emit unconditionally — without
-		// it, SGR mouse sequences would appear as garbled text at the
-		// shell prompt while suspended.
-		if (this.props.stdout.isTTY) {
-			this.props.stdout.write(SHOW_CURSOR + DFE + DISABLE_MOUSE_TRACKING);
-		}
-
-		// Notify the application of suspension. The listener manages its notification
-		this.internal_eventEmitter.emit("suspend");
-
-		// Set up resume handler
-		const resumeHandler = () => {
-			// Restore raw mode to exact previous state
-			for (let i = 0; i < rawModeCountBeforeSuspend; i++) {
-				if (this.isRawModeSupported()) {
-					this.handleSetRawMode(true);
-				}
-			}
-
-			// Hide cursor (unless in accessibility mode) and re-enable focus reporting after resuming
-			if (this.props.stdout.isTTY) {
-				if (!isEnvTruthy(process.env.DSH_TUI_ACCESSIBILITY)) {
-					this.props.stdout.write(HIDE_CURSOR);
-				}
-				// Re-enable focus reporting to restore terminal state
-				this.props.stdout.write(EFE);
-			}
-
-			// Notify the application that the terminal resumed
-			this.internal_eventEmitter.emit("resume");
-			process.removeListener("SIGCONT", resumeHandler);
-		};
-		process.on("SIGCONT", resumeHandler);
-		process.kill(process.pid, "SIGSTOP");
+		this.props.stdin.setRawMode(true);
 	};
 }
 
@@ -909,12 +980,6 @@ function processKeysInBatch(
 			setTerminalFocused(true);
 		}
 
-		// Handle Ctrl+Z (suspend) using parsed key to support both raw (\x1a) and
-		// CSI u format (\x1b[122;5u) from Kitty keyboard protocol terminals
-		if (item.name === "z" && item.ctrl && SUPPORTS_SUSPEND) {
-			app.handleSuspend();
-			continue;
-		}
 		// Wheel keys carry the pointer position (SGR/X10 col/row). Route
 		// position-first: if a scroll container sits under the pointer, its
 		// onWheel consumes the event and the legacy global keybinding path
@@ -1192,7 +1257,7 @@ export function handleMouseEvent(app: App, m: ParsedMouse): void {
 			app.lastClickRow = -1;
 			// Do not immediately seed the chain again: a Shift+click followed by
 			// a plain click in the same cell must remain two single clicks.
-			startSelection(sel, col, row);
+			app.props.onSelectionStart(col, row);
 			sel.lastPressHadAlt = (m.button & 0x08) !== 0;
 			app.props.onSelectionChange();
 			return;
@@ -1223,7 +1288,7 @@ export function handleMouseEvent(app: App, m: ParsedMouse): void {
 			app.props.onMultiClick(col, row, count);
 			return;
 		}
-		startSelection(sel, col, row);
+		app.props.onSelectionStart(col, row);
 		// SGR bit 0x08 = alt (xterm.js wires altKey here, not metaKey — see
 		// comment at the hyperlink-open guard below). On macOS xterm.js,
 		// receiving alt means macOptionClickForcesSelection is OFF (otherwise
@@ -1259,7 +1324,7 @@ export function handleMouseEvent(app: App, m: ParsedMouse): void {
 				);
 				return;
 			}
-			startSelection(sel, col, row);
+			app.props.onSelectionStart(col, row);
 			replayedDormantDrag = true;
 		}
 		// Classic X10 encodes every release as low bits 3. If a left selection is

@@ -8,6 +8,7 @@ The root README lists what ships; the details live here. Chinese files have no s
 | 文档 / Doc | 中文 | English | 讲什么 / What it covers |
 | --- | --- | --- | --- |
 | 安装与快速开始 / Install & run | [getting-started.md](getting-started.md) | [getting-started.en.md](getting-started.en.md) | 从安装、启动到排障。 |
+| 会话迁移 / Session migration | [migrate.md](migrate.md) | [migrate.en.md](migrate.en.md) | 从 Claude Code / Codex / OMP / zcode / Grok Build 导入对话历史。 |
 | VS Code | [vscode.md](vscode.md) | [vscode.en.md](vscode.en.md) | 在 VS Code 里跑，配合扩展与 IDE 选区。 |
 
 ## 日常使用 / Using it
@@ -17,6 +18,8 @@ The root README lists what ships; the details live here. Chinese files have no s
 | 使用说明 / User guide | [user-guide.md](user-guide.md) | [user-guide.en.md](user-guide.en.md) | 键位、命令、会话工作流与设置。 |
 | 交互与命令 / Interaction & commands | [interaction.md](interaction.md) | [interaction.en.md](interaction.en.md) | 键位、鼠标、问卷审批与 slash 命令。 |
 | 主题系统 / Themes | [themes.md](themes.md) | [themes.en.md](themes.en.md) | 内置主题、自动检测与自定义主题。 |
+| Claude 后端（实验性）/ Claude backend (experimental) | [claude-backend.md](claude-backend.md) | [claude-backend.en.md](claude-backend.en.md) | 启用、登录、与 DSH 的差异和已知限制。 |
+| Codex 原生后端（实验性）/ Native Codex backend (experimental) | [codex-backend.md](codex-backend.md) | [codex-backend.en.md](codex-backend.en.md) | 安装、登录/渠道、Plan/权限、原生会话与当前验证边界。 |
 
 ## 配置 / Configuration
 
@@ -30,12 +33,17 @@ The root README lists what ships; the details live here. Chinese files have no s
 | --- | --- | --- | --- |
 | 架构与限制 / Architecture & limitations | [architecture.md](architecture.md) | [architecture.en.md](architecture.en.md) | 运行链路、性能、安全边界与已知限制。 |
 | 会话挂载运行时 / Session mount runtime | [session-mount-runtime.md](session-mount-runtime.md) | [session-mount-runtime.en.md](session-mount-runtime.en.md) | 多 TUI 占用规则与本机账本。 |
+| 多后端架构 / Agent backends | [agent-backend-design.md](agent-backend-design.md) | — | 后端中立层、DSH/Claude/Codex 的实现与接入新后端。 |
+| Codex 后端方案 / Codex backend design | [codex-backend-design.md](codex-backend-design.md) | — | Codex（app-server）原生后端的技术方案与分期实施手册。 |
+| Codex 后端交接 / Codex backend handoff | [codex-backend-handoff.md](codex-backend-handoff.md) | — | 当前进度、剩余工作、新机器准备与实测配置（接手者先读）。 |
+| Codex 后端施工日志 / Codex backend progress | [codex-backend-progress.md](codex-backend-progress.md) | — | 逐期记录：实测结论、决策、门禁结果与偏离。 |
+| 子代理转录页数据源 / DSH child transcript | [dsh-child-transcript.md](dsh-child-transcript.md) | — | DSH 子会话转录的读取契约与新后端接入清单。 |
 
 ## 插件 / Plugins
 
 | 文档 / Doc | 中文 | English | 讲什么 / What it covers |
 | --- | --- | --- | --- |
-| 插件准入与开发 / Plugin admission & development | [外部规范](https://github.com/T-Auto/dsh-ecosystem-spec/blob/main/docs/plugin-admission-and-development.md) | [spec](https://github.com/T-Auto/dsh-ecosystem-spec/blob/main/docs/plugin-admission-and-development.md) | 接缝、契约与验证清单。 |
+| 插件准入与开发 / Plugin admission & development | [仓内 TUI Profile](../tui-profile/docs/plugin-admission-and-development.md) | [TUI Profile](../tui-profile/docs/plugin-admission-and-development.md) | 接缝、契约与验证清单。 |
 | 插件速览 / Plugin overview | [plugins.md](plugins.md) | [plugins.en.md](plugins.en.md) | 生态入口与接缝稳定性分级。 |
 
 ## 参与 / Contributing

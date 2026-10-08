@@ -2,7 +2,7 @@
 
 [English](README.md) · [版本发布页](https://github.com/Async23/dsh-tui/releases) · [MIT 协议](LICENSE)
 
-这是 [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) 的个人 fork，保留完整项目和上游 Git 历史，在此基础上维护少量定制。dsh-TUI 是 DeepSeek Harness 的终端界面插件，Agent 执行、模型、工具和会话存储仍由官方 DSH 运行时负责。
+这是 [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) 的个人 fork，保留完整项目和上游 Git 历史，在此基础上维护少量定制。dsh-TUI 提供终端交互界面，Agent 执行、模型、工具和会话存储由所选内核负责；默认使用 DeepSeek Harness，也支持实验性的 [Claude](docs/claude-backend.md) 和 [Codex](docs/codex-backend.md) 后端。
 
 ## 我做了哪些定制
 

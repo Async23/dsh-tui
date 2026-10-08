@@ -1,8 +1,8 @@
 /**
- * P5 Channel Provider-Consumer / dsh-ecosystem-spec conformance gate.
+ * P5 Channel Provider-Consumer / tui-profile conformance gate.
  *
  * Proves:
- * - the official `dsh-ecosystem-spec/conformance/fixtures/valid-tui-channel.json`
+ * - the official `tui-profile/conformance/fixtures/valid-tui-channel.json`
  *   fixture is loaded and validated by the vendored protocol validators;
  * - real DSH session events can be projected to `TuiChannelSnapshot` and
  *   replayed through provider/consumer;
@@ -41,11 +41,24 @@ import {
   TUI_CHANNEL_FEATURES,
 } from '../src/adapter/spec/index.js'
 
+import { CHANNEL_UI_EFFECTS } from '../src/adapter/channel/ui-policy.js'
+
 const ROOT = resolve(import.meta.dirname, '..')
 let checks = 0
 
-// ── official dsh-ecosystem-spec fixture ────────────────────────────────────
-const officialFixturePath = join(ROOT, 'dsh-ecosystem-spec', 'conformance', 'fixtures', 'valid-tui-channel.json')
+for (const name of ['backendChannels', 'backendModes', 'backendMcp', 'backendGoals'] as const) {
+  assert.equal(CHANNEL_UI_EFFECTS[name], 'read-only', 'a subhost accessor is a passive read')
+  checks += 1
+}
+for (const name of ['listChannels', 'setChannel', 'importChannel', 'saveChannel', 'removeChannel', 'peekChannelImport', 'listModes', 'setMode', 'mcpControl']) {
+  assert.equal(name in CHANNEL_UI_EFFECTS, false, 'flat native actions must leave the effect table')
+  checks += 1
+}
+assert.equal(CHANNEL_UI_EFFECTS.cycleMode, 'mutate', 'the shared mode cycle stays on ChannelUi')
+checks += 1
+
+// ── official tui-profile fixture ──────────────────────────────────────────
+const officialFixturePath = join(ROOT, 'tui-profile', 'conformance', 'fixtures', 'valid-tui-channel.json')
 const official = JSON.parse(readFileSync(officialFixturePath, 'utf8')) as {
   requirement: { wireRevision: number; features: readonly string[] }
   support: { wireRevision: number; features: readonly string[] }

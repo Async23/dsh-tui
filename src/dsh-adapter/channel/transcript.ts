@@ -1,28 +1,12 @@
 import { type SessionEvent } from '@deepseek-ai/dsh-session'
+import { toolResultPayload } from '../compat/messages.js'
 import type { ChatRow, ToolResultView, ToolViewPresenter } from './types.js'
 import { markChannelReadDirty } from '../../adapter/channel/read-view.js'
+import { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, RESULT_PREVIEW_LIMIT } from '../../channel/transcript.js'
 
-export const ARGS_PREVIEW_LIMIT = 160
-
-export const RESULT_PREVIEW_LIMIT = 240
-
-/** Local `!`-command output cap (mirrors the result preview limit). */
-export const LOCAL_OUTPUT_LIMIT = 240
-
-/**
- * In-memory transcript window cap. Older rows beyond this count are FOLDED:
- * their full-text fields (assistant/reasoning text, tool args/results) are
- * dropped and only the preview/status metadata kept, so a long merge/deploy
- * turn cannot grow the TUI's RAM without bound. The session log remains the
- * complete source of truth (`/export` reads it, `/resume` replays it); the
- * folded row keeps its kind/id so scrolling and selection stay stable.
- */
-export const MAX_ROWS = 600
-
-export function preview(text: string, limit: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`
-}
+// Limits and the preview helper are backend-neutral (src/channel/transcript.ts);
+// re-exported here for the existing importers.
+export { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, RESULT_PREVIEW_LIMIT }
 
 /**
  * Fold the oldest rows beyond the transcript window cap: drop each row's
@@ -37,7 +21,10 @@ export function preview(text: string, limit: number): string {
 export function foldRows(
   rows: ChatRow[],
   cap: number,
-  cursor?: { rows: unknown; index: number },
+  cursor?: { rows: unknown; index: number; head?: unknown },
+  /** Rows the backend can restore (default: every foldable kind); any
+   *  other row keeps its full text. */
+  restorable?: (row: ChatRow) => boolean,
 ): number {
   const excess = rows.length - cap
   if (excess <= 0) {
@@ -48,14 +35,20 @@ export function foldRows(
   // folded/restored exemptions are permanent, so everything below a cursor
   // over the SAME array identity needs no re-inspection. emit/emitStream
   // fold on every frame during streaming — a full rescan of a long window
-  // there was the O(rows) per-frame term of long-session streaming.
-  const from = cursor === undefined ? 0 : cursor.rows === rows ? cursor.index : 0
-  if (cursor !== undefined) cursor.rows = rows
+  // there was the O(rows) per-frame term of long-session streaming. Rows
+  // prepended ahead of the window (older history) shift every index: a new
+  // head restarts the pass.
+  const from = cursor === undefined ? 0 : cursor.rows === rows && cursor.head === rows[0] ? cursor.index : 0
+  if (cursor !== undefined) {
+    cursor.rows = rows
+    cursor.head = rows[0]
+  }
   if (excess <= from) return 0
   let folded = 0
   for (const row of rows.slice(from, excess)) {
     if (row.folded || row.restored) continue
     if (row.kind !== 'user' && row.kind !== 'assistant' && row.kind !== 'reasoning' && row.kind !== 'tool') continue
+    if (restorable !== undefined && !restorable(row)) continue
     row.folded = true
     folded += 1
     if (row.kind === 'tool' && row.tool) {
@@ -112,7 +105,7 @@ export function foldBack(rows: ChatRow[], events: readonly SessionEvent[], views
       const result = resultsByCall.get(row.tool.callId)
       if (result !== undefined) restoreToolResult(row, result)
       row.tool.callView = views?.call(call.data.name, call.data.arguments)
-      row.tool.resultView = result !== undefined && result.data.error === undefined
+      row.tool.resultView = result !== undefined && row.tool.status === 'ok'
         ? views?.result(call.data.name, call.data.arguments, result.data)
         : undefined
       row.folded = false
@@ -170,9 +163,7 @@ export function restoreRowFromEvent(row: ChatRow, event: SessionEvent): void {
 
 /** Render the durable tool-result payload, including provider error details. */
 export function toolResultText(event: SessionEvent<'tool/result'>): string {
-  const block = event.data.message.content[0]
-  if (block === undefined || block.type !== 'tool-result') return ''
-  return block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
+  return toolResultPayload(event.data.message).content.map(item => item.type === 'text' ? item.text : '').join('').trim()
 }
 
 /** Phase badge for the harness goal card — mirrors the panel's PhaseBadge. */
@@ -198,9 +189,7 @@ export function harnessToolResultView(
   const isGoalTool = lower.includes('goal')
   const isTodoTool = lower.includes('todo')
   if (!isGoalTool && !isTodoTool) return undefined
-  const block = data.message.content[0]
-  if (block === undefined || block.type !== 'tool-result') return undefined
-  const text = block.content.map(item => item.type === 'text' ? item.text : '').join('').trim()
+  const text = toolResultPayload(data.message).content.map(item => item.type === 'text' ? item.text : '').join('').trim()
   if (text === '' || !text.startsWith('{')) return undefined
   let parsed: unknown
   try {
@@ -243,7 +232,7 @@ export function harnessToolResultView(
 
 export function toolErrorText(event: SessionEvent<'tool/result'>): string {
   const failure = event.data.error
-  if (failure === undefined) return ''
+  if (failure === undefined) return toolResultPayload(event.data.message).isError ? toolResultText(event) : ''
   const identity = `${failure.name}: ${failure.code}`
   const detail = toolResultText(event)
   return detail === '' || detail === identity ? identity : `${identity} — ${detail}`
@@ -252,8 +241,7 @@ export function toolErrorText(event: SessionEvent<'tool/result'>): string {
 /** Restore a folded tool row's result text from its tool/result event. */
 export function restoreToolResult(row: ChatRow, event: SessionEvent<'tool/result'>): void {
   if (row.tool === undefined) return
-  const failure = event.data.error
-  if (failure !== undefined) {
+  if (event.data.error !== undefined || toolResultPayload(event.data.message).isError) {
     row.tool.status = 'error'
     row.tool.errorText = toolErrorText(event)
     return

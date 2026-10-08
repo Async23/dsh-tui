@@ -2,7 +2,7 @@
 
 [简体中文](README_ZH.md) · [Releases](https://github.com/Async23/dsh-tui/releases) · [MIT License](LICENSE)
 
-A personal fork of [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI), the terminal UI plugin for DeepSeek Harness. This repository keeps the upstream project and history, with a small, documented set of personal changes. Agent execution, models, tools and session storage remain provided by the official DSH runtime.
+A personal fork of [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI), retaining the upstream project and history with a small, documented set of personal changes. dsh-TUI provides the terminal interface; the selected kernel owns agent execution, models, tools and session storage. DeepSeek Harness is the default, with experimental [Claude](docs/claude-backend.md) and [Codex](docs/codex-backend.md) backends also available.
 
 ## Customizations
 

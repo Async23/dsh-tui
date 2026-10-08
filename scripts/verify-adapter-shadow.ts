@@ -130,6 +130,14 @@ const METHOD_POLICY: Record<string, Record<string, MethodPolicy>> = {
     active: { kind: 'capability', capability: 'host.scenes.active' },
     subscribe: { kind: 'capability', capability: 'host.scenes.subscribe' },
   },
+  TuiPanelRuntime: {
+    register: { kind: 'capability', capability: 'host.panels.register' },
+    list: { kind: 'capability', capability: 'host.panels.list' },
+    open: { kind: 'capability', capability: 'host.panels.open' },
+    close: { kind: 'capability', capability: 'host.panels.close' },
+    badge: { kind: 'capability', capability: 'host.panels.badge' },
+    subscribe: { kind: 'capability', capability: 'host.panels.subscribe' },
+  },
   TuiSettingsSectionsRuntime: {
     register: { kind: 'capability', capability: 'host.settings.register' },
     list: { kind: 'capability', capability: 'host.settings.list' },
@@ -670,7 +678,10 @@ const integrationClaimChecks: ReadonlyArray<{ file: string; label: string; check
   // not the composition root; keep the AST proof at its real ownership seam.
   { file: 'dsh-adapter/channel/reports.ts', label: 'getHostFacade(...)', check: () => fileHasNamedCall('dsh-adapter/channel/reports.ts', 'getHostFacade') },
   { file: 'dsh-adapter/channel/reports.ts', label: 'collectAdapterDiagnostics(...)', check: () => fileHasNamedCall('dsh-adapter/channel/reports.ts', 'collectAdapterDiagnostics') },
-  { file: 'dsh-adapter/channel.ts', label: 'markDecisionDispatchTopology(...)', check: () => fileHasNamedCall('dsh-adapter/channel.ts', 'markDecisionDispatchTopology') },
+  // Every composition installs it through the core host seam…
+  { file: 'dsh-adapter/channel/core/host.ts', label: 'markDecisionDispatchTopology(...)', check: () => fileHasNamedCall('dsh-adapter/channel/core/host.ts', 'markDecisionDispatchTopology') },
+  // …and the core composition actually runs that seam.
+  { file: 'dsh-adapter/channel/core/compose.ts', label: 'resolveCoreHost(...)', check: () => fileHasNamedCall('dsh-adapter/channel/core/compose.ts', 'resolveCoreHost') },
   { file: 'dsh-adapter/effect-ledger.ts', label: 'createKernelLedger(...)', check: () => fileHasNamedCall('dsh-adapter/effect-ledger.ts', 'createKernelLedger') },
   { file: 'adapter/upstream/host-descriptor-driver.ts', label: 'commands.list(undefined)', check: () => fileHasMethodCallNamedWithUndefinedArg('adapter/upstream/host-descriptor-driver.ts', 'list') },
   { file: 'adapter/upstream/host-descriptor-driver.ts', label: 'probeDiagnostic()', check: () => fileHasMethodCallNamed('adapter/upstream/host-descriptor-driver.ts', 'probeDiagnostic') },
@@ -735,6 +746,9 @@ try {
     TuiSceneRuntime,
   } = await import('../src/dsh-adapter/scenes.js')
   const {
+    TuiPanelRuntime,
+  } = await import('../src/dsh-adapter/panels.js')
+  const {
     TuiSettingsSectionsRuntime,
   } = await import('../src/dsh-adapter/settings-sections.js')
   const {
@@ -769,6 +783,7 @@ try {
     ApprovalStore,
   } = await import('../src/dsh-adapter/approvals.js')
   const p3Scenes = new TuiSceneRuntime(passiveRoot)
+  const p3Panels = new TuiPanelRuntime(passiveRoot)
   const p3Settings = new TuiSettingsSectionsRuntime(passiveRoot)
   const p3Status = new TuiStatusRuntime(passiveRoot)
   const p3Shortcuts = new TuiShortcutRuntime(passiveRoot)
@@ -782,6 +797,7 @@ try {
   const p3Approvals = new ApprovalStore()
   process.env.DSH_TUI_ADAPTER_MODE = 'new'
   assert.throws(() => p3Scenes.register({ id: 'x', component: () => undefined } as never), /shadow policy denies/)
+  assert.throws(() => p3Panels.register({ apiVersion: 1, id: 'x', title: 'x', component: () => undefined } as never), /shadow policy denies/)
   assert.throws(() => p3Settings.register({ ns: 'x', title: 'x', fields: [] } as never), /shadow policy denies/)
   assert.throws(() => p3Status.set('x', 'y'), /shadow policy denies/)
   assert.throws(() => p3Shortcuts.register('ctrl+shift+x', { description: 'x', handler: () => undefined }), /shadow policy denies/)
@@ -895,6 +911,9 @@ try {
     TuiSceneRuntime,
   } = await import('../src/dsh-adapter/scenes.js')
   const {
+    TuiPanelRuntime,
+  } = await import('../src/dsh-adapter/panels.js')
+  const {
     TuiSettingsSectionsRuntime,
   } = await import('../src/dsh-adapter/settings-sections.js')
   const {
@@ -929,6 +948,7 @@ try {
     ApprovalStore,
   } = await import('../src/dsh-adapter/approvals.js')
   const p3Scenes = new TuiSceneRuntime(root)
+  const p3Panels = new TuiPanelRuntime(root)
   const p3Settings = new TuiSettingsSectionsRuntime(root)
   const p3Status = new TuiStatusRuntime(root)
   const p3Shortcuts = new TuiShortcutRuntime(root)
@@ -942,6 +962,7 @@ try {
   const p3Approvals = new ApprovalStore()
   process.env.DSH_TUI_ADAPTER_MODE = 'new'
   assert.throws(() => p3Scenes.register({ id: 'x', component: () => undefined } as never), /shadow policy denies/)
+  assert.throws(() => p3Panels.register({ apiVersion: 1, id: 'x', title: 'x', component: () => undefined } as never), /shadow policy denies/)
   assert.throws(() => p3Settings.register({ ns: 'x', title: 'x', fields: [] } as never), /shadow policy denies/)
   assert.throws(() => p3Status.set('x', 'y'), /shadow policy denies/)
   assert.throws(() => p3Shortcuts.register('ctrl+shift+x', { description: 'x', handler: () => undefined }), /shadow policy denies/)

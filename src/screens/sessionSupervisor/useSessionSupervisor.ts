@@ -14,15 +14,65 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { basename } from 'node:path'
+import { formatSessionRef } from '../../agent/refs.js'
 import { t } from '../../i18n.js'
 import { truncateWidth } from '../../sessions/format.js'
 import { normalizeWorkspaceCwd } from '../../sessions/view.js'
-import { readSessionPins, setSessionPinned } from '../../sessionPins.js'
+import { readSessionPins, sessionPinsDir, setSessionPinned } from '../../sessionPins.js'
 import { readSessionOwners, type SessionMountOwner } from '../../sessionMounts.js'
 import type { SessionSummary } from '../../dsh-adapter/sessions/index.js'
 import type { TuiWorkspaceEntry, TuiWorkspaceTarget } from '../../workspaces.js'
 import type { ChannelUi as Channel } from '../../adapter/channel/ui-policy.js'
-import { RAIL_CHROME_ROWS, WORKSPACE_ROW_LINES, RAIL_MIN_TOTAL_COLUMNS, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, SESSION_ROW_LINES, SESSION_PANE_CHROME_ROWS, MenuAction, MENU_ACTIONS, MENU_WIDTH, MENU_HEIGHT, MENU_LABEL_KEYS, SupervisorLiveState, RailEntry, UNREGISTERED_RAIL_ID, message, samePath, sessionMatchesQuery } from './model.js'
+import type { ResumeResult } from '../../adapter/ports/channel-view.js'
+import { resumeFailureText } from '../../sessions/resumeFailure.js'
+import { RAIL_CHROME_ROWS, WORKSPACE_ROW_LINES, RAIL_MIN_TOTAL_COLUMNS, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, SESSION_ROW_LINES, SESSION_PANE_CHROME_ROWS, noticeLines, menuActionsFor, SupervisorLiveState, RailEntry, UNREGISTERED_RAIL_ID, message, samePath, sessionMatchesQuery } from './model.js'
+
+/**
+ * The last successful listing, per channel, carried across mounts of this
+ * screen.
+ *
+ * A snapshot, not a source of truth: it only decides what the screen paints
+ * before the fresh listing lands; the listing every open re-runs stays the
+ * truth and corrects every stale title, order and deletion on arrival, so the
+ * stale window is one listing's duration and a failed listing never writes
+ * here — the screen keeps the previous list beside its error notice.
+ *
+ * Keyed by the CHANNEL rather than by the process, because the rows belong to
+ * one channel's persistence source and a process can host more than one: a
+ * screen that switches channels must not paint another source's session
+ * metadata, not even for one frame. `Chat` keeps one channel for the life of
+ * the screen, so a reopen still finds its own snapshot. The map holds channel
+ * → rows and never keeps a channel alive on its own.
+ *
+ * The slot also carries the listing generation, because reloads overlap:
+ * `Ctrl+L`, a rename and a delete each re-run the listing, and the previous
+ * mount's listing can still be in flight when the screen is reopened. Only the
+ * NEWEST reload may publish — to the screen or to the snapshot — so a slow
+ * answer landing late can neither repaint older rows over newer ones nor
+ * become the next mount's first frame.
+ */
+interface ListingSnapshotSlot {
+  /** Rows of this channel's last successful listing; undefined before one. */
+  rows: readonly SessionSummary[] | undefined
+  /** Sequence number of the newest reload; only that one may publish. */
+  requestGeneration: number
+}
+
+const listingSnapshots = new WeakMap<Channel, ListingSnapshotSlot>()
+
+/**
+ * The snapshot slot for one channel, created on first use.
+ * @param channel - The screen's channel, which owns the rows.
+ * @returns The channel's slot, empty when it has never listed.
+ */
+function snapshotSlot(channel: Channel): ListingSnapshotSlot {
+  let slot = listingSnapshots.get(channel)
+  if (slot === undefined) {
+    slot = { rows: undefined, requestGeneration: 0 }
+    listingSnapshots.set(channel, slot)
+  }
+  return slot
+}
 
 /** Everything the screen owns that the model needs to read. */
 export interface SessionSupervisorInput {
@@ -30,7 +80,7 @@ export interface SessionSupervisorInput {
   /** Home directory, for collapsing paths to `~`. */
   readonly home: string
   /** Mount a persisted session (the channel unified resume path). */
-  onOpenSession(sessionId: string): Promise<boolean>
+  onOpenSession(sessionId: string): Promise<ResumeResult>
   /** Start a fresh session in the workspace at `path`. */
   onNewSession(target: TuiWorkspaceTarget): Promise<boolean>
   /** Stop a background session of this terminal; false when it is not ours. */
@@ -48,10 +98,37 @@ export interface SessionSupervisorInput {
  */
 export function useSessionSupervisor(input: SessionSupervisorInput) {
   const { channel, home, onOpenSession, onNewSession, onStopSession, liveStateOf, columns, rows } = input
+  /**
+   * The bound backend: the screen lists ITS sessions. A DSH
+   * channel (or a partial headless one without a snapshot) keeps today's
+   * screen exactly; another backend has no workspace ledger (`/workspace` is
+   * a DSH command), keeps its pins in its own file, and its rows are
+   * renamed / deleted through its catalog.
+   */
+  // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: headless hosts pass partial channels
+  const backendId = channel.backendCapabilities?.backendId ?? 'dsh'
+  // oxlint-disable-next-line typescript/no-unnecessary-condition -- runtime guard: headless hosts pass partial channels
+  const workspaceLedger = channel.backendCapabilities?.commands.includes('workspace') ?? true
+  const dshBackend = backendId === 'dsh'
+  const archiveSessions = channel.backendCapabilities?.deleteAction === 'archive'
+  const pinsDir = sessionPinsDir(backendId)
 
   const [entries, setEntries] = useState<readonly RailEntry[]>([])
-  const [sessions, setSessions] = useState<readonly SessionSummary[]>([])
-  const [loading, setLoading] = useState(true)
+  // Lazy so a non-empty snapshot from this channel's previous mount paints as
+  // the first frame, including after restart; undefined alone means unknown.
+  const [sessions, setSessions] = useState<readonly SessionSummary[]>(() => {
+    const slot = snapshotSlot(channel)
+    // Recheck the provider's scope on every mount (including service replacement).
+    if (typeof channel.cachedSessions === 'function') {
+      try { slot.rows = channel.cachedSessions() } catch { slot.rows = undefined }
+    }
+    return slot.rows ?? []
+  })
+  const [loading, setLoading] = useState(() => {
+    const snapshot = snapshotSlot(channel).rows
+    return snapshot === undefined
+  })
+  const [refreshing, setRefreshing] = useState(true)
   const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' } | undefined>(undefined)
   /** Live status and occupancy are re-read on their own clock, not the listing's. */
   const [pulse, setPulse] = useState(0)
@@ -77,10 +154,12 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
   }
   const holderOf = useCallback(
     (sessionId: string): number | undefined => {
-      const owner = occupancyRef.current.get(sessionId)
+      // The ledger keys a non-DSH session by its backend-qualified reference
+      // (`claude:<id>`); DSH ids stay bare.
+      const owner = occupancyRef.current.get(formatSessionRef({ backendId, sessionId }))
       return owner === undefined || owner.pid === process.pid ? undefined : owner.pid
     },
-    [],
+    [backendId],
   )
 
   /**
@@ -175,12 +254,14 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
 
   const [railFocus, setRailFocus] = useState(0)
   /**
-   * A rail entry the user picked by hand that is NOT registered — the fallback
-   * group for unregistered sessions. It exists only for this screen's lifetime:
-   * selecting a group is a way to SEE those sessions, never a way to register a
-   * directory, so it must not create a ledger record.
+   * The id of the fallback-group row the user picked by hand — unregistered
+   * groups are identified by their own id, never by "some group": a backend
+   * without the workspace ledger has ONE such group per directory, and a pick
+   * that forgot WHICH one kept resolving to the first. It exists only for this
+   * screen's lifetime: selecting a group is a way to SEE those sessions, never
+   * a way to register a directory, so it must not create a ledger record.
    */
-  const [selectedUnregistered, setSelectedUnregistered] = useState(false)
+  const [selectedUnregisteredId, setSelectedUnregisteredId] = useState<string | undefined>(undefined)
   const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined)
   /** True once the user picked a rail row by hand; see the selection effect. */
   const [selectionManual, setSelectionManual] = useState(false)
@@ -212,7 +293,10 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
    * no answer, and ←/→ is how this screen answers it.
    */
   const [activePane, setActivePane] = useState<'rail' | 'list'>('rail')
-  const [pins, setPins] = useState<ReadonlySet<string>>(() => readSessionPins())
+  const [pins, setPins] = useState<ReadonlySet<string>>(() => readSessionPins(pinsDir))
+  /** A stored session being renamed / confirmed for deletion (non-DSH rows). */
+  const [sessionRename, setSessionRename] = useState<{ id: string; draft: string } | undefined>(undefined)
+  const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined)
 
   const [menu, setMenu] = useState<{ path: string; col: number; row: number; item: number } | undefined>(undefined)
   const [rename, setRename] = useState<{ path: string; draft: string } | undefined>(undefined)
@@ -257,6 +341,14 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
    * this screen cannot work without, so it must survive a missing ledger.
    */
   const reload = useCallback(async (): Promise<void> => {
+    // Claim this reload's generation before the first await: everything below
+    // only publishes while it is still the newest request, so a slower earlier
+    // one that lands later cannot repaint the screen (or the snapshot) with
+    // rows the newer listing has already corrected.
+    const slot = snapshotSlot(channel)
+    const generation = ++slot.requestGeneration
+    setRefreshing(true)
+
     // The two reads are independent, and the session listing is the half this
     // screen cannot work without: a registry that rejects (bare composition,
     // unmounted service, a provider throwing) must not take the history down
@@ -265,31 +357,56 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
     await Promise.all([
       (async (): Promise<void> => {
         try {
-          setSessions(await channel.listSessions())
+          const fresh = await channel.listSessions(enriched => {
+            if (slot.requestGeneration !== generation) return
+            slot.rows = slot.rows?.map(row => row.id === enriched.id ? enriched : row)
+            setSessions(current => current.map(row => row.id === enriched.id ? enriched : row))
+          }, partial => {
+            // Keep a complete cached list over a partial cold scan. With no
+            // snapshot, show useful rows now rather than waiting for every log.
+            if (slot.requestGeneration !== generation || slot.rows !== undefined) return
+            setSessions(partial)
+            setLoading(false)
+          })
+          // Recorded only after success: a failed listing keeps the previous
+          // snapshot, and only the newest reload may write it.
+          if (slot.requestGeneration !== generation) return
+          slot.rows = fresh
+          setSessions(fresh)
           setNotice(current => (current?.tone === 'error' ? undefined : current))
         } catch (error) {
+          if (slot.requestGeneration !== generation) return
           setNotice({ text: t('home-sessions-failed', { err: message(error) }), tone: 'error' })
         }
       })(),
       (async (): Promise<void> => {
         try {
-          const registry = typeof channel.listWorkspaceRegistry === 'function'
+          const registry = typeof channel.listWorkspaceRegistry === 'function' && workspaceLedger
             ? await channel.listWorkspaceRegistry()
             : []
+          if (slot.requestGeneration !== generation) return
           setEntries(registry.map(entry => ({ ...entry, from: 'registry' })))
         } catch {
           // An unreadable registry is not an empty history: the sessions stay
           // listed (and resumable) under the cwd-derived fallback groups.
+          if (slot.requestGeneration !== generation) return
           setEntries([])
         }
       })(),
     ])
-    setLoading(false)
-  }, [channel])
+    if (slot.requestGeneration === generation) {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }, [channel, workspaceLedger])
 
   React.useEffect(() => {
     void reload()
   }, [reload])
+
+  React.useEffect(() => () => {
+    snapshotSlot(channel).requestGeneration++
+  }, [channel])
 
   // Selection follows the terminal's own directory, then the ledger: the rail
   // must open on the workspace this terminal is IN, not on whichever record
@@ -320,12 +437,16 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
     // A hand-picked fallback group stays picked while it is still on the rail.
     // Without this the group would be dropped on the very next listing pass and
     // the sessions it was showing would vanish again.
-    if (selectionManual && selectedUnregistered
-      && railEntries.some(entry => entry.from === 'unregistered')) return
+    if (selectionManual && selectedUnregisteredId !== undefined
+      && railEntries.some(entry => entry.id === selectedUnregisteredId)) return
+    // The terminal's own directory, registered OR a fallback group: a backend
+    // without the workspace ledger lists every directory as a group of its own,
+    // and its rail must open on the one this terminal is in just the same.
     const here = railEntries.find(entry => entry.from === 'registry' && samePath(entry.path, channel.cwd))
+      ?? railEntries.find(entry => entry.from === 'unregistered' && samePath(entry.path, channel.cwd))
     const next = here ?? railEntries[0]!
     setSelectedPath(next.from === 'registry' ? next.path : undefined)
-    setSelectedUnregistered(next.from === 'unregistered')
+    setSelectedUnregisteredId(next.from === 'unregistered' ? next.id : undefined)
     // The cursor travels with an automatic selection. It starts at 0, so
     // leaving it there while the selection lands elsewhere paints two green
     // rows — `❯` on the first record and the marker on the selected one — until
@@ -336,7 +457,7 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
       const index = railEntries.findIndex(entry => entry.id === next.id)
       return index < 0 || current === index ? current : index
     })
-  }, [railEntries, selectedPath, selectedUnregistered, selectionManual, channel.cwd])
+  }, [railEntries, selectedPath, selectedUnregisteredId, selectionManual, channel.cwd])
 
   // The cursor indexes the entry list directly (there is no `+` row in front of
   // it), so a shrinking ledger has to pull it back inside or the last row would
@@ -350,9 +471,9 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
     const registered = railEntries.find(entry =>
       entry.from === 'registry' && selectedPath !== undefined && samePath(entry.path, selectedPath))
     if (registered !== undefined) return registered
-    if (selectedUnregistered) return railEntries.find(entry => entry.from === 'unregistered')
+    if (selectedUnregisteredId !== undefined) return railEntries.find(entry => entry.id === selectedUnregisteredId)
     return railEntries[0]
-  }, [railEntries, selectedPath, selectedUnregistered])
+  }, [railEntries, selectedPath, selectedUnregisteredId])
 
   /**
    * Sessions whose recorded cwd is the selected workspace, minus the search
@@ -435,9 +556,18 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
    * clipped the focused one out of the viewport.
    */
   const railEntryCapacity = Math.max(1, Math.floor(railListHeight / WORKSPACE_ROW_LINES))
+  /**
+   * The notice wraps (a mount refusal carries the adapter's full error), and
+   * every row it takes beyond its reserved one comes out of the list window —
+   * otherwise the list would overflow and clip the focused row instead.
+   */
+  // Wrapped to the VISIBLE width: below 20 columns the pane keeps its 20-cell
+  // floor and the renderer clips at the terminal edge, which would cut every
+  // notice row short of the reason it carries.
+  const noticeRows = noticeLines(notice?.text, Math.max(0, Math.min(sessionWidth, columns) - 3))
   const sessionListHeight = Math.max(
     SESSION_ROW_LINES,
-    rows - SESSION_PANE_CHROME_ROWS,
+    rows - SESSION_PANE_CHROME_ROWS - (noticeRows.length - 1),
   )
 
   const report = useCallback((text: string, tone: 'info' | 'error'): void => {
@@ -445,17 +575,59 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
   }, [])
 
   const persistPin = useCallback((id: string, pinned: boolean): void => {
-    const result = setSessionPinned(id, pinned)
+    const result = setSessionPinned(id, pinned, pinsDir)
     if (!result.ok) {
       report(t('resume-pin-save-failed'), 'error')
       return
     }
     setPins(result.pins)
-  }, [report])
+  }, [report, pinsDir])
+
+  /** Rename a stored session through the backend's catalog (non-DSH rows). */
+  const renameSession = useCallback((sessionId: string, title: string): void => {
+    const next = title.trim()
+    if (next === '') {
+      report(t('home-rename-empty'), 'error')
+      return
+    }
+    void channel.renameSessionTo(sessionId, next)
+      .then((ok) => {
+        if (ok) return reload()
+        report(t('rename-failed', { err: '' }), 'error')
+        return undefined
+      })
+      .catch(error => report(t('rename-failed', { err: message(error) }), 'error'))
+  }, [channel, reload, report])
+
+  /**
+   * Delete a stored session through the backend's catalog (non-DSH rows):
+   * never the one this terminal is in, never one another terminal holds.
+   */
+  const deleteSession = useCallback((session: SessionSummary): void => {
+    if (liveStateOf(session.id)?.current === true) {
+      report(t(archiveSessions ? 'supervisor-archive-current' : 'supervisor-delete-current'), 'error')
+      return
+    }
+    const holder = holderOf(session.id)
+    if (holder !== undefined) {
+      report(t('supervisor-occupied', { pid: holder }), 'error')
+      return
+    }
+    void channel.deleteSession(session.id)
+      .then((ok) => {
+        if (!ok) {
+          report(t(archiveSessions ? 'supervisor-archive-failed' : 'supervisor-delete-failed', { name: session.title.text }), 'error')
+          return undefined
+        }
+        report(t(archiveSessions ? 'supervisor-archived' : 'supervisor-deleted', { name: session.title.text }), 'info')
+        return reload()
+      })
+      .catch(error => report(t(archiveSessions ? 'session-archive-failed' : 'session-delete-failed', { err: message(error) }), 'error'))
+  }, [archiveSessions, channel, holderOf, liveStateOf, reload, report])
 
   const selectEntry = useCallback((entry: RailEntry): void => {
     setSelectedPath(entry.from === 'registry' ? entry.path : undefined)
-    setSelectedUnregistered(entry.from === 'unregistered')
+    setSelectedUnregisteredId(entry.from === 'unregistered' ? entry.id : undefined)
     setSelectionManual(true)
     setFocusSessionId(undefined)
   }, [])
@@ -476,13 +648,15 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
     }
     setNotice(undefined)
     void onOpenSession(session.id)
-      .then((ok) => {
-        // The host owns the REASON: it is the layer that saw the mount result
-        // (Chat renders the real refusal through `resumeFailureText` and a
-        // notification). This screen only names WHICH session could not be
-        // entered — a notice that restated the generic failure would compete
-        // with, and read worse than, the host's own sentence.
-        if (!ok) report(t('supervisor-open-failed', { name: session.title.text }), 'error')
+      .then((result) => {
+        // The reason is shown HERE, not in a channel notification: this
+        // screen replaces the conversation, so the composer that draws
+        // notifications is not mounted and a "see below" pointer led nowhere.
+        // `cancelled` stays silent (the user or a rival switch asked for it).
+        // A plain failure shows the bare error: "Could not enter" already says
+        // resuming failed, and the rows it would repeat are the error's own.
+        const reason = !result.ok && result.reason === 'failed' ? result.error : resumeFailureText(result)
+        if (reason !== undefined) report(t('supervisor-open-failed', { name: session.title.text, reason }), 'error')
       })
       .catch(error => report(t('session-resume-failed', { err: message(error) }), 'error'))
   }, [holderOf, onOpenSession, report])
@@ -521,7 +695,10 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
   const removeEntry = useCallback((path: string): void => {
     void channel.removeWorkspace(path)
       .then((ok) => {
-        if (ok) return reload()
+        if (ok) {
+          report(t('supervisor-workspace-removed'), 'info')
+          return reload()
+        }
         report(t('workspace-remove-unknown', { target: path }), 'error')
         return undefined
       })
@@ -553,7 +730,8 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
 
   const activateMenu = useCallback((entry: RailEntry, item: number): void => {
     closeMenu()
-    const action: MenuAction = MENU_ACTIONS[item] ?? 'edit'
+    const action = menuActionsFor(entry)[item]
+    if (action === undefined) return
     if (action === 'edit') selectEntry(entry)
     else if (action === 'new') newSessionIn(entry)
     // The fallback group is not a registration, so there is no ledger row to
@@ -592,9 +770,18 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
   const focusedSession = sessionAt(sessionIndex)
 
   return {
+    dshBackend,
+    archiveSessions,
+    sessionRename,
+    setSessionRename,
+    confirmDelete,
+    setConfirmDelete,
+    renameSession,
+    deleteSession,
     entries,
     sessions,
     loading,
+    refreshing,
     notice,
     setNotice,
     query,
@@ -631,6 +818,7 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
     sessionWidth,
     railEntryCapacity,
     sessionListHeight,
+    noticeRows,
     persistPin,
     selectEntry,
     openSession,

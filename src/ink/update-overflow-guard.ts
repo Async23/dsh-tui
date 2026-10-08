@@ -53,6 +53,8 @@ const sources = new Map<string, SourceState>()
 /** Test seam: reset rate-limit bookkeeping. */
 export function resetUpdateOverflowGuardForTest(): void {
   sources.clear()
+  boundaryRecoveries = []
+  boundaryRecoveryRemount = false
 }
 
 /**
@@ -154,6 +156,82 @@ export function callWithUpdateOverflowGuard(source: string, onChange: () => void
 }
 
 /**
+ * Boundary-recovery bookkeeping: remounting the whole tree is far heavier
+ * than absorbing one dropped update, so the root boundary may recover only
+ * a bounded number of #185s per window. Beyond the cap the boundary falls
+ * back to the original crash exit — "alive" must not degrade into an
+ * endless crash-remount loop burning CPU.
+ */
+const BOUNDARY_RECOVERY_WINDOW_MS = 60_000
+const BOUNDARY_RECOVERY_CAP = 3
+let boundaryRecoveries: number[] = []
+
+/**
+ * Whether one more root-boundary #185 recovery is allowed inside the window
+ * (the recovery is recorded when it is). `now` is injectable for tests.
+ */
+export function shouldRecoverBoundaryOverflow(now: number = Date.now()): boolean {
+  boundaryRecoveries = boundaryRecoveries.filter(at => now - at < BOUNDARY_RECOVERY_WINDOW_MS)
+  if (boundaryRecoveries.length >= BOUNDARY_RECOVERY_CAP) return false
+  boundaryRecoveries.push(now)
+  return true
+}
+
+/**
+ * One-shot mark that the NEXT tree mount is a boundary-recovery remount
+ * (set by the root boundary's recovery path, consumed by the screen layer:
+ * a remount is not a boot, so boot-only surfaces — the launchpad, the
+ * onboarding overlay — must stay closed and the user lands back in the
+ * conversation they were in).
+ */
+let boundaryRecoveryRemount = false
+
+/** Record that the upcoming mount follows an overflow recovery. */
+export function noteBoundaryRecoveryRemount(): void {
+  boundaryRecoveryRemount = true
+}
+
+/** Consume the recovery-remount mark: true at most once per recovery. */
+export function consumeBoundaryRecoveryRemount(): boolean {
+  const value = boundaryRecoveryRemount
+  boundaryRecoveryRemount = false
+  return value
+}
+
+/**
+ * Origin of a process-level fatal error, as reported to the sink.
+ */
+export type ProcessGuardOrigin = 'uncaughtException' | 'unhandledRejection'
+
+/**
+ * Fatal-error sink installed by the process owner (the dsh-tui runtime, which
+ * routes it into the TUI's single exit funnel). Returning true means the sink
+ * took ownership of the process — it runs the teardown (resume marker,
+ * terminal restore, `dsh-tui crashed: …`) and exits non-zero. Returning false
+ * leaves the error to Node's default crash, which keeps "fail loud, non-zero"
+ * true when no sink is registered or the tree is being torn down.
+ */
+export type ProcessGuardFatalSink = (error: unknown, origin: ProcessGuardOrigin) => boolean
+let fatalSink: ProcessGuardFatalSink | undefined
+
+/** Register (or clear, with undefined) the fatal-error sink. */
+export function registerProcessGuardFatalSink(sink: ProcessGuardFatalSink | undefined): void {
+  fatalSink = sink
+}
+
+/**
+ * Normalize the reason handed to a fatal sink so the exit funnel can never
+ * mistake a fatal error for a clean user exit. `Promise.reject()` and
+ * `throw undefined` deliver `undefined`, and the funnel selects its crash path
+ * with `error !== undefined` — passing the raw reason through would run the
+ * zero-exit path while the sink reported that it owned the process. Defined
+ * reasons (including non-Error values) are returned unchanged.
+ */
+export function fatalReasonForExit(error: unknown, origin: ProcessGuardOrigin): unknown {
+  return error === undefined ? new Error(`${origin} with undefined reason`) : error
+}
+
+/**
  * Process-level backstop for the overflow error. The hotspot guards above
  * cover the known enqueue sites (clock tick, reveal tick, channel emit,
  * scroll/selection notify), but the throw surfaces from whichever timer or
@@ -161,9 +239,11 @@ export function callWithUpdateOverflowGuard(source: string, onChange: () => void
  * feeder, a future timer, a plugin's store) would still kill the process.
  * This installs uncaughtException/unhandledRejection handlers that absorb
  * exactly the overflow error class (same self-healing contract: React
- * already reset the counter before throwing) and rethrow everything else
- * unchanged. Idempotent; opt out with DSH_TUI_NO_185_PROCESS_GUARD=1 when a
- * host owns process error policy.
+ * already reset the counter before throwing) and hand everything else to the
+ * registered fatal sink — or rethrow it unchanged when there is none, so the
+ * process still fails loud with a non-zero exit rather than continuing in an
+ * unknown state. Idempotent; opt out with DSH_TUI_NO_185_PROCESS_GUARD=1 when
+ * a host owns process error policy.
  */
 let processGuardInstalled = false
 export function installNestedUpdateOverflowProcessGuard(): void {
@@ -172,12 +252,14 @@ export function installNestedUpdateOverflowProcessGuard(): void {
   processGuardInstalled = true
   process.on('uncaughtException', error => {
     if (swallowNestedUpdateOverflow(error, 'process.uncaught')) return
+    if (fatalSink?.(error, 'uncaughtException') === true) return
     // Unknown errors keep Node's default semantics: rethrowing from a
     // listener crashes the process with the original error.
     throw error
   })
   process.on('unhandledRejection', error => {
     if (swallowNestedUpdateOverflow(error, 'process.rejection')) return
+    if (fatalSink?.(error, 'unhandledRejection') === true) return
     throw error as Error
   })
 }

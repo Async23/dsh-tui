@@ -1,6 +1,6 @@
 /**
- * plugin-spec 库的 fixtures 全矩阵电池——TS 移植与上游参考实现
- * （conformance/tests/run.js）等价的证明，兼作 vendored 数据漂移报警器：
+ * plugin-spec 库的 fixtures 全矩阵电池——TS 移植与参考实现
+ * （tui-profile/conformance/tests/run.js）等价的证明，兼作 profile 一致性门禁：
  *
  *   1. verifyRegistry / verifyContractProfiles 全绿（schemaHash 钉死 +
  *      十点完备 + 坐标/权限 parity + securityBoundary:false）；
@@ -9,7 +9,9 @@
  *   3. 8 个 negotiate 场景与 run.js 期望逐字段 deepEqual；
  *   4. 篡改任一 contract 文件后 verifyRegistry 必败（fail-closed 自检）。
  *
- * 上游 dsh-ecosystem-spec 更新整目录覆盖后，本电池即漂移报警器。
+ * 仓内 TUI Profile（tui-profile/）没有整目录覆盖来源：它是本仓库的纯文件，
+ * 随 dsh-TUI 的代码现状修订。所以本电池是「改 profile 必须同改代码派生常量与
+ * fixture」的一致性证明，而不是上游漂移报警器。
  *
  * Run via `node --import tsx/esm scripts/verify-plugin-spec.ts`.
  */
@@ -28,13 +30,23 @@ const { parseManifest } = await import('@dsh-std/manifest')
 const { validateMessageEvent } = await import('@dsh-std/messages')
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const specDir = join(root, 'dsh-ecosystem-spec')
+const specDir = join(root, 'tui-profile')
 const load = (relative: string) => JSON.parse(readFileSync(join(specDir, relative), 'utf8'))
 const fixture = (name: string) => load(`conformance/fixtures/${name}`)
 
+/**
+ * 复制 vendored spec 做「篡改必败」夹具。**必须 `dereference: true`**：在
+ * junction / symlink 形态的 checkout 下（例如用 junction 接子模块的 git
+ * worktree），`cpSync` 默认只把链接本身复制过去，于是那份"拷贝"仍指向真目录，
+ * 夹具的 `writeFileSync` 会写坏工作区里的真 spec——实测复现过：同一份链接，
+ * `dereference: false` 时源文件被改写成 TAMPERED，`true` 时保持原样。
+ * @param to - 目标目录（临时夹具根下的 spec 副本）。
+ */
+const copySpec = (to: string): void => cpSync(specDir, to, { recursive: true, dereference: true })
+
 const data = loadSpecData(specDir)
 if (!data) {
-  console.error('vendored spec data unreadable (dsh-ecosystem-spec/)')
+  console.error('vendored spec data unreadable (tui-profile/)')
   process.exit(1)
 }
 const index = createContractIndex(data.registry, data.permissions)
@@ -200,11 +212,11 @@ negotiateCase(
 // --- 4. 篡改必败（fail-closed 自检） ---------------------------------------
 const tamperedRoot = mkdtempSync(join(tmpdir(), 'dsh-plugin-spec-tamper-'))
 try {
-  cpSync(specDir, join(tamperedRoot, 'dsh-ecosystem-spec'), { recursive: true })
+  copySpec(join(tamperedRoot, 'tui-profile'))
   const privateEntry = data.registry.definitions[0]
-  const target = join(tamperedRoot, 'dsh-ecosystem-spec', privateEntry.profile)
+  const target = join(tamperedRoot, 'tui-profile', privateEntry.profile)
   writeFileSync(target, `${readFileSync(target, 'utf8')}\n`)
-  const tampered = loadSpecData(join(tamperedRoot, 'dsh-ecosystem-spec'))
+  const tampered = loadSpecData(join(tamperedRoot, 'tui-profile'))
   const drift = tampered ? verifyRegistry(tampered) : ['tampered copy unreadable']
   expect('tampered private profile detected', drift.length === 1 && drift[0].includes(privateEntry.name), drift.join(' | '))
 } finally {
@@ -214,8 +226,8 @@ try {
 // --- 5. 可解析但错误形状的数据也必须 soft-fail -------------------------------
 const malformedRoot = mkdtempSync(join(tmpdir(), 'dsh-plugin-spec-malformed-'))
 try {
-  const malformedSpecDir = join(malformedRoot, 'dsh-ecosystem-spec')
-  cpSync(specDir, malformedSpecDir, { recursive: true })
+  const malformedSpecDir = join(malformedRoot, 'tui-profile')
+  copySpec(malformedSpecDir)
   const registryFile = join(malformedSpecDir, 'registry', 'registry-0.15.json')
   const registry = JSON.parse(readFileSync(registryFile, 'utf8')) as Record<string, unknown>
   registry.facetApiVersions = {}
@@ -227,8 +239,8 @@ try {
 
 const policyTamperRoot = mkdtempSync(join(tmpdir(), 'dsh-plugin-spec-policy-tamper-'))
 try {
-  const policySpecDir = join(policyTamperRoot, 'dsh-ecosystem-spec')
-  cpSync(specDir, policySpecDir, { recursive: true })
+  const policySpecDir = join(policyTamperRoot, 'tui-profile')
+  copySpec(policySpecDir)
   const permissionsFile = join(policySpecDir, 'registry', 'permissions-0.1.json')
   const permissions = JSON.parse(readFileSync(permissionsFile, 'utf8')) as {
     permissions: Array<{ name: string; default: string }>

@@ -24,6 +24,8 @@
  *    guard threw before the wizard could open).
  * 13. OAuth branch: mode gains a third option, picking an unsigned provider
  *    runs login, pushes a masked summary, reports success.
+ * 13b. Host-owned DeepSeek account: no token expiry is invented in the
+ *    provider picker or successful-login summary.
  * 14. OAuth branch, signed-in provider choosing sign-out: logout runs, no
  *    login attempt, outcome 'signed-out'.
  * 15. OAuth branch, login failure: error surfaced with the cause.
@@ -62,6 +64,30 @@
  * 32. a targeted edit of a stored profile that carries unknown fields:
  *    mutateProfile receives only the changed path — the untouched fields
  *    never enter the op list (#1).
+ * 34. a catalog route with a stored baseURL is discovered TWICE — the
+ *    installed catalog (rich metadata) plus a live endpoint probe (no
+ *    `provider` field, so the upstream seam cannot short-circuit to the
+ *    static catalog); rows merge with live-only ids tagged new, and an
+ *    endpoint-only id carries its disclosed capacities into the write
+ *    while a catalog-covered id stays plain `{id}`.
+ * 35. a catalog route without a baseURL stays on the installed-catalog
+ *    listing: exactly one discovery request, no credential resolved, and
+ *    the models question notes the snapshot origin.
+ * 36. a live probe that fails for a catalog+baseURL route degrades to the
+ *    catalog rows with a warning — not to the manual-id fallback.
+ * 37. a custom route with no resolvable key probes anonymously: the
+ *    discovery request OMITS apiKey instead of sending an empty string.
+ * 38. the add flow on a catalog route with a typed baseURL merges the same
+ *    way, and the written profile carries capacities only for the
+ *    endpoint-only id.
+ * 39. mixed-protocol catalogs skip the unsafe live probe and reject free-typed
+ *    endpoint-only ids.
+ * 40. catalog routes with custom headers explicitly fall back to the snapshot.
+ * 41. a failed catalog lookup never lets live capacities enter the profile.
+ * 42. the Anthropic catalog uses the anthropic-messages live probe protocol.
+ * 43–52. Tab capability drafts: add/edit commits, cancellation, unchanged
+ * selections, unchecked edits, whole-catalog overrides, override migration,
+ * offline editing, inheritance resets, validation and no-op saves.
  *
  * Run with plain node against the compiled lib (after `pnpm build`):
  * `node scripts/verify-provider-wizard.mjs`
@@ -90,8 +116,10 @@ const CANCEL = new UserQuestionError('the user cancelled ask_user_question', 'AS
  *   [spec, spec, ...]          successive answers for a question asked more
  *                              than once in a run; the last spec repeats if
  *                              the list runs out
- * Discovery is stubbed via `options.discovered` (array) or
- * `options.discoverThrows`; env shadow via `options.shadow`.
+ * Discovery is stubbed via `options.discovered` (array),
+ * `options.discoverThrows`, or `options.discover` (a per-request responder
+ * receiving the request and returning rows or throwing — use it to answer
+ * the catalog and live probes differently); env shadow via `options.shadow`.
  */
 function makeDeps(script, options = {}) {
   const calls = {
@@ -104,6 +132,8 @@ function makeDeps(script, options = {}) {
     pushed: [],
     switches: [],
     asks: [],
+    /** every discoverModels request, in order (shape regressions). */
+    discoverRequests: [],
     /** question id → hideCustomInput flag as submitted (panel contract). */
     hideFlags: {},
     /** question id → option descriptions, for catalog row-shape regressions. */
@@ -144,7 +174,9 @@ function makeDeps(script, options = {}) {
         .map(row => row.route)
     },
     routeExists: () => false,
-    discoverModels: async () => {
+    discoverModels: async request => {
+      calls.discoverRequests.push(request)
+      if (options.discover) return options.discover(request)
       if (options.discoverThrows) throw new Error('connection refused')
       return options.discovered ?? []
     },
@@ -190,6 +222,11 @@ function makeDeps(script, options = {}) {
           : specFor(question.id)
         if (spec === undefined) throw new Error(`unscripted question: ${question.id}`)
         if (spec === 'cancel') throw CANCEL
+        for (const [id, fields] of Object.entries(spec.edits ?? {})) {
+          if (question.modelEditor === undefined) throw new Error('model capability editor missing')
+          question.modelEditor.save(id, { ...question.modelEditor.read(id).values, ...fields })
+        }
+        if (spec.cancelAfterEdits) throw CANCEL
         answers.push({
           id: question.id,
           selected: spec.selected ?? [],
@@ -254,6 +291,11 @@ const MENU_DELETE = { selected: [t('provider-opt-edit-delete')] }
   check('1 catalog: transcript summary pushed without the key',
     calls.pushed.length === 1
       && calls.pushed[0].lines.every(line => !line.includes('sk-test-key')))
+  check('1 catalog: confirm detail is a preview, not a success line',
+    (calls.details.confirm ?? '').includes(t('provider-line-route', { route: 'deepseek' }))
+      && !(calls.details.confirm ?? '').includes(t('provider-line-action-added', { route: 'deepseek' }))
+      && (calls.details.confirm ?? '').includes(t('provider-line-keyref-preview', { ref: 'DEEPSEEK_API_KEY' })),
+    calls.details.confirm)
 }
 
 // 2. catalog, no models picked: models omitted, switch question skipped.
@@ -527,7 +569,7 @@ function oauthStub(behavior = {}) {
     login: async provider => {
       calls.logins.push(provider)
       if (behavior.loginThrows) throw new Error(behavior.loginThrows)
-      return { provider, oauthLabel: 'OpenAI (ChatGPT Plus/Pro)', expiresAt: 1_787_000_000_000 }
+      return behavior.loginResult ?? { provider, oauthLabel: 'OpenAI (ChatGPT Plus/Pro)', expiresAt: 1_787_000_000_000 }
     },
     logout: async provider => {
       calls.logouts.push(provider)
@@ -557,6 +599,40 @@ function oauthStub(behavior = {}) {
     JSON.stringify(calls.pushed))
   check('13 oauth: success notified',
     calls.notifications.some(n => n.color === 'success'))
+}
+
+// 13b. DeepSeek account grants have no token expiry; neither the picker nor
+// the summary may render the Unix epoch as a fabricated expiry date.
+{
+  const deepSeekStatus = {
+    provider: 'deepseek-account', label: 'DeepSeek Account', oauthLabel: 'DeepSeek',
+    loginLabel: 'Sign in with DeepSeek', signedIn: false, expiresAt: undefined, expired: false,
+  }
+  const oauth = oauthStub({
+    providers: [deepSeekStatus],
+    loginResult: { provider: 'deepseek-account', oauthLabel: 'DeepSeek', expiresAt: undefined },
+  })
+  const { deps, calls } = makeDeps({
+    mode: { selected: [t('provider-opt-oauth')] },
+    'oauth-provider': { selected: ['deepseek-account'] },
+  }, { oauth })
+  const outcome = await runProviderWizard(deps)
+  check('13b deepseek: delegated login succeeds', outcome === 'added' && eq(oauth.calls.logins, ['deepseek-account']))
+  check('13b deepseek: summary has no fabricated expiry', calls.pushed.length === 1
+    && calls.pushed[0].lines.length === 3
+    && !JSON.stringify(calls.pushed).includes('1970')
+    && calls.pushed[0].lines.some(line => line.includes('/model')))
+
+  const signed = oauthStub({ providers: [{ ...deepSeekStatus, signedIn: true }] })
+  const signedRun = makeDeps({
+    mode: { selected: [t('provider-opt-oauth')] },
+    'oauth-provider': { selected: ['deepseek-account'] },
+    'oauth-signed-action': { selected: [t('provider-opt-confirm-cancel')] },
+  }, { oauth: signed })
+  await runProviderWizard(signedRun.deps)
+  const description = signedRun.calls.optionDescriptions['oauth-provider']?.['deepseek-account'] ?? ''
+  check('13b deepseek: signed-in picker state has no fabricated expiry',
+    description.includes(t('provider-oauth-state-in-no-expiry')) && !description.includes('1970'), description)
 }
 
 // 14. OAuth branch, signed-in provider choosing sign-out: logout runs, no
@@ -772,6 +848,10 @@ function oauthStub(behavior = {}) {
   check('23 delete: transcript notes the removed key',
     calls.pushed[0]?.lines.includes(t('provider-line-deleted-key', { ref: 'MY-ROUTE_KEY' })) === true,
     JSON.stringify(calls.pushed[0]?.lines))
+  check('23 delete: confirm detail is a preview, not a success line',
+    (calls.details['delete-confirm'] ?? '').includes(t('provider-line-route', { route: 'deepseek' }))
+      && !(calls.details['delete-confirm'] ?? '').includes(t('provider-line-action-deleted', { route: 'deepseek' })),
+    calls.details['delete-confirm'])
 }
 
 // 24. delete via the edit menu, env-shadowed key: profile removed, credential
@@ -1225,6 +1305,443 @@ function oauthStub(behavior = {}) {
   check('28b patch shape: single op, path is exactly [baseURL]',
     calls.mutations[0][1].length === 1 && eq(op.path, ['baseURL']) && op.op === 'set',
     JSON.stringify(calls.mutations))
+}
+
+// 34. a catalog route with a stored baseURL is discovered twice (catalog +
+// live probe with no `provider` field), merged with live-only ids tagged,
+// and the write gives endpoint-only ids their disclosed capacities.
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['deepseek'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['deepseek-chat', 'deepseek-v2-alpha'] },
+  }, {
+    configured: [{ route: 'deepseek', ref: 'DEEPSEEK_API_KEY', shadowed: false, isCatalog: true, baseURL: 'https://relay.example/v1', models: ['deepseek-chat'], modelEntries: [{ id: 'deepseek-chat' }] }],
+    storedCredentials: { DEEPSEEK_API_KEY: 'sk-old' },
+    discover: request => request.provider !== undefined
+      ? [{ id: 'deepseek-chat', name: 'DeepSeek Chat', contextWindow: 1000000 }]
+      : [{ id: 'deepseek-chat' }, { id: 'deepseek-v2-alpha', contextWindow: 2000000, maxTokens: 65536 }],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('34 catalog+baseURL: outcome updated', outcome === 'updated', outcome)
+  check('34 catalog+baseURL: catalog request then live request (no provider field)',
+    eq(calls.discoverRequests, [
+      { provider: 'deepseek' },
+      { baseURL: 'https://relay.example/v1', api: 'openai-completions', apiKey: 'sk-old' },
+    ]), JSON.stringify(calls.discoverRequests))
+  check('34 catalog+baseURL: merged rows, catalog first, live-only appended',
+    eq(Object.keys(calls.optionDescriptions.models ?? {}), ['deepseek-chat', 'deepseek-v2-alpha']),
+    JSON.stringify(Object.keys(calls.optionDescriptions.models ?? {})))
+  check('34 catalog+baseURL: live-only row tagged new on endpoint',
+    (calls.optionDescriptions.models?.['deepseek-v2-alpha'] ?? '').includes(t('provider-row-model-new')),
+    JSON.stringify(calls.optionDescriptions.models))
+  check('34 catalog+baseURL: catalog row keeps catalog metadata with compact capacity',
+    calls.optionDescriptions.models?.['deepseek-chat'] === 'DeepSeek Chat · 1M',
+    JSON.stringify(calls.optionDescriptions.models))
+  check('34 catalog+baseURL: endpoint-only id carries disclosed capacities, catalog id stays plain',
+    eq(calls.mutations, [['deepseek', [{ op: 'set', path: ['models'], value: [
+      { id: 'deepseek-chat' },
+      { id: 'deepseek-v2-alpha', contextWindow: 2000000, maxTokens: 65536 },
+    ] }]]]),
+    JSON.stringify(calls.mutations))
+  check('34 catalog+baseURL: summary leads with the models-updated action line',
+    calls.pushed[0]?.lines[0] === t('provider-line-action-updated-models', { route: 'deepseek' }),
+    JSON.stringify(calls.pushed[0]?.lines))
+  check('34 catalog+baseURL: models line carries the added delta',
+    calls.pushed[0]?.lines.some(line => line.includes(t('provider-models-delta-added', { n: 1 }))),
+    JSON.stringify(calls.pushed[0]?.lines))
+}
+
+// 35. a catalog route without a baseURL stays on the installed catalog:
+// one discovery request, no credential resolution, snapshot note in detail.
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['deepseek'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['deepseek-chat', 'deepseek-reasoner'] },
+  }, {
+    configured: [{ route: 'deepseek', ref: 'DEEPSEEK_API_KEY', shadowed: false, isCatalog: true, models: ['deepseek-chat'], modelEntries: [{ id: 'deepseek-chat' }] }],
+    storedCredentials: { DEEPSEEK_API_KEY: 'sk-old' },
+    discover: request => request.provider !== undefined
+      ? [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }]
+      : [],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('35 catalog no baseURL: outcome updated', outcome === 'updated', outcome)
+  check('35 catalog no baseURL: exactly one catalog discovery request, no live probe',
+    eq(calls.discoverRequests, [{ provider: 'deepseek' }]),
+    JSON.stringify(calls.discoverRequests))
+  check('35 catalog no baseURL: credential never resolved for a catalog-only listing',
+    !calls.asks.includes('apikey')
+      && calls.discoverRequests.every(request => request.apiKey === undefined),
+    JSON.stringify(calls.discoverRequests))
+  check('35 catalog no baseURL: models question notes the catalog snapshot origin',
+    calls.details.models === t('provider-catalog-snapshot-note', { n: 2 }),
+    JSON.stringify(calls.details.models))
+}
+
+// 36. a failing live probe on a catalog+baseURL route degrades to the
+// catalog rows with a warning — the manual-id fallback stays reserved for
+// a total discovery failure.
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['deepseek'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['deepseek-chat'] },
+  }, {
+    configured: [{ route: 'deepseek', ref: 'DEEPSEEK_API_KEY', shadowed: false, isCatalog: true, baseURL: 'https://relay.example/v1', models: [] }],
+    storedCredentials: { DEEPSEEK_API_KEY: 'sk-old' },
+    discover: request => {
+      if (request.provider !== undefined) return [{ id: 'deepseek-chat' }]
+      throw new Error('connection refused')
+    },
+  })
+  const outcome = await runProviderWizard(deps)
+  check('36 live probe failure: outcome updated from catalog rows', outcome === 'updated', outcome)
+  check('36 live probe failure: warning says the live fetch failed',
+    calls.notifications.some(n => n.color === 'warning' && n.text === t('provider-live-fetch-failed')),
+    JSON.stringify(calls.notifications))
+  check('36 live probe failure: no manual-id fallback asked',
+    !calls.asks.includes('models-fallback'), JSON.stringify(calls.asks))
+  check('36 live probe failure: catalog rows still selectable',
+    Object.keys(calls.optionDescriptions.models ?? {}).includes('deepseek-chat'),
+    JSON.stringify(calls.optionDescriptions.models))
+}
+
+// 37. a custom route whose key cannot be resolved probes anonymously: the
+// request OMITS apiKey (an empty string is a hard invalid-credential
+// upstream, an absent field is an unauthenticated probe).
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['acme-gateway'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['acme-large'] },
+  }, {
+    configured: [{ route: 'acme-gateway', ref: 'ACME_GATEWAY_API_KEY', shadowed: false, isCatalog: false, baseURL: 'https://gw.example/v1', api: 'openai-completions', models: [] }],
+    discover: () => [{ id: 'acme-large' }],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('37 no resolvable key: outcome updated', outcome === 'updated', outcome)
+  check('37 no resolvable key: single live request omits apiKey entirely',
+    eq(calls.discoverRequests, [{ baseURL: 'https://gw.example/v1', api: 'openai-completions' }]),
+    JSON.stringify(calls.discoverRequests))
+}
+
+// 38. the add flow on a catalog route with a typed baseURL merges catalog
+// and live listings; the written profile carries capacities only for the
+// endpoint-only id.
+{
+  const { deps, calls } = makeDeps({
+    'mode': MODE_CATALOG,
+    'catalog': { selected: ['deepseek'] },
+    'baseurl-choice': { selected: [t('provider-opt-baseurl-input')] },
+    'baseurl': { custom: 'https://relay.example/v1' },
+    'apikey': { custom: 'sk-new' },
+    'models': { selected: ['deepseek-chat', 'deepseek-v2-alpha'] },
+    'confirm': CONFIRM_WRITE,
+    'switch': KEEP_MODEL,
+  }, {
+    discover: request => request.provider !== undefined
+      ? [{ id: 'deepseek-chat', name: 'DeepSeek Chat', contextWindow: 1000000 }]
+      : [{ id: 'deepseek-chat' }, { id: 'deepseek-v2-alpha', contextWindow: 2000000 }],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('38 add catalog+baseURL: outcome added', outcome === 'added', outcome)
+  check('38 add catalog+baseURL: catalog request then live request carrying the typed key',
+    eq(calls.discoverRequests, [
+      { provider: 'deepseek' },
+      { baseURL: 'https://relay.example/v1', api: 'openai-completions', apiKey: 'sk-new' },
+    ]), JSON.stringify(calls.discoverRequests))
+  check('38 add catalog+baseURL: profile narrows models, endpoint-only id carries capacities',
+    eq(calls.profiles, [['deepseek', {
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      baseURL: 'https://relay.example/v1',
+      models: [
+        { id: 'deepseek-chat' },
+        { id: 'deepseek-v2-alpha', contextWindow: 2000000 },
+      ],
+    }]]),
+    JSON.stringify(calls.profiles))
+  check('38 add catalog+baseURL: live-only row tagged new on endpoint',
+    (calls.optionDescriptions.models?.['deepseek-v2-alpha'] ?? '').includes(t('provider-row-model-new')),
+    JSON.stringify(calls.optionDescriptions.models))
+}
+
+// 39. A mixed-protocol catalog (for example openrouter) has no safe protocol
+// for an unnamed live probe. Keep the installed catalog, do not accept a
+// free-typed endpoint-only id, and do not attach endpoint capacities.
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['openrouter'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['or-known'], custom: 'or-online-only' },
+  }, {
+    configured: [{ route: 'openrouter', ref: 'OPENROUTER_API_KEY', shadowed: false, isCatalog: true, baseURL: 'https://openrouter.example/v1', models: [] }],
+    storedCredentials: { OPENROUTER_API_KEY: 'sk-old' },
+    discover: request => request.provider !== undefined
+      ? [{ id: 'or-known', contextWindow: 1000000 }]
+      : [{ id: 'or-online-only', contextWindow: 2000000 }],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('39 mixed catalog: outcome updated from snapshot', outcome === 'updated', outcome)
+  check('39 mixed catalog: live probe is skipped without a known protocol',
+    eq(calls.discoverRequests, [{ provider: 'openrouter' }]),
+    JSON.stringify(calls.discoverRequests))
+  check('39 mixed catalog: explicit warning explains the fallback',
+    calls.notifications.some(n => n.color === 'warning' && n.text === t('provider-live-fetch-unavailable')),
+    JSON.stringify(calls.notifications))
+  check('39 mixed catalog: endpoint-only custom id is not written',
+    eq(calls.mutations, [['openrouter', [{ op: 'set', path: ['models'], value: [{ id: 'or-known' }] }]]]),
+    JSON.stringify(calls.mutations))
+}
+
+// 40. A catalog route with custom headers cannot safely use the anonymous
+// live-discovery request because the upstream seam cannot carry those headers.
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['deepseek'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['deepseek-chat'] },
+  }, {
+    configured: [{ route: 'deepseek', ref: 'DEEPSEEK_API_KEY', shadowed: false, isCatalog: true, baseURL: 'https://relay.example/v1', hasCustomHeaders: true, models: [] }],
+    storedCredentials: { DEEPSEEK_API_KEY: 'sk-old' },
+    discover: request => request.provider !== undefined
+      ? [{ id: 'deepseek-chat' }]
+      : [{ id: 'deepseek-v2-alpha', contextWindow: 2000000 }],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('40 custom headers: outcome updated from snapshot', outcome === 'updated', outcome)
+  check('40 custom headers: live probe is skipped',
+    eq(calls.discoverRequests, [{ provider: 'deepseek' }]),
+    JSON.stringify(calls.discoverRequests))
+  check('40 custom headers: warning explains the fallback',
+    calls.notifications.some(n => n.color === 'warning' && n.text === t('provider-live-fetch-unavailable')),
+    JSON.stringify(calls.notifications))
+}
+
+// 41. If the installed catalog lookup fails but the endpoint responds, keep
+// the live rows selectable while treating catalog membership as unknown:
+// no "new" badge and no endpoint capacities are persisted.
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['openai'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['gpt-live-only'] },
+  }, {
+    configured: [{ route: 'openai', ref: 'OPENAI_API_KEY', shadowed: false, isCatalog: true, baseURL: 'https://relay.example/v1', models: [] }],
+    storedCredentials: { OPENAI_API_KEY: 'sk-old' },
+    discover: request => request.provider !== undefined
+      ? Promise.reject(new Error('catalog unavailable'))
+      : [{ id: 'gpt-live-only', contextWindow: 2000000, maxTokens: 65536 }],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('41 catalog lookup failure: outcome updated from live rows', outcome === 'updated', outcome)
+  check('41 catalog lookup failure: live probe carries explicit known protocol',
+    eq(calls.discoverRequests, [
+      { provider: 'openai' },
+      { baseURL: 'https://relay.example/v1', api: 'openai-responses', apiKey: 'sk-old' },
+    ]), JSON.stringify(calls.discoverRequests))
+  check('41 catalog lookup failure: warning and no false snapshot detail',
+    calls.notifications.some(n => n.color === 'warning' && n.text === t('provider-catalog-fetch-failed'))
+      && calls.details.models === undefined,
+    JSON.stringify({ notifications: calls.notifications, detail: calls.details.models }))
+  check('41 catalog lookup failure: unknown membership does not persist capacities',
+    eq(calls.mutations, [['openai', [{ op: 'set', path: ['models'], value: [{ id: 'gpt-live-only' }] }]]]),
+    JSON.stringify(calls.mutations))
+}
+
+// 42. Anthropic is one of the explicitly verified catalog protocols: the
+// live probe must carry anthropic-messages so the upstream adapter uses
+// x-api-key/anthropic-version rather than the OpenAI bearer default.
+{
+  const { deps, calls } = makeDeps({
+    'action': ACTION_EDIT,
+    'edit-provider': { selected: ['anthropic'] },
+    'edit-menu': MENU_MODELS,
+    'models': { selected: ['claude-live-only'] },
+  }, {
+    configured: [{ route: 'anthropic', ref: 'ANTHROPIC_API_KEY', shadowed: false, isCatalog: true, baseURL: 'https://relay.example', models: [] }],
+    storedCredentials: { ANTHROPIC_API_KEY: 'sk-ant' },
+    discover: request => request.provider !== undefined
+      ? [{ id: 'claude-known' }]
+      : [{ id: 'claude-live-only', contextWindow: 2000000 }],
+  })
+  const outcome = await runProviderWizard(deps)
+  check('42 anthropic catalog: outcome updated', outcome === 'updated', outcome)
+  check('42 anthropic catalog: live probe carries anthropic-messages',
+    eq(calls.discoverRequests, [
+      { provider: 'anthropic' },
+      { baseURL: 'https://relay.example', api: 'anthropic-messages', apiKey: 'sk-ant' },
+    ]), JSON.stringify(calls.discoverRequests))
+}
+
+// 43. Add adopts explicit capability edits, but not edits to unchecked models.
+const CAPABILITIES = {
+  contextWindow: 200000,
+  maxTokens: 8192,
+  reasoningEfforts: { off: null, low: 'low', high: 'high', max: 'ultra' },
+  input: ['text', 'image'],
+}
+const CUSTOM_ADD = {
+  mode: MODE_CUSTOM,
+  'route-id': { custom: 'capability-gateway' },
+  apikey: { custom: 'probe-key' },
+  baseurl: { custom: 'https://gateway.example/v1' },
+  protocol: { selected: ['openai-completions'] },
+  confirm: CONFIRM_WRITE,
+  switch: KEEP_MODEL,
+}
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_ADD,
+    models: { selected: ['chosen'], edits: { chosen: CAPABILITIES, unchecked: { contextWindow: 1000 } } },
+  }, { discovered: [{ id: 'chosen', contextWindow: 4000 }, { id: 'unchecked' }] })
+  check('43 add capabilities: outcome added', await runProviderWizard(deps) === 'added')
+  check('43 add capabilities: only enabled model adopts the four fields',
+    eq(calls.profiles[0]?.[1]?.models, [{ id: 'chosen', ...CAPABILITIES }]), JSON.stringify(calls.profiles))
+  check('43 add capabilities: confirm names capability overrides',
+    calls.details.confirm.includes(t('provider-line-model-capabilities', { models: 'chosen' })))
+}
+
+const STORED_CAPABILITY_MODEL = {
+  id: 'chosen', contextWindow: 4000, maxTokens: 1000,
+  reasoningEfforts: { high: 'gateway-high' }, input: ['text'],
+  name: 'My model', compat: { supportsDeveloperRole: false }, customNote: 'preserve',
+}
+const CAPABILITY_PROVIDER = {
+  route: 'capability-gateway', ref: '', shadowed: false, isCatalog: false,
+  api: 'openai-completions', baseURL: 'https://gateway.example/v1',
+  models: ['chosen'], modelEntries: [STORED_CAPABILITY_MODEL],
+}
+const CUSTOM_EDIT = {
+  action: ACTION_EDIT,
+  'edit-provider': { selected: ['capability-gateway'] },
+  'edit-menu': MENU_MODELS,
+}
+
+// 44. Same enabled ids no longer hide a real capability edit.
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT,
+    models: { selected: ['chosen'], edits: { chosen: CAPABILITIES } },
+  }, { configured: [CAPABILITY_PROVIDER], discovered: [{ id: 'chosen', contextWindow: 800000 }] })
+  check('44 edit capabilities: outcome updated despite identical ids', await runProviderWizard(deps) === 'updated')
+  check('44 edit capabilities: unknown fields survive, only models path is patched', eq(calls.mutations, [[
+    'capability-gateway', [{ op: 'set', path: ['models'], value: [{ ...STORED_CAPABILITY_MODEL, ...CAPABILITIES }] }],
+  ]]), JSON.stringify(calls.mutations))
+  check('44 edit capabilities: stored entry was not mutated', STORED_CAPABILITY_MODEL.contextWindow === 4000)
+}
+
+// 45. Editor saves are drafts, so Esc or cancelling add confirmation writes nothing.
+for (const cancelAfterEdits of [true, false]) {
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_ADD,
+    models: { selected: ['chosen'], edits: { chosen: CAPABILITIES }, cancelAfterEdits },
+    confirm: { selected: [t('provider-opt-confirm-cancel')] },
+  }, { discovered: [{ id: 'chosen' }] })
+  check(`45 cancel capability draft (${cancelAfterEdits}): cancelled`, await runProviderWizard(deps) === 'cancelled')
+  check(`45 cancel capability draft (${cancelAfterEdits}): zero writes`,
+    calls.profiles.length === 0 && calls.mutations.length === 0 && calls.credentials.length === 0)
+}
+
+// 46. Editing an unchecked row must neither enable it nor rewrite kept rows.
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT,
+    models: { selected: ['chosen'], edits: { unchecked: CAPABILITIES } },
+  }, { configured: [CAPABILITY_PROVIDER], discovered: [{ id: 'chosen' }, { id: 'unchecked' }] })
+  check('46 unchecked edit: unchanged provider', await runProviderWizard(deps) === 'cancelled' && calls.mutations.length === 0)
+}
+
+// 47. Editing a whole-catalog route uses modelOverrides, never a one-model list.
+{
+  const { deps, calls } = makeDeps({
+    action: ACTION_EDIT,
+    'edit-provider': { selected: ['openai'] },
+    'edit-menu': MENU_MODELS,
+    models: { selected: [], edits: { known: { contextWindow: 200000 } } },
+  }, {
+    configured: [{ route: 'openai', ref: '', shadowed: false, isCatalog: true,
+      modelOverrides: { known: { contextWindow: 4000, compat: { supportsDeveloperRole: false } } } }],
+    discovered: [{ id: 'known', contextWindow: 1000000 }, { id: 'other' }],
+  })
+  check('47 whole-catalog capability edit: updated', await runProviderWizard(deps) === 'updated')
+  check('47 whole-catalog capability edit: exact field patch, no catalog narrowing', eq(calls.mutations, [[
+    'openai', [{ op: 'set', path: ['modelOverrides', 'known', 'contextWindow'], value: 200000 }],
+  ]]), JSON.stringify(calls.mutations))
+}
+
+// 48. Explicit model lists absorb existing overrides before clearing their alternate shape.
+{
+  const override = { contextWindow: 4000, reasoningEfforts: { high: 'high' }, compat: { supportsDeveloperRole: false } }
+  const { deps, calls } = makeDeps({
+    action: ACTION_EDIT,
+    'edit-provider': { selected: ['openai'] },
+    'edit-menu': MENU_MODELS,
+    models: { selected: ['known', 'other'], edits: { known: { maxTokens: 8192 } } },
+  }, {
+    configured: [{ route: 'openai', ref: '', shadowed: false, isCatalog: true, modelOverrides: { known: override } }],
+    discovered: [{ id: 'known' }, { id: 'other' }],
+  })
+  check('48 modelOverrides migration: updated', await runProviderWizard(deps) === 'updated')
+  check('48 modelOverrides migration: preserves fields and avoids upstream conflict', eq(calls.mutations, [[
+    'openai', [
+      { op: 'set', path: ['models'], value: [{ id: 'known', ...override, maxTokens: 8192 }, { id: 'other' }] },
+      { op: 'unset', path: ['modelOverrides'] },
+    ],
+  ]]), JSON.stringify(calls.mutations))
+}
+
+// 49. Stored model rows remain editable when the endpoint is down.
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT,
+    models: { selected: ['chosen'], edits: { chosen: { contextWindow: 200000 } } },
+  }, { configured: [CAPABILITY_PROVIDER], discoverThrows: true })
+  check('49 offline capability edit: updated', await runProviderWizard(deps) === 'updated')
+  check('49 offline capability edit: no manual fallback, original other fields retained',
+    !calls.asks.includes('models-fallback') && eq(calls.mutations[0]?.[1]?.[0]?.value,
+      [{ ...STORED_CAPABILITY_MODEL, contextWindow: 200000 }]))
+}
+
+// 50. Clearing overrides restores inheritance without touching unrelated fields.
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT,
+    models: { selected: ['chosen'], edits: { chosen: {
+      contextWindow: undefined, maxTokens: undefined, reasoningEfforts: undefined, input: undefined,
+    } } },
+  }, { configured: [CAPABILITY_PROVIDER], discovered: [{ id: 'chosen' }] })
+  check('50 inheritance reset: updated', await runProviderWizard(deps) === 'updated')
+  check('50 inheritance reset: removes only the four overrides', eq(calls.mutations[0]?.[1]?.[0]?.value,
+    [{ id: 'chosen', name: 'My model', compat: { supportsDeveloperRole: false }, customNote: 'preserve' }]))
+}
+
+// 51. Invalid capability values never get through the draft save to persistence.
+for (const invalid of [
+  { contextWindow: 0 }, { maxTokens: 1.5 }, { maxTokens: Number.MAX_SAFE_INTEGER + 1 },
+  { reasoningEfforts: { off: null } }, { reasoningEfforts: { high: null } }, { input: [] },
+]) {
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT, models: { selected: ['chosen'], edits: { chosen: invalid } },
+  }, { configured: [CAPABILITY_PROVIDER], discovered: [{ id: 'chosen' }] })
+  check(`51 invalid capability ${JSON.stringify(invalid)}: no write`,
+    await runProviderWizard(deps) === 'failed' && calls.mutations.length === 0)
+}
+
+// 52. Opening and saving unchanged values does not rewrite a provider.
+{
+  const { deps, calls } = makeDeps({
+    ...CUSTOM_EDIT, models: { selected: ['chosen'], edits: { chosen: {} } },
+  }, { configured: [CAPABILITY_PROVIDER], discovered: [{ id: 'chosen', contextWindow: 800000 }] })
+  check('52 no-op capability save: zero writes', await runProviderWizard(deps) === 'cancelled' && calls.mutations.length === 0)
 }
 
 console.log(failed === 0 ? '\nAll provider-wizard checks passed' : `\n${failed} check(s) FAILED`)

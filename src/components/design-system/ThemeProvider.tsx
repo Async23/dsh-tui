@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react'
 import {
+  getTheme,
   isThemeAvailable,
   isLightThemeActive,
   registerCustomThemeResolver,
@@ -7,7 +8,9 @@ import {
   setAutoThemeBase,
   getAutoThemeBase,
   AUTO_THEME_NAME,
+  THEME_NAMES,
 } from '../../theme.js'
+import { BRAND_THEMES, getActiveBrand, subscribeActiveBrand } from '../../branding.js'
 import instances from '../../ink/instances.js'
 import { resolveCustomTheme } from '../../customTheme.js'
 import type { TuiThemeHost } from '../../dsh-adapter/themes.js'
@@ -67,12 +70,22 @@ type ThemeContextValue = {
    * swaps the palette; false when the name is unknown or cannot persist.
    */
   setTheme: (name: string) => boolean
+  /**
+   * The colour the terminal actually shows behind the UI, as `#rrggbb`:
+   * the OSC 11 answer when the terminal gave one, else white/black by the
+   * rendered palette's lightness. Terminal-image placements need it as
+   * their opaque backing (Sixel has no alpha — transparent pixels must
+   * composite onto something), and it is the same target the backdrop
+   * shade fades toward.
+   */
+  terminalBackground: `#${string}`
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: 'dark',
   autoBase: 'dark',
   setTheme: () => false,
+  terminalBackground: '#000000',
 })
 
 /**
@@ -118,7 +131,7 @@ export function ThemeProvider({
     if (forced === undefined) return false
     if (isThemeAvailable(forced)) return true
     console.warn(
-      `[dsh-tui] theme "${forced}" not found (built-ins: auto, light, dark, dark-ansi; static ~/.dsh-tui/themes/*.json; runtime plugin themes); falling back to auto-detection`,
+      `[dsh-tui] theme "${forced}" not found (built-ins: ${AUTO_THEME_NAME}, ${THEME_NAMES.join(', ')}; static ~/.dsh-tui/themes/*.json; runtime plugin themes); falling back to auto-detection`,
     )
     return false
   })
@@ -244,6 +257,8 @@ export function ThemeProvider({
         return false
       }
       requestedThemeRef.current = name
+      // /theme 手选是明确意愿：品牌默认档从此让位（见 renderedTheme 的锁定判定）。
+      brandThemeLockRef.current = true
       setActive(name)
       if (name === AUTO_THEME_NAME) redetectAutoBase()
       return true
@@ -273,20 +288,58 @@ export function ThemeProvider({
     }
   }, [active, redetectAutoBase, runtimeThemeSnapshot])
 
-  const renderedTheme = active === null
-    ? 'dark'
-    : isThemeAvailable(active)
-      ? active
-      : AUTO_THEME_NAME
+  // ── 品牌默认档（branding.ts）───────────────────────────────────────────
+  // Claude 后端（claude 品牌）时把默认主题档替换成 Claude 双主题（claude-dark
+  // / claude-paper，按解析档深浅自动落位）——启动页
+  // 与对话页跟着后端整体换色。锁定判定（用户表达过明确意愿时不覆盖）：
+  // - 显式 `theme` prop / `DSH_TUI_THEME`：锁；
+  // - 会话内 `/theme` 手选：锁（setTheme 置位）；
+  // - 启动时读到的 `~/.dsh-tui/theme.json` 持久化偏好：**不锁**——那是切换
+  //   品档联动之前的历史选择，压住「选了后端整个主题就变」的联动就再也
+  //   切不过去；想固定外观走 `/theme` 重选或设置项 `dsh-tui.brand`。
+  // 品牌经 useSyncExternalStore 订阅：`/settings` 切品牌 → Chat 调
+  // setActiveBrand → 这里即时换档，不重挂组件。
+  const brand = useSyncExternalStore(subscribeActiveBrand, getActiveBrand)
+  const brandThemeLockRef = React.useRef<boolean>(theme !== undefined || envThemeOverride() !== undefined)
+  const renderedTheme = (() => {
+    const resolved = active === null
+      ? 'dark'
+      : isThemeAvailable(active)
+        ? active
+        : AUTO_THEME_NAME
+    const brandThemes = BRAND_THEMES[brand]
+    if (brandThemes === undefined || brandThemeLockRef.current) return resolved
+    // 品牌双主题按解析档深浅落位：浅色终端（或历史 light 偏好）→ 浅色版，
+    // 深色 → 深色版——同一套品牌强调色，切明暗不丢品牌识别（claude 陶土橙、
+    // codex 薰衣草紫）。
+    const lightness = resolved === 'light' || (resolved === AUTO_THEME_NAME && autoBase === 'light') ? 'light' : 'dark'
+    return brandThemes[lightness]
+  })()
+  // 模块级镜像必须**在渲染期**写入（不是 effect）：markdown 把主题色烤进
+  // ANSI 字符串（链接 accent、行内代码 permission…），而它正是被这次 context
+  // 更新触发重渲染的——放进 effect 会让它读到上一帧的主题名，于是换主题后
+  // 链接颜色要等重启才更新。镜像只服务非 React 渲染（markdown/hyperlink）。
+  // 当前色板的**身份**：运行时主题在同一批里释放并重注册时名字不变，但 resolver
+  // 已经换了一个新色板对象（themes.ts 每次注册都新建并冻结）。context value 必须
+  // 跟着它换，否则消费者（含按色板身份 memo 的 Markdown）完全不重渲染，屏幕停在
+  // 旧色——切走再切回才刷新。放进 value 依赖即可：内置/静态主题的身份稳定，
+  // 不会因此多渲染。
+  const renderedPalette = getTheme(renderedTheme)
+  setActiveThemeName(renderedTheme)
   const value = React.useMemo(
-    () => ({ theme: renderedTheme, autoBase, setTheme }),
-    [renderedTheme, autoBase, setTheme],
+    () => ({
+      theme: renderedTheme,
+      autoBase,
+      setTheme,
+      // 与下面 setShadeTarget 用同一个口径（OSC 11 的回答，缺失时按明暗取
+      // 白/黑）——terminal 图像的不透明衬底就合成到这个颜色上。
+      // 只在与主题明暗**一致**时才采信 OSC 11 的回答：透明背景/背景图形态
+      // 的终端会报一个跟画面对不上的颜色，那时宁可用纯白（浅色主题）或
+      // 纯黑（深色主题）——深色终端上糊一块白底最突兀。
+      terminalBackground: hexRgb(imageBackingColor(detectedBackground, renderedTheme)),
+    }),
+    [renderedTheme, renderedPalette, autoBase, setTheme, detectedBackground],
   )
-
-  useEffect(() => {
-    if (active !== null) setActiveThemeName(renderedTheme)
-  }, [active, renderedTheme])
-
   // Backdrop shade target: the detected terminal background when OSC 11
   // answered, else black/white by the rendered theme's lightness. `autoBase`
   // is a dependency because `auto` resolves through it.
@@ -311,4 +364,38 @@ export function ThemeProvider({
 export function useTheme(): [string, (name: string) => boolean] {
   const { theme, setTheme } = useContext(ThemeContext)
   return [theme, setTheme]
+}
+
+/** `{r,g,b}` → `#rrggbb` for colour strings the style layer accepts. */
+function hexRgb(color: { r: number; g: number; b: number }): `#${string}` {
+  const part = (value: number): string =>
+    Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0')
+  return `#${part(color.r)}${part(color.g)}${part(color.b)}`
+}
+
+/**
+ * The opaque colour terminal images composite onto: the OSC 11 answer while
+ * it agrees with the rendered palette's lightness, else pure white (light
+ * palette) / pure black (dark palette). A light terminal must never get a
+ * dark slab, and a dark terminal must never get a white one.
+ */
+function imageBackingColor(
+  detected: { r: number; g: number; b: number } | null,
+  themeName: string,
+): { r: number; g: number; b: number } {
+  const light = isLightThemeActive(themeName)
+  const fallback = light ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 }
+  if (detected === null) return fallback
+  // Rec. 601 luma: > 0.5 counts as a light background.
+  const luma = (0.299 * detected.r + 0.587 * detected.g + 0.114 * detected.b) / 255
+  return (luma > 0.5) === light ? detected : fallback
+}
+
+/**
+ * The colour the terminal shows behind the UI (`#rrggbb`): the OSC 11
+ * answer when available, else white/black by palette lightness. Terminal
+ * image placements use it as their opaque Sixel backing.
+ */
+export function useTerminalBackground(): `#${string}` {
+  return useContext(ThemeContext).terminalBackground
 }

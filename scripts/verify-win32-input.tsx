@@ -15,6 +15,10 @@
  *     the Ins/Home cluster — tcell encoding)
  *  5. UTF-16 surrogate pairs across records, incl. state-pollution guards
  *  6. repeat-count expansion, keyup/modifier swallowing
+ *  7. record fragments across escape flushes, expiry and resynchronization
+ *  8. the capability gate without decoded evidence (Esc stays at 50ms on
+ *     hosts that ignore DECSET 9001), split-position sweeps, and the
+ *     64-byte / 1-second hold bounds
  *
  * Run with: node --import tsx/esm scripts/verify-win32-input.tsx
  * Exits 1 on the first failed assertion (CI gate).
@@ -26,6 +30,8 @@ import {
   type ParsedInput,
 } from '../src/ink/parse-keypress.js'
 import { supportsWin32InputMode } from '../src/ink/terminal.js'
+import { default as App } from '../src/ink/components/App.js'
+import { InputEvent } from '../src/ink/events/input-event.js'
 
 type KeySummary = {
   kind: string
@@ -247,7 +253,7 @@ check('dedicated Insert (ENHANCED_KEY, Uc=0) stays insert', new Feeder().feed(`$
   check('the orphaned low half is then dropped, not combined', f.feed(`${CSI}49;2;56832;1;32;1_`), [])
 }
 {
-  // INITIAL_STATE is a shared singleton (App.tsx seeds the parser with it) —
+  // INITIAL_STATE is a shared singleton (also usable directly by callers) —
   // a pending high surrogate must not leak into it.
   const [keys, st] = parseMultipleKeypresses(INITIAL_STATE, `${CSI}49;2;55357;1;32;1_`)
   check('high surrogate via INITIAL_STATE yields no key', summarize(keys), [])
@@ -386,6 +392,84 @@ function checkPaste(label: string, keys: KeySummary[], expectedSeq: string): voi
   checkPaste('supplementary-plane char survives the paste buffer', f.feed(P2_OPEN + emoji + P2_CLOSE), '😀')
 }
 
+// --- 8b. CRLF folding inside a decomposed paste (#1090) -----------------------
+//
+// Classic conhost spells a pasted CRLF break as two records: a real
+// VK_RETURN CR record (Uc=13) and the synthesized LF record (Uc=10) that
+// CharToKeyEvents emits for the '\n' half. Both translate to 'return', so
+// without folding the paste gains one blank line per CRLF. The LF half
+// arrives Vk=0 from CharToKeyEvents; hosts that promote it keep Uc=10 with
+// Vk=13, so both shapes are covered here.
+
+const CR = pasteRecs(13, 13)
+const LF_SYNTH = pasteRecs(0, 10)
+const LF_VK = pasteRecs(13, 10)
+const CRLF = CR + LF_SYNTH
+
+{
+  const f = new Feeder()
+  checkPaste(
+    'decomposed CRLF paste yields one newline',
+    f.feed(P2_OPEN + pasteRecs(65, 97) + CRLF + pasteRecs(66, 98) + P2_CLOSE),
+    'a\nb',
+  )
+}
+{
+  const f = new Feeder()
+  const body = pasteRecs(65, 97) + CRLF + pasteRecs(66, 98) + CR + LF_VK + pasteRecs(67, 99)
+  checkPaste('multi-line CRLF paste keeps one newline per break', f.feed(P2_OPEN + body + P2_CLOSE), 'a\nb\nc')
+}
+{
+  const f = new Feeder()
+  check('CR record ends the chunk with the paste buffer intact', f.feed(P2_OPEN + pasteRecs(65, 97) + CR), [])
+  checkPaste('LF in the next chunk folds into the buffered CR', f.feed(LF_SYNTH + pasteRecs(66, 98) + P2_CLOSE), 'a\nb')
+}
+{
+  const f = new Feeder()
+  checkPaste(
+    'LF-only record without a CR stays one newline',
+    f.feed(P2_OPEN + pasteRecs(65, 97) + LF_SYNTH + pasteRecs(66, 98) + P2_CLOSE),
+    'a\nb',
+  )
+}
+{
+  const f = new Feeder()
+  checkPaste('a lone CR record stays one newline', f.feed(P2_OPEN + pasteRecs(65, 97) + CR + pasteRecs(66, 98) + P2_CLOSE), 'a\nb')
+}
+{
+  const f = new Feeder()
+  checkPaste(
+    'CR followed by ordinary text does not fold',
+    f.feed(P2_OPEN + pasteRecs(65, 97) + CR + pasteRecs(95, 95) + pasteRecs(66, 98) + P2_CLOSE),
+    'a\n_b',
+  )
+}
+{
+  const f = new Feeder()
+  checkPaste(
+    'CR CR LF folds only the CRLF pair',
+    f.feed(P2_OPEN + pasteRecs(65, 97) + CR + CR + LF_SYNTH + pasteRecs(66, 98) + P2_CLOSE),
+    'a\n\nb',
+  )
+}
+{
+  const f = new Feeder()
+  checkPaste(
+    'CR LF LF keeps the unpaired second LF',
+    f.feed(P2_OPEN + pasteRecs(65, 97) + CR + LF_SYNTH + LF_SYNTH + pasteRecs(66, 98) + P2_CLOSE),
+    'a\n\nb',
+  )
+}
+{
+  const f = new Feeder()
+  checkPaste(
+    'ordinary punctuation in a paste body is untouched',
+    f.feed(P2_OPEN + pasteRecs(95, 95) + pasteRecs(91, 91) + pasteRecs(93, 93) + P2_CLOSE),
+    '_[]',
+  )
+}
+
+
 // --- 9. Alt+numpad Unicode input (payload rides on the Alt keyup) -------------
 //
 // Feature_UseNumpadEventsForClipboardInput: Alt-down, digit records without
@@ -459,6 +543,567 @@ for (const [label, bridge] of [
   f.feed(altUpPayload(55357)) // synthesized high pending
   f.feed(bridge)
   check(`no surrogate bridge across ${label}`, f.feed(altUpPayload(56832)), [])
+}
+
+// --- 10. record framing across the escape timer (#827) -----------------------
+// Drive the parser from an explicit starting state. `null` stands for App's
+// escape timer, and `text` is what the draft would receive — collected through
+// InputEvent exactly as prompt-input consumes it, with no wall-clock sleeps.
+function drive(start: KeyParseState, chunks: Array<string | null>): {
+  keys: ParsedInput[]
+  state: KeyParseState
+  text: string
+} {
+  let state = start
+  const keys: ParsedInput[] = []
+  for (const chunk of chunks) {
+    const [out, next] = parseMultipleKeypresses(state, chunk)
+    state = next
+    keys.push(...out)
+  }
+  return {
+    keys,
+    state,
+    text: keys.flatMap(key => key.kind === 'key' ? new InputEvent(key).input : []).join(''),
+  }
+}
+
+// `enabled` seeds the evidence bit (`win32InputMode`, lit by decoding a
+// record); `capable` seeds the host gate App injects (T02). Leaving `capable`
+// absent keeps the pre-gate meaning — the parser treats a missing gate as
+// open — so every existing call site above/below is untouched.
+function fragments(chunks: Array<string | null>, enabled = true, capable?: boolean) {
+  const seed: KeyParseState = { ...INITIAL_STATE, win32InputMode: enabled }
+  if (capable !== undefined) seed.win32Capable = capable
+  return drive(seed, chunks)
+}
+
+const SHIFT_RECORD = `${CSI}16;42;0;1;16;1_`
+const A_RECORD = `${CSI}65;30;97;1;0;1_`
+const CJK_RECORD = `${CSI}0;0;22269;1;0;1_`
+for (const record of [
+  SHIFT_RECORD, A_RECORD, CJK_RECORD, `${CSI}65;30;97;0;0;1_`,
+  `${CSI}13;28;13;1;16;1_`, `${CSI}88;45;120;1;0;3_`,
+  `${CSI}189;12;95;1;16;1_`, `${CSI};;97;1_`,
+]) {
+  const expected = fragments([record])
+  for (let split = 1; split < record.length; split++) {
+    const actual = fragments([record.slice(0, split), null, null, record.slice(split)])
+    // A raw lone ESC still releases promptly. Its continuation can recover
+    // text, but cannot undo an already dispatched Escape event.
+    const keys = split === 1 ? actual.keys.slice(1) : actual.keys
+    check(`flush split ${split}/${record.length}: ${JSON.stringify(record)}`,
+      summarize(keys), summarize(expected.keys))
+    checkBoolean('InputEvent text matches intact record', actual.text === expected.text, true)
+  }
+}
+checkBoolean('reported Shift prefix is protected without an explicit mode flag',
+  fragments([SHIFT_RECORD.slice(0, -1), null, '_'], false).keys.length === 0, true)
+checkBoolean('record framing does not mutate INITIAL_STATE',
+  INITIAL_STATE.win32InputMode === undefined && INITIAL_STATE.win32InputStartedAt === undefined, true)
+checkBoolean('complete record enables framing for subsequent early splits',
+  fragments([SHIFT_RECORD, `${CSI}6`, null, '5;30;97;1;0;1_'], false).text === 'a', true)
+checkBoolean('recovered complete tail also enables subsequent framing',
+  fragments([SHIFT_RECORD.slice(1), `${CSI}6`, null, '5;30;97;1;0;1_'], false).text === 'a', true)
+
+{
+  const tail = CJK_RECORD.slice(1)
+  const result = fragments(['\x1b', null, ...[...tail].flatMap(ch => [ch, null])])
+  checkBoolean('ESC-less tail may fragment at every byte, across repeated flushes', result.text === '国', true)
+}
+checkBoolean('recovered tail preserves batched ordinary suffix and following record',
+  fragments(['\x1b', null, '[65;30;', null, '97;1;0;1__suffix' + CJK_RECORD]).text === 'a_suffix国', true)
+checkBoolean('fresh ESC discards an abandoned record before the next record',
+  fragments([SHIFT_RECORD.slice(0, -1), null, A_RECORD]).text === 'a', true)
+checkBoolean('fresh ESC after numeric continuation discards the old record',
+  fragments([`${CSI}16;`, null, '42;0;' + A_RECORD]).text === 'a', true)
+checkBoolean('ordinary Win32 typing abandons a held record without eating text',
+  fragments([SHIFT_RECORD.slice(0, -1), null,
+    [...'hello_'].map(ch => `${CSI}231;0;${ch.charCodeAt(0)};1;0;1_`).join(''),
+  ]).text === 'hello_', true)
+checkBoolean('a non-CSI continuation abandons the record without eating Unicode text',
+  fragments([SHIFT_RECORD.slice(0, -1), null, '你好_']).text === '你好_', true)
+
+// A raw 'h' after a numeric CSI prefix is a valid final byte, even if the
+// sender intended "abandoned record + hello_". The byte stream cannot tell
+// those apart. Preserve the CSI as one protocol event, suppress its input,
+// and keep the suffix; never guess differently based on read boundaries.
+for (const chunks of [
+  [SHIFT_RECORD.slice(0, -1) + 'hello_'],
+  [SHIFT_RECORD.slice(0, -1), 'hello_'],
+  [SHIFT_RECORD.slice(0, -1), null, 'h', 'ello_'],
+]) {
+  const result = fragments(chunks)
+  const protocol = result.keys[0]
+  checkBoolean('ambiguous CSI final stays attached to its prefix',
+    protocol?.kind === 'key' && protocol.sequence === SHIFT_RECORD.slice(0, -1) + 'h', true)
+  checkBoolean('unknown CSI contributes no protocol text; suffix survives', result.text === 'ello_', true)
+}
+
+// The review's four-parameter prefix is also a legal incomplete Win32
+// record. A non-underscore final must resolve it as CSI, not a typed letter.
+for (const sequence of [
+  '\x1b[1;2;3;1A', '\x1b[1;2;3;1h', '\x1b[1;2;3;1u',
+  '\x1b[1;2;3;1~', '\x1b[1;2;3;1$y', '\x1b[1;2;3;1:2A',
+]) {
+  for (const enabled of [false, true]) {
+    const intact = fragments([sequence], enabled)
+    const protocol = intact.keys[0]
+    checkBoolean('unknown CSI retains its complete sequence and protocol code',
+      intact.keys.length === 1 && protocol?.kind === 'key' &&
+      protocol.sequence === sequence && protocol.code === sequence.slice(1), true)
+    checkBoolean(`unknown CSI is not editable text: ${JSON.stringify(sequence)}`, intact.text === '', true)
+    for (let split = 1; split < sequence.length; split++) {
+      const actual = fragments([sequence.slice(0, split), sequence.slice(split)], enabled)
+      checkBoolean(`CSI event is chunk invariant (mode=${enabled}, split=${split})`,
+        JSON.stringify(actual.keys) === JSON.stringify(intact.keys), true)
+    }
+    const prefix = '\x1b[1;2;3;1'
+    const flushed = fragments([prefix, null, sequence.slice(prefix.length)], enabled)
+    checkBoolean(`CSI final after flush keeps the original event (mode=${enabled})`,
+      JSON.stringify(flushed.keys) === JSON.stringify(intact.keys) && flushed.text === '', true)
+  }
+  checkPaste('unknown CSI inside bracketed paste stays literal',
+    summarize(fragments(['\x1b[200~', sequence, '\x1b[201~']).keys), sequence)
+}
+
+for (const sequence of [
+  '\x1b[1;2A', '\x1b[13;2u', '\x1b[27;2;13~', '\x1b[6;20;10t',
+  '\x1b[25~', '\x1b[57358u', '\x1b[27;2;57358~',
+  '\x1b[<0;2;3M', '\x1b[M !!', '\x1b[?1;0c',
+]) {
+  for (const split of [2, sequence.length - 1]) {
+    // For non-numeric protocols only the shared ESC[ prefix uses the
+    // Win32 grace; their own mid-report timeouts retain existing behavior.
+    const chunks: Array<string | null> = [sequence.slice(0, split), sequence.slice(split)]
+    if (split === 2 || /^\x1b\[[\d;]*$/.test(chunks[0]!)) chunks.splice(1, 0, null)
+    const actual = fragments(chunks)
+    const expected = fragments([sequence])
+    check(`non-Win32 CSI survives split ${split}: ${JSON.stringify(sequence)}`,
+      summarize(actual.keys), summarize(expected.keys))
+    checkBoolean('non-Win32 InputEvent text is unchanged', actual.text === expected.text, true)
+  }
+}
+for (const text of ['_', '[', '[123', '[1;2', 'hello_']) {
+  checkBoolean(`ordinary text stays literal: ${JSON.stringify(text)}`,
+    fragments([text, null]).text === text, true)
+}
+checkBoolean('non-Win32 Escape then bracket text remains literal',
+  fragments(['\x1b', null, '[123', null], false).text === '[123', true)
+checkBoolean('unrelated input clears orphan ESC provenance',
+  fragments(['\x1b', null, 'x', '[123', null]).text === 'x[123', true)
+checkBoolean('bracketed paste preserves protocol-shaped literal text',
+  fragments(['\x1b[200~', SHIFT_RECORD.slice(0, -1), '_', '\x1b[201~']).text === SHIFT_RECORD.slice(1), true)
+checkBoolean('paste opener and record-shaped payload in one read do not start a record deadline',
+  fragments(['\x1b[200~' + SHIFT_RECORD.slice(0, -1)]).state.win32InputStartedAt === undefined, true)
+checkBoolean('a literal pasted ESC flush is not orphan keyboard ESC provenance',
+  fragments(['\x1b[200~\x1b', null, '[123', null]).text === '[123', true)
+
+// --- 8c. bracketed paste carrying the terminal's OWN break records (T-FIX-05) --
+//
+// The user's capture (`probe/capture/capture-2026-10-02T18-33-49-825Z.txt`:
+// Windows Terminal + PowerShell, Ctrl+V) delivers the payload INSIDE the
+// bracketed-paste markers with every line boundary spelled as a real win32
+// DOWN+UP record PAIR — `CSI 13;28;13;1;0;1_` then `CSI 13;28;13;0;0;1_`, so
+// `Uc=13`. That pair is the protocol's own spelling of ONE pasted character
+// (conhost's `Clipboard::TextToKeyEvents`), and the literal lane decodes it
+// back into the break it encodes: an ESC-bearing record is what the ingress
+// residue strip deletes whole, so without the decode the newline is gone
+// (measured: the 760-char / 10-line payload reads `1 line・751 chars`).
+//
+// The evidence is the PAIR, never a single record — a lone record shape is the
+// payload's own text (ADR-0008 D1) and keeps every byte, and an ESC-less shape
+// keeps them even when a decodable pair sits beside it. Every case below also
+// pins the function side (L-012): exactly ONE isPasted event, never a leaked
+// Return event that would submit mid-paste.
+const CR_PAIR = `${CSI}13;28;13;1;0;1_${CSI}13;28;13;0;0;1_`
+checkPaste('a break pair inside a bracketed paste decodes to ONE newline',
+  new Feeder().feed(`${CSI}200~alfa${CR_PAIR}bravo${CSI}201~`), 'alfa\nbravo')
+checkPaste('a break pair at the payload start decodes',
+  new Feeder().feed(`${CSI}200~${CR_PAIR}x${CSI}201~`), '\nx')
+checkPaste('a break pair at the payload end decodes',
+  new Feeder().feed(`${CSI}200~x${CR_PAIR}${CSI}201~`), 'x\n')
+checkPaste('every boundary of a three-line payload decodes',
+  new Feeder().feed(`${CSI}200~alfa${CR_PAIR}bravo${CR_PAIR}charlie${CSI}201~`), 'alfa\nbravo\ncharlie')
+checkPaste('the decoded break folds with an adjacent REAL newline (X1 in this lane)',
+  new Feeder().feed(`${CSI}200~alfa${CR_PAIR}\nbravo${CSI}201~`), 'alfa\nbravo')
+// Zero-harm side (ADR-0008 D1): nothing without its own frame evidence may be
+// rewritten — not a lone record, not an ESC-less pair, not even beside a pair.
+checkPaste('a LONE record in a bracketed paste keeps its bytes',
+  new Feeder().feed(`${CSI}200~${CSI}13;28;13;1;0;1_x${CSI}201~`), `${CSI}13;28;13;1;0;1_x`)
+checkPaste('an ESC-less pair keeps its bytes even beside a decodable pair',
+  new Feeder().feed(`${CSI}200~alfa${CR_PAIR}[13;28;13;1;0;1_[13;28;13;0;0;1_bravo${CSI}201~`),
+  'alfa\n[13;28;13;1;0;1_[13;28;13;0;0;1_bravo')
+// L-012: a pair that hands the fold nothing is NOT consumed — the literal lane
+// has no assembler to prove it is residue, so it may not drop bytes it cannot
+// hand back. Both spellings below keep their bytes verbatim.
+checkPaste('a Uc=0 pair keeps its bytes (no character to hand back)',
+  new Feeder().feed(`${CSI}200~alfa${CR_PAIR}${CSI}0;0;0;1;0;1_${CSI}0;0;0;0;0;1_bravo${CSI}201~`),
+  `alfa\n${CSI}0;0;0;1;0;1_${CSI}0;0;0;0;0;1_bravo`)
+checkPaste('a bare-modifier pair keeps its bytes (no character to hand back)',
+  new Feeder().feed(`${CSI}200~alfa${CR_PAIR}${CSI}17;29;0;1;40;1_${CSI}17;29;0;0;40;1_bravo${CSI}201~`),
+  `alfa\n${CSI}17;29;0;1;40;1_${CSI}17;29;0;0;40;1_bravo`)
+// The decode is not a mode flag: the same paste decodes with framing OFF too.
+checkPaste('the pair decodes without the win32 framing flag',
+  summarize(fragments([`${CSI}200~alfa${CR_PAIR}bravo${CSI}201~`], false).keys), 'alfa\nbravo')
+{
+  const surrogateRecords = [
+    `${CSI}49;2;55357;1;0;1_`, `${CSI}49;2;55357;0;0;1_`, `${CSI}49;2;56832;1;0;1_`,
+  ]
+  checkBoolean('UTF-16 surrogate state survives record-internal flushes and keyup',
+    fragments(surrogateRecords.flatMap(record => [record.slice(0, -1), null, '_'])).text === '😀', true)
+}
+
+{
+  // Every record of a decomposed paste is itself split before its final
+  // byte. A record-grace flush must not prematurely finalize the paste or
+  // release a held start/end marker as real keyboard events.
+  const records = (P2_OPEN + P2_BODY + P2_CLOSE).match(/\x1b\[[\d;]*_/g)!
+  const chunks = records.flatMap(record => [record.slice(0, -1), null, null, '_'])
+  checkPaste('decomposed paste survives record-internal flushes', summarize(fragments(chunks).keys), 'a\nb')
+}
+for (const protocol of ['\x1b[<0;32;5M', '\x1b[?1;0c']) {
+  const encoded = [...protocol].map(ch => pasteRecs(0, ch.charCodeAt(0))).join('')
+  const records = encoded.match(/\x1b\[[\d;]*_/g)!
+  const actual = fragments(records.flatMap(record => [record.slice(0, -1), null, '_']))
+  checkBoolean(`synthesized protocol survives record-internal flushes: ${JSON.stringify(protocol)}`,
+    JSON.stringify(actual.keys) === JSON.stringify(fragments([encoded]).keys), true)
+}
+{
+  const originalNow = Date.now
+  let now = 10000
+  Date.now = () => now
+  try {
+    let [, state] = parseMultipleKeypresses({ ...INITIAL_STATE, win32InputMode: true }, `${CSI}65;`)
+    const startedAt = state.win32InputStartedAt
+    for (const chunk of [null, '30;', null, '97;1;0;1', null]) {
+      now += 150
+      const [keys, next] = parseMultipleKeypresses(state, chunk)
+      state = next
+      check('quiet flushes and fragments do not release a partial record', summarize(keys), [])
+      checkBoolean('continuations do not renew the record deadline', state.win32InputStartedAt === startedAt, true)
+    }
+    now = 11000
+    const [expired, next] = parseMultipleKeypresses(state, null)
+    check('expired record is discarded, not dispatched', summarize(expired), [])
+    checkBoolean('expiry clears the buffer and timer sentinel', next.incomplete === '', true)
+    check('ordinary underscore after expiry is not swallowed',
+      summarize(parseMultipleKeypresses(next, '_')[0]), summarize(fragments(['_']).keys))
+
+    // Expiry is also checked on input, not only on quiet flushes.
+    now = 20000
+    ;[, state] = parseMultipleKeypresses({ ...INITIAL_STATE, win32InputMode: true }, `${CSI}65;`)
+    now = 21000
+    const [typed] = parseMultipleKeypresses(state, '123')
+    check('continuous input cannot keep an expired hold alive', summarize(typed), summarize(fragments(['123']).keys))
+
+    now = 30000
+    ;[, state] = parseMultipleKeypresses({ ...INITIAL_STATE, win32InputMode: true }, `${CSI}65;`)
+    now = 30900
+    ;[, state] = parseMultipleKeypresses(state, '30;97;1;0;1_' + `${CSI}16;`)
+    now = 31100
+    const [flushed, refreshed] = parseMultipleKeypresses(state, null)
+    check('a new record in the same read gets its own deadline', summarize(flushed), [])
+    checkBoolean('the new prefix remains buffered', refreshed.incomplete === `${CSI}16;`, true)
+
+    now = 40000
+    ;[, state] = parseMultipleKeypresses({ ...INITIAL_STATE, win32InputMode: true }, '\x1b')
+    ;[, state] = parseMultipleKeypresses(state, null)
+    now = 41000
+    const [literal] = parseMultipleKeypresses(state, '[123')
+    check('expired orphan ESC does not capture later bracket text', summarize(literal), summarize(fragments(['[123']).keys))
+  } finally {
+    Date.now = originalNow
+  }
+}
+checkBoolean('oversized incomplete record has bounded storage',
+  fragments([`${CSI}${'1'.repeat(80)}`, null]).state.incomplete === '', true)
+
+// --- 11. capability gate without decoded evidence (AC-4) ---------------------
+// App must hand the parser `win32Capable` — a gate — and never a lit evidence
+// bit. These cases seed the parser exactly the way App does (a fresh instance,
+// so a revert to "the platform capability lights the mode" fails right here on
+// native Windows), and compare against the closed-gate control: an unlit
+// capable host has to be indistinguishable from classic VT input.
+const appStart = (): KeyParseState => new App({} as never).keyParseState
+checkBoolean('AC-4 App injects the gate and never lights the parser by itself',
+  appStart().win32InputMode !== true && appStart().win32Capable === supportsWin32InputMode(), true)
+
+for (const chunks of [
+  ['\x1b', null],               // a lone Escape releases on the flush
+  [CSI, null],                  // a bare CSI introducer must not start a hold
+  [CSI, null, 'a'],             // ...nor eat the next letter as its final byte
+  ['\x1b', null, '[123'],       // '['-led literal text stays literal
+  ['\x1b', null, '[1;2;3'],     // ...as do record-like but non-body shapes
+  ['\x1b', null, '[1,2'],
+] as Array<Array<string | null>>) {
+  const gated = drive(appStart(), chunks)
+  const closed = fragments(chunks, false, false)
+  const label = JSON.stringify(chunks)
+  check(`AC-4 unlit capable host mirrors the classic path: ${label}`,
+    summarize(gated.keys), summarize(closed.keys))
+  checkBoolean(`AC-4 unlit capable host types the same text: ${label}`, gated.text === closed.text, true)
+}
+
+{
+  const bare = drive(appStart(), [CSI, null])
+  checkBoolean('AC-4 a bare CSI introducer arms no hold on an unlit capable host',
+    bare.state.win32InputStartedAt === undefined, true)
+  checkBoolean('AC-4 a lone Escape is still released by the flush',
+    drive(appStart(), ['\x1b', null]).keys.length === 1, true)
+  checkBoolean('AC-4 a flushed introducer cannot eat the letter after it',
+    drive(appStart(), [CSI, null, 'a']).text === '[a', true)
+  // An explicit `false` is authoritative even for an already-lit parser.
+  const closedGate = fragments([`${CSI}16;`, null], true, false)
+  checkBoolean('AC-4 an explicitly closed gate releases a non-body frame even when lit',
+    closedGate.state.win32InputStartedAt === undefined && closedGate.text === '[16;', true)
+  // Callers predating the gate keep the pre-T02 hold (missing == open).
+  const legacy = fragments([CSI, null], true)
+  checkBoolean('AC-4 callers that inject no gate keep the pre-gate hold',
+    legacy.keys.length === 0 && legacy.state.win32InputStartedAt !== undefined, true)
+  // ADR-0003 Consequences keeps this ambiguity on purpose: a body-shaped
+  // literal is indistinguishable from a record prefix inside the ESC window.
+  // Pinned so the documented trade-off cannot drift away unnoticed.
+  const residual = drive(appStart(), ['\x1b', null, '[1;2;3;1'])
+  checkBoolean('AC-4 documented residual: a body-shaped literal inside the ESC window is still captured',
+    residual.keys.length === 1 && residual.text === '' && residual.state.win32InputStartedAt !== undefined, true)
+}
+
+// --- 12. AC-1: a half record never reaches the draft ------------------------
+for (const enabled of [false, true]) {
+  const half = fragments([`${CSI}16;42;0;1;16;1`, null, '_'], enabled, true)
+  check(`AC-1 half record + flush + late '_' dispatches no key (lit=${enabled})`,
+    summarize(half.keys), [])
+  checkBoolean(`AC-1 InputEvent.input stays empty (lit=${enabled})`, half.text === '', true)
+}
+
+// --- 13. AC-2: every split position x 0..2 flushes --------------------------
+// One flush is App's 50ms escape timer, two model the re-armed timer.
+const interleave = (head: string, tail: string, flushes: number): Array<string | null> =>
+  [head, ...Array<string | null>(flushes).fill(null), tail]
+// Smallest split whose head the parser holds across a quiet flush: the first
+// body-shaped prefix, i.e. where D2/ADR-0003 starts guaranteeing recovery.
+const heldFrom = (record: string): number => {
+  for (let split = 2; split <= record.length; split++) {
+    if (fragments([record.slice(0, split), null], false, true).keys.length === 0) return split
+  }
+  return record.length
+}
+for (const record of [`${CSI}88;45;120;1;32;1_`, CJK_RECORD]) {
+  const intact = fragments([record])
+  const boundary = heldFrom(record)
+  checkBoolean(`AC-2 unlit hold boundary lies inside the frame: ${JSON.stringify(record)}`,
+    boundary > 1 && boundary < record.length, true)
+  for (let split = 1; split < record.length; split++) {
+    for (const flushes of [0, 1, 2]) {
+      const actual = fragments(interleave(record.slice(0, split), record.slice(split), flushes))
+      // A split that isolates a raw lone ESC still releases an Escape event
+      // before the tail is re-attached, and that cannot be undone.
+      const keys = split === 1 && flushes > 0 ? actual.keys.slice(1) : actual.keys
+      check(`AC-2 lit split ${split}/${record.length} flush=${flushes}: ${JSON.stringify(record)}`,
+        summarize(keys), summarize(intact.keys))
+    }
+  }
+  for (const split of [1, boundary, boundary + 2, record.length - 2, record.length - 1]) {
+    for (const flushes of [0, 1, 2]) {
+      const actual = fragments(interleave(record.slice(0, split), record.slice(split), flushes), false, true)
+      const keys = split === 1 && flushes > 0 ? actual.keys.slice(1) : actual.keys
+      check(`AC-2 unlit split ${split}/${record.length} flush=${flushes}: ${JSON.stringify(record)}`,
+        summarize(keys), summarize(intact.keys))
+    }
+  }
+  // The tail may fragment further still: '...;' + '1' + '_'.
+  for (const enabled of [false, true]) {
+    for (const count of [0, 1, 2]) {
+      const gap = Array<string | null>(count).fill(null)
+      const actual = fragments([record.slice(0, -2), ...gap, '1', ...gap, '_'], enabled, true)
+      check(`AC-2 tail re-split lit=${enabled} flush=${count}: ${JSON.stringify(record)}`,
+        summarize(actual.keys), summarize(intact.keys))
+    }
+  }
+}
+
+// --- 14. AC-5: a complete but unknown CSI never reaches editable text -------
+for (const sequence of [`${CSI}1;2;3;1A`, `${CSI}1;2;3;1$y`]) {
+  const intact = fragments([sequence], false, true)
+  const protocol = intact.keys[0]
+  checkBoolean(`AC-5 unknown CSI keeps its identity: ${JSON.stringify(sequence)}`,
+    intact.keys.length === 1 && protocol?.kind === 'key' &&
+    protocol.sequence === sequence && protocol.code === sequence.slice(1), true)
+  // Only a record-shaped (numeric) head survives a quiet flush; an
+  // intermediate byte such as `$` is released as classic input, so that tail
+  // has to arrive alone.
+  const head = sequence.replace(/[^\d;]+$/, '')
+  for (const chunks of [
+    ...Array.from({ length: sequence.length - 1 }, (_, i) => [sequence.slice(0, i + 1), sequence.slice(i + 1)]),
+    [head, null, sequence.slice(head.length)],
+    [head, null, null, sequence.slice(head.length)],
+  ] as Array<Array<string | null>>) {
+    const actual = fragments(chunks, false, true)
+    checkBoolean(`AC-5 parameter bytes and final stay out of the draft: ${JSON.stringify(chunks)}`,
+      actual.text === '' && JSON.stringify(actual.keys) === JSON.stringify(intact.keys), true)
+  }
+}
+
+// --- 15. AC-5 bounds: an abandoned hold must never strand later input -------
+{
+  // Past WIN32_INPUT_MAX_LENGTH (64) and still body-shaped, so the frame is
+  // genuinely held until the bound releases it.
+  const overlong = `${CSI}65;30;97;1;${'1'.repeat(60)}`
+  const bounded = fragments([overlong, null, 'ok'], false, true)
+  checkBoolean(`AC-5 a ${overlong.length}-byte held frame is discarded, not stranded`,
+    bounded.state.win32InputStartedAt === undefined && bounded.state.incomplete === '', true)
+  checkBoolean('AC-5 typing after the discard still reaches the draft', bounded.text.endsWith('ok'), true)
+  const prefixOnly = fragments([`${CSI}${'1'.repeat(65)}`, null, 'ok'], false, true)
+  checkBoolean('AC-5 a non-body prefix past the limit leaves nothing held either',
+    prefixOnly.state.win32InputStartedAt === undefined && prefixOnly.state.incomplete === '', true)
+  checkBoolean('AC-5 ...and typing after it is not swallowed', prefixOnly.text.endsWith('ok'), true)
+}
+{
+  // The 1s grace (D3) bounds an unlit capable host's hold the same way.
+  const originalNow = Date.now
+  let now = 60000
+  Date.now = () => now
+  try {
+    let state: KeyParseState = { ...INITIAL_STATE, win32Capable: true, win32InputMode: false }
+    ;[, state] = parseMultipleKeypresses(state, `${CSI}65;30;97;1;`)
+    checkBoolean('AC-5 an unlit capable host does hold a body-shaped frame',
+      state.win32InputStartedAt !== undefined, true)
+    now += 1000
+    const [expired, next] = parseMultipleKeypresses(state, null)
+    check('AC-5 the frame is discarded at the grace deadline', summarize(expired), [])
+    checkBoolean('AC-5 expiry clears the hold sentinel', next.win32InputStartedAt === undefined, true)
+    check('AC-5 ordinary typing after expiry is not swallowed',
+      summarize(parseMultipleKeypresses(next, '_')[0]), summarize(fragments(['_']).keys))
+  } finally {
+    Date.now = originalNow
+  }
+}
+
+// --- 16. VK_PACKET (231) records carry their character in Uc (T-FIX-02) ------
+//
+// VK_PACKET means "the character is in Uc" (SendInput / keybd_event Unicode
+// injection; Windows Terminal re-encodes a paste this way under
+// win32-input-mode). Printable Uc already reached text input through the
+// Uc-wins-over-Vk path, but the CONTROL characters a pasted break is spelled
+// with fell through to the swallow at the end of parseWin32KeyEvent: every
+// break record vanished, so a decomposed paste assembled without newlines
+// (user report: a 10-line / 760-char paste folded to `1 line・751 chars`).
+// These assertions put VK_PACKET on the same "character rides in Uc" lane the
+// Vk=0 synthesized records already use — and keep Uc=0 swallowed.
+
+const packetRec = (uc: number): string => pasteRecs(231, uc)
+
+check('VK_PACKET CR (Uc=13) is a Return, not a swallowed record', new Feeder().feed(`${CSI}231;0;13;1;0;1_`), [
+  wkey('return', {}, `${CSI}231;0;13;1;0;1_`),
+])
+check('VK_PACKET LF (Uc=10) is a Return too', new Feeder().feed(`${CSI}231;0;10;1;0;1_`), [
+  wkey('return', {}, `${CSI}231;0;10;1;0;1_`),
+])
+check('VK_PACKET Tab (Uc=9) is a Tab', new Feeder().feed(`${CSI}231;0;9;1;0;1_`), [
+  wkey('tab', {}, `${CSI}231;0;9;1;0;1_`),
+])
+check('VK_PACKET Backspace (Uc=8) is a Backspace', new Feeder().feed(`${CSI}231;0;8;1;0;1_`), [
+  wkey('backspace', {}, `${CSI}231;0;8;1;0;1_`),
+])
+check('VK_PACKET DEL (Uc=127) is a Backspace', new Feeder().feed(`${CSI}231;0;127;1;0;1_`), [
+  wkey('backspace', {}, `${CSI}231;0;127;1;0;1_`),
+])
+check('VK_PACKET Escape (Uc=27) is held as a candidate sequence prefix', new Feeder().feed(`${CSI}231;0;27;1;0;1_`), [])
+{
+  // …and released on the flush exactly like a real VK_ESCAPE record (the
+  // escape timer holds any translated Escape, not just the named-key one).
+  const f = new Feeder()
+  f.feed(`${CSI}231;0;27;1;0;1_`)
+  check('VK_PACKET Escape flushes as an Escape', f.feed(null), [
+    wkey('escape', {}, `${CSI}231;0;27;1;0;1_`),
+  ])
+}
+check('VK_PACKET with Uc=0 carries no payload and stays swallowed', new Feeder().feed(`${CSI}231;0;0;1;0;1_`), [])
+
+{
+  // A decomposed paste spelled with VK_PACKET records: V10/V17's break lane
+  // (CR record + LF record) must fold to ONE newline, exactly like the Vk=0
+  // synthesized lane above (#1090).
+  const f = new Feeder()
+  const body = packetRec(97) + packetRec(13) + packetRec(10) + packetRec(98)
+  checkPaste('decomposed paste with VK_PACKET CR+LF breaks yields one newline', f.feed(P2_OPEN + body + P2_CLOSE), 'a\nb')
+}
+{
+  // V11's break lane: the CR record alone.
+  const f = new Feeder()
+  const body = packetRec(97) + packetRec(13) + packetRec(98)
+  checkPaste('decomposed paste with a lone VK_PACKET CR break yields one newline', f.feed(P2_OPEN + body + P2_CLOSE), 'a\nb')
+}
+{
+  // The zero-information record must stay swallowed — a paste may not gain a
+  // newline from a Uc=0 VK_PACKET record (issue #1251 UAT's V9 shape).
+  const f = new Feeder()
+  const body = packetRec(97) + packetRec(0) + packetRec(98)
+  checkPaste('a Uc=0 VK_PACKET record adds no character inside a paste', f.feed(P2_OPEN + body + P2_CLOSE), 'ab')
+}
+
+// --- 16b. the VK_PACKET lane OUTSIDE a paste, and its two guard rails --------
+//
+// T-FIX-02 put VK_PACKET on the "the character rides in Uc" lane, which also
+// changes what a VK_PACKET record does when NO bracketed-paste marker ever
+// arrives (the review's F-3: a marker-less per-character stream dispatches one
+// Return per CR/LF instead of being swallowed). T-FIX-06 keeps that expansion
+// deliberately and pins BOTH sides here:
+//
+// - VK_PACKET's whole payload IS `Uc` (SendInput / keybd_event Unicode
+//   injection), so a marker-less character stream is typed input, not a paste:
+//   swallowing its CR would be the same silent loss #1251 fixed, and the
+//   pre-existing Vk=0 synthesized lane has always read it that way (the
+//   review's control B8). What keeps a paste out of the submit path is the
+//   EVIDENCE — the bracketed marker — never a heuristic on a bare record.
+// - the same records INSIDE the markers stay one paste event with the break
+//   intact and emit no Return at all, so a real paste still cannot submit
+//   mid-way (AC-12).
+{
+  const marker = (char: number): string => `${CSI}231;0;${char};1;0;1_`
+  // The review's B7 shape: a, CR, LF, b, CR, LF, c — every record VK_PACKET,
+  // no marker anywhere.
+  const stream = [97, 13, 10, 98, 13, 10, 99].map(marker).join('')
+  check('AC-12/F-3: a marker-less VK_PACKET character stream is typed input, not a paste',
+    new Feeder().feed(stream), [
+      wchar('a'),
+      wkey('return', {}, marker(13)),
+      wkey('return', {}, marker(10)),
+      wchar('b'),
+      wkey('return', {}, marker(13)),
+      wkey('return', {}, marker(10)),
+      wchar('c'),
+    ])
+  // ...and the single-record side this lane also owns outside a paste (§16
+  // already pins CR/LF/Tab/Backspace/DEL/Escape; repeated here as the F-3 pair
+  // so both ends of the widening are guarded in ONE place).
+  check('AC-12/F-3: a single VK_PACKET CR outside any paste is a Return',
+    new Feeder().feed(marker(13)), [wkey('return', {}, marker(13))])
+}
+{
+  // F-10 ①: the marker itself spelled with VK_PACKET records (the review's C1,
+  // `KNOWN-ISSUES.md` A-4's untested combination).
+  const marker = (char: number): string => `${CSI}231;0;${char};1;0;1_`
+  const open = [27, 91, 50, 48, 48, 126].map(marker).join('')
+  const close = [27, 91, 50, 48, 49, 126].map(marker).join('')
+  const keys = new Feeder().feed(open + marker(97) + marker(13) + marker(98) + close)
+  checkPaste('VK_PACKET-spelled markers + VK_PACKET body: ONE paste event (F-10 ①)',
+    keys, 'a\nb')
+  checkBoolean('AC-12: a marked VK_PACKET paste emits no Return key at all',
+    keys.every(key => key.kind !== 'key' || key.name !== 'return'), true)
+}
+{
+  // F-10 ②: the body spelled as down+up PAIRS (conhost's real
+  // Clipboard::TextToKeyEvents form, the review's C2/C3/C4). The assembler must
+  // not append a character twice because a release half also carries `Uc`.
+  const marker = (char: number): string => `${CSI}231;0;${char};1;0;1_`
+  const open = [27, 91, 50, 48, 48, 126].map(marker).join('')
+  const close = [27, 91, 50, 48, 49, 126].map(marker).join('')
+  checkPaste('VK_PACKET markers + down+up PAIRED body: no character is duplicated (F-10 ②)',
+    new Feeder().feed(open + pasteRecs(231, 97) + pasteRecs(231, 98) + close), 'ab')
+  checkPaste('Vk=0 markers + down+up PAIRED body with a CR pair: no character is duplicated (F-10 ②)',
+    new Feeder().feed(P2_OPEN + pasteRecs(0, 97) + pasteRecs(0, 13) + pasteRecs(0, 98) + P2_CLOSE), 'a\nb')
 }
 
 if (failures > 0) {

@@ -45,10 +45,21 @@ const { DATA_DIR } = await import('../src/utils/paths.js')
 const { mountAdmitted, testManifest, COMMAND_COORDINATE, STORAGE_COORDINATE, DECISION_COORDINATE } = await import('../scripts/lib/plugin-test-utils.js')
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const specDir = join(root, 'dsh-ecosystem-spec')
+const specDir = join(root, 'tui-profile')
+
+/**
+ * 复制 vendored spec 做「篡改必败」夹具。**必须 `dereference: true`**：在
+ * junction / symlink 形态的 checkout 下（例如用 junction 接子模块的 git
+ * worktree），`cpSync` 默认只把链接本身复制过去，于是那份"拷贝"仍指向真目录，
+ * 夹具的 `writeFileSync` 会写坏工作区里的真 spec——实测复现过：同一份链接，
+ * `dereference: false` 时源文件被改写成 TAMPERED，`true` 时保持原样。
+ * @param to - 目标目录（临时夹具根下的 spec 副本）。
+ */
+const copySpec = (to: string): void => cpSync(specDir, to, { recursive: true, dereference: true })
+
 const data = loadSpecData(specDir)
 if (!data) {
-  console.error('vendored spec data unreadable (dsh-ecosystem-spec/)')
+  console.error('vendored spec data unreadable (tui-profile/)')
   process.exit(1)
 }
 const index = createContractIndex(data.registry, data.permissions)
@@ -369,6 +380,58 @@ check1('decision permission map is immutable',
   check1('unmarking DecisionEvents topology removes it from the public Host Descriptor',
     afterUnload !== undefined && !afterUnload.contracts.some(contract => contract.kind === 'DecisionEvents'),
     JSON.stringify(afterUnload?.contracts.map(contract => contract.kind)))
+}
+
+// ── B2. an answer that arrives after its authority ended is discarded ────
+// Decision dispatch awaits handlers, so a grant can be revoked (or the
+// activation unloaded) while a handler is still pending. The snapshot taken
+// at loop start cannot authorize that late answer: otherwise a component
+// whose interception grant was just withdrawn could still veto the next user
+// submit with a decision it computed while authorized.
+{
+  mkdirSync(DATA_DIR, { recursive: true })
+  const grantsFile = join(DATA_DIR, EXTENSION_GRANTS_FILE)
+  writeFileSync(grantsFile, JSON.stringify({
+    grants: { 'com.example.late': [scoped('session.input.intercept', 'tui/input', 'act-late')] },
+  }))
+  const lateCtx = new Context()
+  const lateWarnings: string[] = []
+  lateCtx.logger.warn = (format: unknown, ...params: unknown[]) => {
+    lateWarnings.push([format, ...params].map(String).join(' '))
+  }
+  const lateHostFiber = lateCtx.plugin({ name: pluginHostRow.name, apply: pluginHostRow.apply }) as unknown as { await(): Promise<unknown> }
+  await lateHostFiber.await()
+  const lateHost = lateCtx.get('tuiPluginHost')
+  await awaitInitialKernelReadiness(lateHost, 'late decision fixture')
+  markDecisionDispatchTopology(lateCtx)
+  const lateAdmitted = await mountAdmitted(lateCtx, 'cordis-export-name', testManifest({
+    id: 'com.example.late',
+    requires: [DECISION_COORDINATE],
+    permissions: [{ name: 'session.input.intercept', scope: 'tui/input' }],
+  }), 'test:cordis-export-name/dsh-plugin.json', { activationId: 'act-late' })
+  let releasePending = (): void => {}
+  const pendingAnswer = new Promise<void>(resolve => { releasePending = resolve })
+  const lateRelease = lateHost?.subscribeDecision(
+    lateAdmitted.context,
+    'tui/input',
+    async () => { await pendingAnswer; return { cancel: true, reason: '迟到拦截' } },
+  )
+  const { dispatchTuiDecision: dispatchLate } = await import('../src/dsh-adapter/extension-events.js')
+  const passThroughLate = (result: unknown): unknown => result
+  const inFlight = dispatchLate(lateCtx, 'tui/input', { text: '拦截', sessionId: 'sess-late' }, passThroughLate)
+  await sleep(20)
+  // Revoke while the handler is parked on the awaited promise.
+  writeFileSync(grantsFile, JSON.stringify({ grants: { 'com.example.late': [] } }))
+  await sleep(250)
+  releasePending()
+  check1('a decision answered after grant revocation is discarded',
+    (await inFlight) === undefined)
+  check1('the discarded late decision is reported with its component',
+    lateWarnings.some(line => line.includes('answered after its grant or activation was released')
+      && line.includes('com.example.late')))
+  check1('the revoked late handler was actually released', lateRelease?.() === false)
+  await Promise.resolve(lateAdmitted.fiber.dispose())
+  unmarkDecisionDispatchTopology(lateCtx)
 }
 
 // ── C. plugin-host row ────────────────────────────────────────────────────
@@ -825,10 +888,10 @@ check1('decision permission map is immutable',
   // D2. 篡改 contract 文件 → 剔除 + warn（fail closed），descriptor 仍过 schema。
   const tamperedRoot = mkdtempSync(join(tmpdir(), 'dsh-descriptor-tamper-'))
   cleanup.push(tamperedRoot)
-  cpSync(specDir, join(tamperedRoot, 'dsh-ecosystem-spec'), { recursive: true })
-  const target = join(tamperedRoot, 'dsh-ecosystem-spec', 'registry', 'contracts', 'decision-events-v1alpha1.json')
+  copySpec(join(tamperedRoot, 'tui-profile'))
+  const target = join(tamperedRoot, 'tui-profile', 'registry', 'contracts', 'decision-events-v1alpha1.json')
   writeFileSync(target, `${readFileSync(target, 'utf8')}\n`)
-  const tampered = liveHostDescriptor('test-gen-2', join(tamperedRoot, 'dsh-ecosystem-spec'))
+  const tampered = liveHostDescriptor('test-gen-2', join(tamperedRoot, 'tui-profile'))
   check1('tampered private definition dropped',
     tampered.dropped.includes('tui.dsh/v1alpha1#DecisionEvents'), tampered.dropped.join(' | '))
   check1('tamper warning names the profileHash drift', tampered.warnings.some(w => w.includes('profile hash drifted')))
@@ -860,12 +923,12 @@ check1('decision permission map is immutable',
   // 绝不把 TypeError 留到 verify*/boot 自检里炸出来（fail-soft）。
   const malformedRoot = mkdtempSync(join(tmpdir(), 'dsh-spec-malformed-'))
   cleanup.push(malformedRoot)
-  cpSync(specDir, join(malformedRoot, 'dsh-ecosystem-spec'), { recursive: true })
-  writeFileSync(join(malformedRoot, 'dsh-ecosystem-spec', 'registry', 'registry-0.15.json'),
+  copySpec(join(malformedRoot, 'tui-profile'))
+  writeFileSync(join(malformedRoot, 'tui-profile', 'registry', 'registry-0.15.json'),
     JSON.stringify({ profileVersion: 'tui-admission/0.15', std: {}, imports: null, definitions: [], facetApiVersions: [] }))
   check1('structurally malformed registry loads as unavailable',
-    loadSpecData(join(malformedRoot, 'dsh-ecosystem-spec')) === undefined)
-  const malformedBuild = liveHostDescriptor('test-gen-4', join(malformedRoot, 'dsh-ecosystem-spec'))
+    loadSpecData(join(malformedRoot, 'tui-profile')) === undefined)
+  const malformedBuild = liveHostDescriptor('test-gen-4', join(malformedRoot, 'tui-profile'))
   check1('malformed data degrades the descriptor to an empty surface (no throw)',
     malformedBuild.descriptor.contracts.length === 0 && malformedBuild.warnings.length > 0)
   // verify* 对手工构造的坏数据也只回违规字符串。
@@ -890,11 +953,11 @@ check1('decision permission map is immutable',
   // 权限注册表 malformed（permissions 不是数组）同样整体不可用。
   const malformedPermsRoot = mkdtempSync(join(tmpdir(), 'dsh-spec-malformed-perms-'))
   cleanup.push(malformedPermsRoot)
-  cpSync(specDir, join(malformedPermsRoot, 'dsh-ecosystem-spec'), { recursive: true })
-  writeFileSync(join(malformedPermsRoot, 'dsh-ecosystem-spec', 'registry', 'permissions-0.1.json'),
+  copySpec(join(malformedPermsRoot, 'tui-profile'))
+  writeFileSync(join(malformedPermsRoot, 'tui-profile', 'registry', 'permissions-0.1.json'),
     JSON.stringify({ registryVersion: '0.1', permissions: 'nope' }))
   check1('structurally malformed permissions load as unavailable',
-    loadSpecData(join(malformedPermsRoot, 'dsh-ecosystem-spec')) === undefined)
+    loadSpecData(join(malformedPermsRoot, 'tui-profile')) === undefined)
 }
 
 // ── E. patch 面与 exports 接线 ────────────────────────────────────────────

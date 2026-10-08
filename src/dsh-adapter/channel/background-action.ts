@@ -10,20 +10,21 @@ import { t } from '../../i18n.js'
 import { reserveMount, type MountReservation } from '../../sessionMounts.js'
 import { mountFailureText } from '../../sessions/resumeFailure.js'
 import { composePreset } from '../presets.js'
+import { createDshSession, dshHandleOf } from '../backend/session.js'
 import { attachSessionToWorkspace } from '../workspace.js'
 import { resetSessionProjection } from './session-reset.js'
-import type { createChannelBinding } from './binding.js'
+import type { DshChannelBinding } from './binding.js'
 import type { ChannelOwner } from './owner.js'
 import type { BackgroundResult, ChannelState } from './types.js'
 
-type Binding = ReturnType<typeof createChannelBinding>
+type Binding = DshChannelBinding
 
 /** `/bg` foreground handoff. The binding remains the sole identity writer;
  * this action only parks the exact previous handle passed by its transaction. */
 export function createBackgroundCurrentAction(
   ctx: Context,
   state: Pick<ChannelState,
-    'cwd' | 'status' | 'agentId' | 'loadedContext' | 'contextWindow' |
+    'cwd' | 'status' | 'agentId' | 'sessionId' | 'loadedContext' | 'contextWindow' |
     'effortLevels' | 'reasoningEffort' | 'emit' | 'notify'> & Parameters<typeof resetSessionProjection>[0],
   options: { configuredPreset?: string; configuredProvider?: string; configuredModel?: string; provider: string; model: string },
   deps: {
@@ -33,6 +34,7 @@ export function createBackgroundCurrentAction(
     rowIds: { value: number }
     resetProjector(): void
     resetSubagents(): void
+    parkSubagents(agent: AgentHandle['agent']): void
     resetJobs(): void
     refreshEffortLevels(): void
     bindAgent(): void
@@ -67,13 +69,14 @@ export function createBackgroundCurrentAction(
         resolveModelRoute({ provider: options.configuredProvider, model: options.configuredModel }, readModelPref(), { provider: options.provider, model: options.model }),
         { provider: options.provider, model: options.model },
       )
-      const handle = await deps.binding.prepare(adoption, () => agents.create({
+      const candidate = await deps.binding.prepare(adoption, async () => createDshSession(ctx, await agents.create({
         sessionId,
         meta: { cwd: state.cwd, ...(composed.agentPreset === undefined ? {} : { agentPreset: composed.agentPreset }) },
         agentOptions: route.route,
         ...(composed.setup === undefined ? {} : { setup: composed.setup }),
-      }))
-      if (!deps.binding.isCurrent(adoption)) { await deps.binding.abandon(handle); reservation.abandon(); return { ok: false, reason: 'failed', error: 'Channel lifetime ended' } }
+      })))
+      const handle = dshHandleOf(candidate)
+      if (!deps.binding.isCurrent(adoption)) { await deps.binding.abandon(candidate); reservation.abandon(); return { ok: false, reason: 'failed', error: 'Channel lifetime ended' } }
       try {
         await attachSessionToWorkspace(ctx, state.cwd, sessionId)
       } catch (error) {
@@ -85,14 +88,15 @@ export function createBackgroundCurrentAction(
       // still current. A replacement is not a license to target that newer
       // agent; the prepared candidate is abandoned instead.
       if (!deps.binding.isCurrent(adoption)) {
-        await deps.binding.abandon(handle)
+        await deps.binding.abandon(candidate)
         reservation.abandon()
         return { ok: false, reason: 'failed', error: 'Channel lifetime ended' }
       }
       let committed = false
       try {
-        const result = deps.binding.adopt<BackgroundResult>(handle, adoption, (previous, disposePrevious) => {
+        const result = deps.binding.adopt<BackgroundResult>(candidate, adoption, (previous, disposePrevious) => {
           const previousSessionId = String(previous.agent.session.id)
+          deps.parkSubagents(previous.agent)
           if (previous.handle !== undefined) {
             deps.backgroundHandles.set(previousSessionId, previous.handle)
             disposePrevious('park')
@@ -100,6 +104,7 @@ export function createBackgroundCurrentAction(
           resetSessionProjection(state, deps.rowIds, deps.resetProjector, deps.resetSubagents, deps.resetJobs)
           state.status = handle.agent.status
           state.agentId = handle.agent.id
+          state.sessionId = handle.agent.session.id
           state.loadedContext = undefined
           state.contextWindow = undefined
           state.effortLevels = undefined

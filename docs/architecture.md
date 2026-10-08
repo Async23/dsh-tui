@@ -8,8 +8,8 @@
 Cordis profile
   -> src/index.ts（插件契约与 Schema）
   -> src/dsh-adapter/plugin.ts（服务、Agent、React 生命周期）
-  -> DSH Agent / session / tool services
-  -> src/dsh-adapter/channel.ts（session/event -> Channel）
+  -> AgentSession（DSH Agent、Claude Agent SDK 或 Codex app-server 后端）
+  -> src/dsh-adapter/channel.ts（核心 + DSH 扩展；AgentEvent -> 共享投影器 -> Channel）
   -> src/screens/Chat.tsx（键盘与模式编排）
   -> src/components/*（视图）
   -> src/ui.ts（主题化 renderer facade）
@@ -23,11 +23,17 @@ Cordis profile
 | --- | --- |
 | `src/index.ts` | Cordis 插件名称、注入声明、配置接口与 Schema；保持入口轻量并延迟加载 runtime |
 | `src/dsh-adapter/plugin.ts` | TTY 检查、服务装配、Agent 创建/恢复、React 挂载、统一退出清理 |
+| `src/dsh-adapter/oauth/`、`src/oauth.ts` | pi-ai 订阅 OAuth 路由、`/auth` 命令、凭据存储与问卷桥接；DeepSeek 账号登录委派给宿主服务，公共子入口只转发内部实现 |
 | `src/dsh-adapter/questions-answerer.ts` / `preset-resolution.ts` | user-questions 与 agent-preset 的预发布兼容分派；调用方不感知上游版本分支 |
-| `src/dsh-adapter/channel.ts` | Channel 组合根：options/services、owner/binding、specialist 接线、一次安装、最后启动/释放与兼容导出 |
+| `src/dsh-adapter/channel.ts` | Channel 入口：建核心、按 `native.dsh` 挂 DSH 扩展、启动；构造失败经同一 owner 全量回滚；兼容导出（含接收裸 DSH `Agent`） |
+| `src/dsh-adapter/channel/core/` | 后端中立核心：任何 `AgentSession` 都走它（见下表） |
+| `src/dsh-adapter/channel/extensions.ts` | DSH 扩展：只接线、不改 DSH specialist 内部 |
+| `src/agent/`、`src/channel/` | 后端中立的会话领域（`AgentEvent`、`AgentSession`、能力）与共享投影器、中立 store |
+| `src/dsh-adapter/backend/`、`src/backends/claude/`、`src/backends/codex/` | DSH、Claude 与 Codex 的翻译器/会话/能力；Codex 驱动用户的 app-server，不捆绑 SDK；见[多后端架构](agent-backend-design.md) |
 | `src/workspaces.ts` | 本地路径 fallback 与通用工作区 provider registry；不得包含任何 provider 的协议、文案或依赖 |
 | `src/screens/Chat.tsx` | modal 优先级、全局按键、滚动/搜索/选择状态、slash command 分发 |
 | `src/components/` | 用户界面和 design-system；不直接拥有 Agent 或 session 真相 |
+| `src/components/sidePanel/`（`SidePanelLayout`、`PanelHost`） | 聊天/侧栏分栏：几何（`dimensions`）、中缝、`PanelBar` 标签栏与面板宿主、`useSidePanel` 控制器；由 Chat 主 return 内部挂载，只排布盒子并重提供 TerminalSize / SurfaceEdges 上下文——不碰消息渲染，也不复制 channel 状态 |
 | `src/ui.ts` | 主题化 `Box`/`Text`、render、选择、滚动等公共 facade |
 | `src/theme.ts`、`src/themeCatalog.ts` | 内置、静态 JSON 与运行时插件主题的解析和统一列表 |
 | `src/dsh-adapter/themes.ts` | `ctx.tuiThemes` 主题插件接缝；注册生命周期与 host 私有 facade |
@@ -35,18 +41,31 @@ Cordis profile
 | `src/native-ts/yoga-layout/` | 纯 JS/TS 布局实现 |
 | `cordis.patch.yml` | profile bundle 层；决定服务行、覆盖关系与挂载顺序 |
 
-`channel.ts` 的职责分布在下列子模块：
+标准 profile 仍用 `dsh-tui-auth` Cordis 行在 TUI 前挂载内部 `./oauth` 入口，
+用行级 `inject: [llm, commands]` 保证注册顺序；TUI 经 `ctx.dshAuth` 消费状态和
+动作，不自行实现模型或 OAuth 协议。pi-ai 订阅凭据位置沿用旧版，授权流程由
+宿主的 pi-ai 提供；DeepSeek 账号则经 `ctx.deepseekAccount` 使用宿主的 PKCE、
+凭据和模型路由，TUI-only profile 的 `dsh-tui-webserver` 行提供浏览器回调。
+裸 `cordis.yml` 未插入这些行，拓扑与标准 profile 不同。
 
-- `channel/action-readiness.ts`：typed action forwarding/readiness。
-- `channel/lifetime-resources.ts`：detached handles。
-- `channel/context-bookkeeping.ts`：context warning/pending
-  （包含压缩复位共用的 warning cell）。
-- `channel/state.ts`：中性初始字段。
-- `channel/command-completions.ts`：补全。
-- `channel/local-actions.ts`：本地 transcript/shell/子代理报告动作。
-- `channel/activity.ts`：工作状态时钟。
-- `channel/binding-events.ts`：绑定事件路由。
-- `channel/projection.ts`：唯一 projector 仍在。
+Channel 是一个后端中立核心加 DSH 扩展（见[多后端架构](agent-backend-design.md)）：
+
+| 文件 | 职责 |
+| --- | --- |
+| `channel/core/compose.ts` | `createCoreChannel`：binding、emitter、通知、上下文记账、IDE 选区、composer 与输入管线、共享状态字面量、`extend`/`start` |
+| `channel/core/host.ts` | 宿主接缝查找、决策闸门与拓扑标记、settings/scenes 订阅、git 分支面包屑 |
+| `channel/core/binding-feed.ts` | 共享投影器、会话批次路由（唯一 transcript 写入者）、`bind()`、历史回放 |
+| `channel/core/session-controls.ts` | 后端能力上报的会话事实：原生模式、effort、后端命令、`/mcp` 与 `/context` 报告、订阅用量 |
+| `channel/core/session-switch.ts` | `tui/session-switch` 否决、`tui/session-switched` 通知、通用 `/new`（注入 opener；慢握手后复查，不打断进行中的回合） |
+| `channel/core/local-actions.ts` | `/clear`、本地行、`!cmd`/`!!cmd`（工作区 shell）、`/activity frames`、"加载更早"分发 |
+| `channel/core/sessions.ts` | 非 DSH 会话的会话浏览器目录、`/resume`、`/fork` 与双击 Esc 回退（基于后端的会话目录与 `fork`/`rewind` 能力） |
+| `channel/core/local-images.ts` | 没有 DSH 附件服务的后端的图片暂存（只在内存里，按后端声明的限制） |
+| `channel/core/actions.ts` | 一次安装：不可用 → 能力委托（每次调用重新解析）→ 核心 → 扩展 |
+| `channel/core/files.ts`、`core/reports.ts` | 文件查询与补全；`/doctor`、`/export`（来自投影行） |
+| `channel/extensions.ts` | DSH 扩展：同步种子回放、子代理/任务、resume/agent view/rewind/fork、模型/preset/模式、recap、DSH 报告 |
+| `channel/binding-events.ts` | DSH 的 bind 钩子：子会话监听、模型选择 waterfall、原始事件订阅者 |
+| `channel/action-readiness.ts`、`lifetime-resources.ts`、`context-bookkeeping.ts`、`state.ts`、`command-completions.ts`、`local-actions.ts` | typed 动作转发/就绪、detached handles、上下文告警/pending、中性初始字段、补全、DSH 的子代理报告与日志折叠恢复 |
+| `channel/projection.ts` | 兼容外壳：DSH 翻译器（`backend/translate.ts`）加共享投影器 `src/channel/projection.ts`，保留旧的 `renderEvent`/`replayEvents` 接口 |
 
 未安装或已释放的动作明确失败，不伪装为成功 no-op。
 
@@ -64,8 +83,11 @@ service、registry 或 channel seam 接入。
 
 ## Session 是真源
 
-`dsh-adapter/channel.ts` 不把 React 本地数组当作对话真相。
-DSH `session/event` 日志负责：
+Channel 不把 React 本地数组当作对话真相。Claude 会话以 CLI 自己的转录为准（经 SDK
+读取）；Codex 以官方 `$CODEX_HOME` 的 thread/turn 存储为准，经 app-server 分页读取
+完整 item，live 与回放共用映射。TUI 只存偏好与渠道元数据，不另写转录或官方配置。
+Codex 的独立 `usage` 事件只记账，`context.usage` 保留官方 12k 基线占用语义，不生成
+空助手行；历史没有的计费用量不编造。下面以 DSH 为例。DSH `session/event` 日志负责：
 
 - 初始历史回放与增量流式事件；
 - assistant/reasoning/tool 行的关联与 sequence anchor；
@@ -129,10 +151,11 @@ stdout 打印诊断；使用 stderr 的 `DSH_TUI_DEBUG` 或 `DSH_TUI_RENDER_LOG`
 - **上下文进度条**：基于 pi-nano-context 算法（最大余数分段着色 + 多级紧凑读数）。
 - **TPS 仪表**：基于 pi-tps-meter——流式 1/8 块仪表、历史 min-max 火花线、
   按速度语义着色（≥50 绿 / ≥20 黄 / <20 红）。
-- **working-activity**：工作状态行复用
+- **working-activity**：工作状态行由
   [dsh-working-activity](https://github.com/ccch1mneyyy/working-activity)
-  的纯状态机。
-- 进程内从基础会话事件推导，不把 UI 状态写进共享日志。
+  插件折叠并发布为 `workingActivity` 会话投影，本应用只读取该投影
+  （`src/dsh-adapter/activity-store.ts`），不在进程内另行推导，
+  也不把 UI 状态写进共享日志。
 
 ## Inline 与 fullscreen
 
@@ -156,6 +179,9 @@ stdout 打印诊断；使用 stderr 的 `DSH_TUI_DEBUG` 或 `DSH_TUI_RENDER_LOG`
 | `~/.dsh-tui/themes/` | 用户自定义主题 JSON；运行时插件主题不写入此目录 |
 | `~/.dsh-tui/working-activity.json` | 工作状态动画选择 |
 | `~/.dsh-tui/agent-preset.json` | 新会话默认 Agent preset |
+| `~/.dsh-tui/kernel.json` | `/kernel` 记住的后端（`dsh` / `claude` / `codex`） |
+| `~/.dsh-tui/backends/claude/` | Claude 后端的偏好（`prefs.json`）、置顶与渠道档案（`channels.json`）；Claude 会话本身在 `~/.claude/projects/` |
+| `~/.dsh-tui/backends/codex/` | Codex 偏好与渠道档案（只含 tokenRef，key 在 DSH 凭据库）；原生 thread、登录与配置仍由 `$CODEX_HOME` / Codex 管理 |
 
 `DSH_TUI_SESSION_ROOT` 在两种组合中都改写 JSONL 根目录。profile 默认使用
 `$DSH_HOME/sessions`（通常为 `~/.dsh/sessions/`）；直接运行根目录的
@@ -192,7 +218,8 @@ DSH 服务决定。
 
 审批走 `ctx.approval` seam：策略为 `ask` 时，TUI 以本地审批面板作为
 answerer（`approval/request` waterfall），仅允许一次/拒绝两种决定——
-协议没有"总是允许"与反馈通道。
+协议没有"总是允许"与反馈通道。Claude 后端的审批由 CLI 的 `canUseTool` 回调提供，多出"始终允许"与拒绝理由，
+见[多后端架构](agent-backend-design.md)。
 
 `/permission` 预设切换来自 dsh-base 的 `permission-presets` 服务行：
 
@@ -230,6 +257,8 @@ answerer（`approval/request` waterfall），仅允许一次/拒绝两种决定�
 
 ## 已知限制
 
+- 实验性 Claude 后端的限制单独列在[多后端架构](agent-backend-design.md#已知限制)；
+  Codex 的操作、非目标与真实验证边界见[Codex 用户说明](codex-backend.md)。
 - 注入到 system prompt 的插件上下文不会在 UI 中单独列出，而是计入 system/context
   分段。
 - `/model` 通过 session fork 切换，不是原位修改；旧会话会留在 `/resume`。
@@ -270,5 +299,7 @@ answerer（`approval/request` waterfall），仅允许一次/拒绝两种决定�
 | stderr 调试 | `DSH_TUI_DEBUG=1 dsh --profile dsh-tui` |
 | 原始 ANSI 帧 | `DSH_TUI_RENDER_LOG=/path/to/render.log dsh --profile dsh-tui` |
 | 主题回归 | `node --import tsx/esm scripts/verify-themes.mjs` |
+| 三后端对照 | DSH：`verify:projection-golden` / `verify-dsh-translate`；Claude：`verify:claude-contract` / 对应假 SDK 脚本；Codex：`verify:codex-contract` / 对应假 app-server 脚本；共享领域与事件不变量另外验证 |
+| Codex 真实验证 | 0.160.1 隔离 home 九项离线无模型回合检查通过；带凭据验证只按 `codex-cheap-only.mjs` 守卫执行。真实登录/模型调用与 inline/fullscreen、窄终端体验本轮未跑，不能以离线/mock 通过代替 |
 
 `DSH_TUI_RENDER_LOG` 和会话导出可能包含敏感内容，分享前必须脱敏。

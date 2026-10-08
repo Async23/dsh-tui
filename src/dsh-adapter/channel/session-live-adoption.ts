@@ -1,18 +1,20 @@
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import type { AgentSession } from '../../agent/session.js'
 import { recordedModelRoute } from '../../modelRoute.js'
 import { touchAgentViewSession, touchSession, writeResumeTarget } from '../../sessionHistory.js'
 import { agentViewHasTurns } from '../agent-view.js'
 import { snapshotLiveSessionEvents } from '../compat/liveSession.js'
 import { runningPresetOf } from '../presets.js'
 import { resetSessionProjection } from './session-reset.js'
-import type { createChannelBinding } from './binding.js'
+import type { DshChannelBinding } from './binding.js'
 import type { ChannelState, ResumeResult } from './types.js'
 
-type Binding = ReturnType<typeof createChannelBinding>
+type Binding = DshChannelBinding
 type LiveAdoptionState = Pick<
   ChannelState,
   | 'status'
   | 'agentId'
+  | 'sessionId'
   | 'cwd'
   | 'displayCwd'
   | 'agentPreset'
@@ -25,7 +27,7 @@ type LiveAdoptionState = Pick<
   | 'tps'
   | 'tpsSamples'
   | 'lastUsage'
-  | 'workingActivity'
+  | 'turnUsage'
   | 'working'
   | 'emit'
 > & Parameters<typeof resetSessionProjection>[0]
@@ -35,10 +37,15 @@ export function createLiveAgentAdoption(
   state: LiveAdoptionState,
   deps: {
     binding: Pick<Binding, 'switchTo'>
+    /** Wrap the target (and the parked handle this channel owns for it, if
+     *  any) as the session handed to the binding. */
+    openSession(agent: Agent, handle: AgentHandle | undefined): AgentSession
     backgroundHandles: Map<string, AgentHandle>
     rowIds: { value: number }
     resetProjector(): void
     resetSubagents(): void
+    restoreSubagents(agent: Agent): void
+    parkSubagents(agent: Agent): void
     resetJobs(): void
     replay(events: readonly import('@deepseek-ai/dsh-session').SessionEvent[]): void
     settleReplay(): void
@@ -57,15 +64,23 @@ export function createLiveAgentAdoption(
   },
 ) {
   return async (target: Agent): Promise<ResumeResult> => deps.binding.switchTo(
-    target,
-    deps.backgroundHandles.get(String(target.id)),
+    deps.openSession(target, deps.backgroundHandles.get(String(target.id))),
     (committed, disposePrevious) => {
       const previousHandle = committed.handle
       const previousSessionId = String(committed.agent.session.id)
+      const keepPrevious = previousHandle !== undefined
+        && previousHandle.agent !== target
+        && (previousHandle.agent.status === 'running' || agentViewHasTurns(snapshotLiveSessionEvents(previousHandle.agent.session)))
+      // Registry attachment borrows an Agent without taking its upstream
+      // handle. Leaving that view must retain its projection independently
+      // of whether this channel can transfer or dispose the handle.
+      if (committed.agent !== target && (previousHandle === undefined || keepPrevious)) deps.parkSubagents(committed.agent)
       deps.backgroundHandles.delete(String(target.id))
       resetSessionProjection(state, deps.rowIds, deps.resetProjector, deps.resetSubagents, deps.resetJobs)
+      deps.restoreSubagents(target)
       state.status = target.status
       state.agentId = target.id
+      state.sessionId = target.session.id
       state.cwd = target.session.header.cwd ?? state.cwd
       state.displayCwd = deps.describeWorkspace(state.cwd).description ?? state.cwd
       deps.resetIdeSelection()
@@ -95,9 +110,6 @@ export function createLiveAgentAdoption(
       writeResumeTarget(String(target.id))
       touchSession(target.id)
       state.emit()
-      const keepPrevious = previousHandle !== undefined
-        && previousHandle.agent !== target
-        && (previousHandle.agent.status === 'running' || agentViewHasTurns(snapshotLiveSessionEvents(previousHandle.agent.session)))
       if (previousHandle !== undefined && previousHandle.agent !== target) {
         if (keepPrevious) {
           deps.backgroundHandles.set(previousSessionId, previousHandle)

@@ -1,4 +1,5 @@
 import { completeCommands, isCommandCompletionToken, type CommandCompletionNode } from '../../commands.js'
+import { getSidePanelPanels, parseSidePanelIds } from '../../tuiDisplayPrefs.js'
 import { SESSION_COLOR_NAMES } from '../../terminal-utils/sessionColors.js'
 import { getLang, LANGS } from '../../i18n.js'
 import { AUTO_THEME_NAME } from '../../theme.js'
@@ -12,6 +13,9 @@ export function createCommandCompletions(deps: {
   themeHost: Parameters<typeof listThemeCatalog>[0]
   commandTrees?: { children(path: readonly string[]): readonly CommandCompletionNode[] }
   workspaceCommands(): readonly { name: string; aliases?: readonly string[]; description?: string }[]
+  /** The bound backend's MCP server names when it controls them
+   *  (`/mcp reconnect|toggle`); undefined = `/mcp` takes no arguments. */
+  mcpServers?(): readonly string[] | undefined
   model: {
     warmModelNodes(): void
     modelNodes(): readonly CommandCompletionNode[]
@@ -81,12 +85,43 @@ export function createCommandCompletions(deps: {
       }
       if (path.length === 1 && path[0] === 'permission') {
         const snapshot = state.permissionPresets()
-        return snapshot.options.filter(option => isCommandCompletionToken(option.value)).map(option => ({
-          name: option.value, description: option.description ?? option.name,
-          ...(option.value === 'read-only' ? { descriptionKey: 'permission-preset-readonly-desc' } : option.value === 'workspace-write' ? { descriptionKey: 'permission-preset-workspace-write-desc' } : option.value === 'danger-full-access' ? { descriptionKey: 'permission-preset-full-access-desc' } : {}),
-          ...(snapshot.current?.kind === 'preset' && snapshot.current.value === option.value ? { tag: 'current' } : {}),
+        if (snapshot.options.length > 0) {
+          return snapshot.options.filter(option => isCommandCompletionToken(option.value)).map(option => ({
+            name: option.value, description: option.description ?? option.name,
+            ...(option.value === 'read-only' ? { descriptionKey: 'permission-preset-readonly-desc' } : option.value === 'workspace-write' ? { descriptionKey: 'permission-preset-workspace-write-desc' } : option.value === 'danger-full-access' ? { descriptionKey: 'permission-preset-full-access-desc' } : {}),
+            ...(snapshot.current?.kind === 'preset' && snapshot.current.value === option.value ? { tag: 'current' } : {}),
+          }))
+        }
+        // No preset roster (a non-DSH backend): the typed `modes` capability
+        // is the roster. DSH sessions declare no such capability, so this
+        // arm answers an empty list there and the roster above stands.
+        const modes = state.backendModes()?.snapshot()
+        if (modes === undefined) return []
+        const currentId = modes.modes[modes.currentIndex]?.id
+        return modes.modes.filter(mode => isCommandCompletionToken(mode.id)).map(mode => ({
+          name: mode.id, description: mode.name,
+          ...(mode.id === currentId ? { tag: 'current' } : {}),
         }))
       }
+      if (path[0] === 'mcp' && state.backendMcp() !== undefined) {
+        const servers = (deps.mcpServers?.() ?? []).filter(isCommandCompletionToken)
+        if (path.length === 1) return [
+          { name: 'reconnect', description: 'Reconnect an MCP server', descriptionKey: 'sugg-mcp-reconnect-desc' },
+          { name: 'toggle', description: 'Turn an MCP server on or off', descriptionKey: 'sugg-mcp-toggle-desc' },
+        ]
+        if (path.length === 2 && (path[1] === 'reconnect' || path[1] === 'toggle')) return servers.map(name => ({ name, description: 'MCP server', descriptionKey: 'sugg-mcp-server-desc' }))
+        if (path.length === 3 && path[1] === 'toggle' && servers.includes(path[2]!)) return [
+          { name: 'on', description: 'Enable the server', descriptionKey: 'sugg-mcp-on-desc' },
+          { name: 'off', description: 'Disable the server', descriptionKey: 'sugg-mcp-off-desc' },
+        ]
+        return []
+      }
+      if (path.length === 1 && path[0] === 'panel') return [
+        { name: 'toggle', description: 'Toggle the sidebar', descriptionKey: 'sugg-panel-toggle-desc' },
+        { name: 'focus', description: 'Focus the side panel', descriptionKey: 'sugg-panel-focus-desc' },
+        { name: 'zoom', description: 'Zoom the active panel', descriptionKey: 'sugg-panel-zoom-desc' },
+        ...parseSidePanelIds(getSidePanelPanels()).map(id => ({ name: id, description: `Open the ${id} panel`, descriptionKey: 'sugg-panel-id-desc' as const })),
+      ]
       if (path.length === 1 && path[0] === 'plan') return [
         { name: 'on', description: 'Enter plan mode: read-only, plan before acting', descriptionKey: 'plan-mode-on-desc' },
         { name: 'off', description: 'Exit plan mode, back to normal execution', descriptionKey: 'plan-mode-off-desc' },

@@ -17,6 +17,12 @@ process.env.TERM_PROGRAM = 'kitty'
 const { default: chalk } = await import('chalk')
 const { applyMarkdown } = await import('../src/terminal-utils/markdown.js')
 const { createHyperlink } = await import('../src/terminal-utils/hyperlink.js')
+const React = await import('react')
+const { Markdown } = await import('../src/components/Markdown.js')
+const { StreamingMarkdown } = await import('../src/components/StreamingMarkdown.js')
+const { renderToScreen } = await import('../src/ink/render-to-screen.js')
+const { cellAtIndex } = await import('../src/ink/screen.js')
+const { setActiveThemeName } = await import('../src/theme.js')
 
 let failures = 0
 let checks = 0
@@ -30,6 +36,50 @@ const prevLevel = chalk.level
 chalk.level = 3 // truecolor（38;2;r;g;b）；level 2 会把 rgb 降级成 256 色
 
 try {
+  // Ordinary slash-delimited prose must not acquire an OSC 8 file target.
+  // Exercise the real Markdown text path, not just looksLikeFilePath.
+  for (const text of ['working/idle/needs-input state,', '2024/01/15', '工作/空闲/等待输入']) {
+    const prose = applyMarkdown(text)
+    check(`正文不产生文件链接：${text}`, !prose.includes('dsh-file:'), JSON.stringify(prose))
+  }
+  const mixed = applyMarkdown('working/idle/needs-input state, see src/utils/fileTarget.ts')
+  check(
+    '正文误匹配被拒绝后仍识别后续真实路径',
+    !mixed.includes('dsh-file:%2Fidle') && mixed.includes('dsh-file:src%2Futils%2FfileTarget.ts'),
+    JSON.stringify(mixed),
+  )
+  const explicit = applyMarkdown('[working/idle/needs-input](file:///tmp/state)')
+  check(
+    '显式 Markdown 文件链接保留原目标且不嵌套自动链接',
+    explicit.includes('file:///tmp/state') && !explicit.includes('dsh-file:'),
+    JSON.stringify(explicit),
+  )
+
+  const source = 'working/idle/needs-input state,\n\nsrc/utils/fileTarget.ts'
+  for (const [name, Component] of [['Markdown', Markdown], ['StreamingMarkdown', StreamingMarkdown]] as const) {
+    for (const width of [24, 80]) {
+      const { screen, height } = renderToScreen(React.createElement(Component, { children: source }), width)
+      const cells = Array.from({ length: width * height }, (_, index) => cellAtIndex(screen, index))
+      const linked = cells.filter(cell => cell.hyperlink !== undefined)
+      check(
+        `${name} ${width} 列屏幕保留完整正文`,
+        cells.map(cell => cell.char).join('').replace(/\s/gu, '') === source.replace(/\s/gu, ''),
+      )
+      check(
+        `${name} ${width} 列屏幕仅真实路径可点击`,
+        linked.length > 0 &&
+          linked.every(cell => cell.hyperlink === 'dsh-file:src%2Futils%2FfileTarget.ts') &&
+          linked.map(cell => cell.char).join('') === 'src/utils/fileTarget.ts',
+      )
+      if (Component === Markdown && width === 80) {
+        const rows = Array.from({ length: height }, (_, row) =>
+          cells.slice(row * width, (row + 1) * width).map(cell => cell.char).join('').trimEnd(),
+        )
+        console.log(`Rendered screen (${width} columns):\n${rows.join('\n')}`)
+      }
+    }
+  }
+
   // ── renderCodeSpan 端到端：路径内联代码 ─────────────────────────────
   const out = applyMarkdown('看 `src/dsh-adapter/plugin.ts` 这个文件')
   const bareSgr = (out.match(/\[38;2;/g) ?? []).length
@@ -81,6 +131,54 @@ try {
       '\u001b]8;;dsh-file:///x\u0007\u001b[38;2;63;108;196msrc/dsh-adapter/plugin.ts\u001b[39m\u001b]8;;\u0007',
     ),
     JSON.stringify(withStyle),
+  )
+
+  // ── 默认链接色跟随主题 accent（不再是固定 ANSI 蓝）──────────────────
+  setActiveThemeName('light')
+  const themedLink = createHyperlink('https://example.com/x', 'example', {
+    supportsHyperlinks: true,
+  })
+  check(
+    '默认链接色取主题 accent（light = #3F6CC4）',
+    themedLink.includes('\u001b[38;2;63;108;196mexample\u001b[39m'),
+    JSON.stringify(themedLink),
+  )
+  check(
+    '默认链接仍带成对 OSC 8 包裹、不再固定 34m 蓝',
+    themedLink.startsWith('\u001b]8;;https://example.com/x\u0007') &&
+      themedLink.endsWith('\u001b]8;;\u0007') &&
+      !themedLink.includes('\u001b[34m'),
+    JSON.stringify(themedLink),
+  )
+  setActiveThemeName('dark-ansi')
+  const ansiLink = createHyperlink('https://example.com/x', 'example', {
+    supportsHyperlinks: true,
+  })
+  check(
+    'ANSI 主题的链接色退回 16 色（accent = ansi:blueBright）',
+    ansiLink.includes('\u001b[94mexample\u001b[39m'),
+    JSON.stringify(ansiLink),
+  )
+
+  // ── 折行不丢色 ──────────────────────────────────────────────────────
+  // 代码注释与 docs/themes.md 曾把「真彩链接折行处丢色」写成已知取舍；实测
+  // wrap-ansi 10 在续行重发 SGR 并补齐 OSC 8，取舍不成立。这里钉住
+  // 渲染器真正使用的折行入口（wrap 样式 = trim:false + hard:true）。
+  setActiveThemeName('dark')
+  const { wrapAnsi } = await import('../src/ink/wrapAnsi.js')
+  const longLink = createHyperlink(
+    'https://example.com/x',
+    'dsh-tui-theme-plugin-link-label',
+    { supportsHyperlinks: true },
+  )
+  const wrappedLink = wrapAnsi(longLink, 14, { trim: false, hard: true }).split('\n')
+  check(
+    '真彩链接折行后每一条续行仍带 accent SGR 与 OSC 8 打开序列',
+    wrappedLink.length > 1 &&
+      wrappedLink.slice(1).every(line =>
+        line.includes('\u001b[38;2;125;161;222m') &&
+        line.includes('\u001b]8;;https://example.com/x\u0007')),
+    JSON.stringify(wrappedLink),
   )
 } finally {
   chalk.level = prevLevel

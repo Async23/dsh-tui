@@ -14,6 +14,13 @@ export interface LocalCommand {
   descriptions?: LocalizedDescriptions
   /** Optional bracket tag shown between name and description. */
   tag?: string
+  /**
+   * Optional i18n key overriding `cmd-desc-<name>` for this entry's
+   * description. Used to re-describe an entry whose capability is missing (see
+   * `dsh-adapter/channel/capabilities.ts`); resolved at render time through
+   * `localizedDescription`, so a `/lang` switch applies on the next repaint.
+   */
+  descriptionKey?: string
   /** True when a DSH plugin registered this command (not built in). */
   external?: boolean
   /** True when this command explicitly accepts composer images. Local
@@ -27,6 +34,13 @@ export interface LocalCommand {
    * `/skill-name` takes. The help menu hides them (chrome commands only).
    */
   skill?: boolean
+  /**
+   * `backend`: a command of the bound backend itself (Claude's own slash
+   * commands). Like a skill entry it is completion-only: the typed line goes
+   * to the backend verbatim as prompt text. A local command of the same name
+   * always wins.
+   */
+  origin?: 'backend'
 }
 
 export type LocalizedDescriptions = Readonly<Partial<Record<'zh' | 'en', string>>>

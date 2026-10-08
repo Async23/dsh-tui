@@ -8,8 +8,8 @@
 Cordis profile
   -> src/index.ts (plugin contract and Schema)
   -> src/dsh-adapter/plugin.ts (services, Agent, and React lifecycle)
-  -> DSH Agent / session / tool services
-  -> src/dsh-adapter/channel.ts (session/event -> Channel)
+  -> AgentSession (DSH Agent, Claude Agent SDK or Codex app-server backend)
+  -> src/dsh-adapter/channel.ts (core + DSH extensions; AgentEvent -> shared projector -> Channel)
   -> src/screens/Chat.tsx (keyboard and mode orchestration)
   -> src/components/* (views)
   -> src/ui.ts (themed renderer facade)
@@ -23,11 +23,17 @@ Cordis profile
 | --- | --- |
 | `src/index.ts` | Cordis plugin name, injection declaration, config interface, and Schema; keep the entry small and lazy |
 | `src/dsh-adapter/plugin.ts` | TTY guard, service assembly, Agent create/resume, React mount, and the single cleanup funnel |
+| `src/dsh-adapter/oauth/`, `src/oauth.ts` | pi-ai subscription OAuth routes, `/auth` command, credential store, and question bridge; DeepSeek account sign-in delegates to the Host, and the public subpath only forwards to the internal implementation |
 | `src/dsh-adapter/questions-answerer.ts` / `preset-resolution.ts` | Prerelease dispatch for user questions and agent presets; consumers stay unaware of upstream version branches |
-| `src/dsh-adapter/channel.ts` | Channel composition root: options/services, owner/binding, specialist wiring, one install, final start/release, and compatibility exports |
+| `src/dsh-adapter/channel.ts` | Channel entry: builds the core, attaches the DSH extensions by `native.dsh`, starts; a construction failure rolls back through one owner; compatibility exports (including a raw DSH `Agent`) |
+| `src/dsh-adapter/channel/core/` | The backend-neutral core every `AgentSession` goes through (table below) |
+| `src/dsh-adapter/channel/extensions.ts` | DSH extensions: wiring only, DSH specialist internals unchanged |
+| `src/agent/`, `src/channel/` | The backend-neutral session domain (`AgentEvent`, `AgentSession`, capabilities), the shared projector and neutral stores |
+| `src/dsh-adapter/backend/`, `src/backends/claude/`, `src/backends/codex/` | DSH, Claude and Codex translators/sessions/capabilities; Codex drives the user’s app-server without bundling an SDK; see [Agent backends](agent-backend-design.md) (Chinese) |
 | `src/workspaces.ts` | Local-path fallback and generic workspace-provider registry; it must contain no provider protocol, copy, or dependency |
 | `src/screens/Chat.tsx` | Modal precedence, global keys, scroll/search/selection state, and slash dispatch |
 | `src/components/` | User views and design-system primitives; no Agent or session source of truth |
+| `src/components/sidePanel/` (`SidePanelLayout`, `PanelHost`) | Chat/side-panel split: geometry (`dimensions`), the seam, the `PanelBar` tab strip and panel host, and the `useSidePanel` controller; mounted inside Chat's main return, it only arranges boxes and re-provides the TerminalSize / SurfaceEdges contexts — it never touches message rendering and never copies channel state |
 | `src/ui.ts` | Themed `Box`/`Text`, render, selection, scroll, and other public TUI primitives |
 | `src/theme.ts`, `src/themeCatalog.ts` | Built-in, static JSON, and runtime plugin theme resolution and catalog ordering |
 | `src/dsh-adapter/themes.ts` | The `ctx.tuiThemes` theme seam, registration lifecycle, and private host facade |
@@ -35,18 +41,35 @@ Cordis profile
 | `src/native-ts/yoga-layout/` | Pure JS/TS layout implementation |
 | `cordis.patch.yml` | Profile bundle layer, service rows, overrides, and mount ordering |
 
-The `channel.ts` responsibilities are split across these files:
+The standard profile still mounts the internal `./oauth` entry as the
+`dsh-tui-auth` Cordis row before the TUI, with row-level
+`inject: [llm, commands]` preserving registration order. The TUI consumes
+status and actions through `ctx.dshAuth`; it does not implement model or OAuth
+protocols. pi-ai subscriptions keep their existing credential location and
+use the host's pi-ai flows; the DeepSeek account route delegates PKCE,
+credentials, and model routing to `ctx.deepseekAccount`. The TUI-only
+`dsh-tui-webserver` row supplies its browser callback. Bare `cordis.yml`
+does not insert these rows and has a different topology.
 
-- `channel/action-readiness.ts`: typed action forwarding/readiness.
-- `channel/lifetime-resources.ts`: detached handles.
-- `channel/context-bookkeeping.ts`: context-warning/pending bookkeeping
-  (including the warning cell shared with compaction reset).
-- `channel/state.ts`: neutral initial fields.
-- `channel/command-completions.ts`: completion.
-- `channel/local-actions.ts`: local transcript/shell/subagent-report actions.
-- `channel/activity.ts`: the activity clock.
-- `channel/binding-events.ts`: binding event routing.
-- `channel/projection.ts`: the sole projector remains.
+The channel is one backend-neutral core plus the DSH extensions (see
+[Agent backends](agent-backend-design.md)):
+
+| File | Responsibility |
+| --- | --- |
+| `channel/core/compose.ts` | `createCoreChannel`: binding, emitter, notifications, context bookkeeping, IDE selection, composer and input pipeline, the common state literal, `extend`/`start` |
+| `channel/core/host.ts` | Host-seam lookups, decision gate and topology marker, settings/scene subscriptions, git-branch breadcrumb |
+| `channel/core/binding-feed.ts` | Shared projector, session-batch router (the one transcript writer), `bind()`, history replay |
+| `channel/core/session-controls.ts` | Session facts a backend reports by capability: native mode, effort, backend commands, `/mcp` and `/context` reports, subscription usage |
+| `channel/core/session-switch.ts` | `tui/session-switch` veto, `tui/session-switched` notice, the generic `/new` (injected opener; re-checked after a slow handshake, never tears down a running turn) |
+| `channel/core/local-actions.ts` | `/clear`, local rows, `!cmd`/`!!cmd` (workspace shell), `/activity frames`, "load earlier" dispatch |
+| `channel/core/sessions.ts` | The session browser catalog, `/resume`, `/fork` and double-Esc rewind for non-DSH sessions (backed by the backend's session catalog and its `fork`/`rewind` capabilities) |
+| `channel/core/local-images.ts` | Image staging for a backend without the DSH attachments service (memory only, under the limits the backend declares) |
+| `channel/core/actions.ts` | One install: unavailable → capability delegates (re-resolved per call) → core → extension |
+| `channel/core/files.ts`, `core/reports.ts` | File queries and completion; `/doctor`, `/export` (from the projected rows) |
+| `channel/extensions.ts` | DSH extensions: synchronous seed replay, subagents/jobs, resume/agent view/rewind/fork, model/preset/mode, recap, DSH reports |
+| `channel/binding-events.ts` | The DSH bind hooks: child-session listeners, model-selection waterfalls, raw event subscribers |
+| `channel/action-readiness.ts`, `lifetime-resources.ts`, `context-bookkeeping.ts`, `state.ts`, `command-completions.ts`, `local-actions.ts` | Typed action forwarding/readiness, detached handles, context warning/pending, neutral initial fields, completion, the DSH subagent report and log fold restore |
+| `channel/projection.ts` | Compatibility shell: the DSH translator (`backend/translate.ts`) plus the shared projector `src/channel/projection.ts`, keeping the old `renderEvent`/`replayEvents` surface |
 
 An uninstalled or released action fails explicitly; it never pretends
 success with a no-op.
@@ -68,8 +91,13 @@ missing configuration, placeholders, or fallback branches.
 
 ## The session log is the source of truth
 
-`channel.ts` does not treat a React-local array as conversation truth. DSH
-`session/event` records own:
+The channel does not treat a React-local array as conversation truth. Claude
+follows its CLI transcript through the SDK; Codex follows official `$CODEX_HOME`
+thread/turn storage through paginated app-server full items, sharing live/replay
+mapping. The TUI stores preferences/channel metadata, not a second transcript or
+official config. Codex’s `usage` event is accounting-only; `context.usage` keeps
+the official 12k baseline semantics without creating empty assistant rows or
+inventing historical billed usage. DSH is the example below. DSH `session/event` records own:
 
 - initial replay and incremental streaming events;
 - assistant/reasoning/tool association and sequence anchors;
@@ -119,10 +147,12 @@ Do not print diagnostics to an active TUI's stdout; use stderr
 - **TPS meter**: based on pi-tps-meter — a streaming 1/8-block gauge,
   historical min-max sparkline, and speed-based semantic colors (≥50 green /
   ≥20 yellow / <20 red).
-- **working-activity**: the working-status line reuses the pure state machine
-  of [dsh-working-activity](https://github.com/ccch1mneyyy/working-activity).
-- It derives in-process from base session events without writing UI state
-  into the shared log.
+- **working-activity**: the plugin
+  [dsh-working-activity](https://github.com/ccch1mneyyy/working-activity)
+  folds the working-status line and publishes it as the `workingActivity`
+  session projection; this app only reads that projection
+  (`src/dsh-adapter/activity-store.ts`) — no in-process derivation, and no
+  UI state written to the shared log.
 
 ## Inline and fullscreen modes
 
@@ -149,6 +179,9 @@ be checked in both modes, especially on narrow terminals and Windows ConPTY.
 | `~/.dsh-tui/themes/` | User theme JSON files; runtime plugin themes do not write here |
 | `~/.dsh-tui/working-activity.json` | Activity animation selection |
 | `~/.dsh-tui/agent-preset.json` | Default Agent preset for new sessions |
+| `~/.dsh-tui/kernel.json` | The backend `/kernel` remembers (`dsh` / `claude` / `codex`) |
+| `~/.dsh-tui/backends/claude/` | Claude backend preferences (`prefs.json`), pins and channel profiles (`channels.json`); Claude sessions themselves live in `~/.claude/projects/` |
+| `~/.dsh-tui/backends/codex/` | Codex preferences/channel profiles (tokenRef only; keys in the DSH credential store); native threads, login and config remain owned by `$CODEX_HOME` / Codex |
 
 `DSH_TUI_SESSION_ROOT` overrides the JSONL root in either composition. The
 profile defaults to `$DSH_HOME/sessions` (normally `~/.dsh/sessions/`);
@@ -192,6 +225,8 @@ relevant when maintaining the dsh-tui side:
 `dsh-TUI` does not provide a separate sandbox. It implements the tool-level
 approval UI (a local panel answering the `approval/request` waterfall), while
 `/permission` preset switching comes from the dsh-base `permission-presets` row.
+On the Claude backend approvals come from the CLI's `canUseTool` callback and add
+"allow always" and a rejection reason; see [Agent backends](agent-backend-design.md).
 
 Effective capability comes from the DSH services mounted by
 `cordis.patch.yml`:
@@ -240,6 +275,9 @@ visual TUI alone does not describe the effective policy.
 
 ## Known limitations
 
+- The experimental Claude backend’s limitations are listed in
+  [Agent backends](agent-backend-design.md) (Chinese); Codex operations, non-goals
+  and live-verification boundaries are in [Codex backend](codex-backend.en.md).
 - Plugin-source context injected into the system prompt is not shown as a
   separate UI segment; it is included in the system/context meter.
 - `/model` switches through a session fork rather than an in-place update; the
@@ -291,6 +329,8 @@ visual TUI alone does not describe the effective policy.
 | stderr diagnostics | `DSH_TUI_DEBUG=1 dsh --profile dsh-tui` |
 | Raw ANSI frames | `DSH_TUI_RENDER_LOG=/path/to/render.log dsh --profile dsh-tui` |
 | Theme regression | `node --import tsx/esm scripts/verify-themes.mjs` |
+| Three-backend comparison | DSH: `verify:projection-golden` / `verify-dsh-translate`; Claude: `verify:claude-contract` / matching fake-SDK scripts; Codex: `verify:codex-contract` / matching fake-app-server scripts; also verify the shared domain/event invariants |
+| Live Codex evidence | Nine 0.160.1 isolated-home offline checks passed without model turns; credentialed checks must use `codex-cheap-only.mjs`. Real login/model calls and inline/fullscreen/narrow-terminal checks were not run in this round, not proven by offline/mocks |
 
 `DSH_TUI_RENDER_LOG` and session exports may contain sensitive content. Redact
 them before sharing.

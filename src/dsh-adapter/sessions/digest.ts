@@ -7,8 +7,8 @@
  *   opening prompt. Measured across a real corpus, the first user prompt lands
  *   within 8,107 bytes of the start (524 in its `agent/inbox/spliced` form),
  *   so a 64 KB window is the cheap path. A larger modern context prefix can
- *   exceed it; listSummaries detects that inconclusive fallback and invokes the
- *   progressive opening scan below instead of caching a cwd basename forever.
+ *   exceed it; listSummaries schedules the progressive opening scan below
+ *   after returning the immediately usable session list.
  * - The TAIL holds whatever was appended most recently: the current title
  *   (titles are re-emitted, and the last one wins), the model of the last
  *   request, and the last exchanges for the preview.
@@ -38,7 +38,7 @@ export const TAIL_WINDOW_BYTES = 128 * 1024
 const TITLE_SCAN_PAGE_BYTES = 128 * 1024
 /** Largest compressed frame the fallback scanner will materialize. */
 const TITLE_SCAN_MAX_FRAME_BYTES = 16 * 1024 * 1024
-/** Prefix suffix hashed to verify append-only growth across revisions. */
+/** Old EOF neighborhood hashed for the JSONL backend's append-only contract. */
 const TITLE_ANCHOR_BYTES = 256
 /** Longest preview excerpt kept per message, in characters. */
 const PREVIEW_CHARS = 400
@@ -113,12 +113,16 @@ function titleOf(line: LogLine): SessionTitle | undefined {
   return { text: text.trim(), source: byProvider ? 'auto' : 'renamed' }
 }
 
-/** The route recorded by a `request/context` event. */
+/** Request headers own the route; context events support historical logs. */
 function modelOf(line: LogLine): string | undefined {
-  if (line['type'] !== 'request/context') return undefined
   const data = line['data']
   if (data === null || typeof data !== 'object') return undefined
-  const model = (data as Record<string, unknown>)['model']
+  const record = data as Record<string, unknown>
+  let model: unknown
+  if (line['type'] === 'request/header') {
+    const header = record['header'] as { config?: { model?: unknown } } | undefined
+    model = header?.config?.model
+  } else if (line['type'] === 'request/context') model = record['model']
   return typeof model === 'string' && model.length > 0 ? model : undefined
 }
 
@@ -199,6 +203,7 @@ export function digestSession(path: string, cwd: string): SessionDigest {
     title: resolved ?? { text: basename(cwd), source: 'fallback' },
     hasPrompt,
     model,
+    modelComplete: model !== undefined || completeHead,
     label,
     ...(!completeHead && tailTitle === undefined ? {} : { titleComplete: true as const }),
   }
@@ -279,81 +284,119 @@ async function reversePage(
   return undefined
 }
 
-/** Scan newest-to-oldest; the first title encountered is last-write-wins. */
-async function recoverLatestTitle(
+export interface SessionModelRecovery {
+  readonly model: string | undefined
+  readonly complete: boolean
+}
+
+interface LatestMetadata {
+  readonly title: SessionTitle | undefined
+  readonly titleComplete: boolean
+  readonly model: string | undefined
+  readonly modelComplete: boolean
+}
+
+/** One newest-to-oldest pass; each wanted fact is last-write-wins and conclusive once found. */
+async function recoverLatestMetadata(
   path: string,
   bytes: number,
+  want: { readonly title: boolean; readonly model: boolean },
   signal?: AbortSignal,
-): Promise<{ title: SessionTitle | undefined; complete: boolean }> {
+): Promise<LatestMetadata> {
   signal?.throwIfAborted()
+  let title: SessionTitle | undefined
+  let model: string | undefined
+  let titleDone = !want.title
+  let modelDone = !want.model
+  const partial = (): LatestMetadata => ({ title, titleComplete: titleDone, model, modelComplete: modelDone })
   let handle: SessionLogHandle
   try {
     handle = await open(path, 'r')
   } catch {
     signal?.throwIfAborted()
-    return { title: undefined, complete: false }
+    return partial()
   }
   try {
     let end = bytes
-    while (end > 0) {
+    while (end > 0 && !(titleDone && modelDone)) {
       signal?.throwIfAborted()
       const page = await reversePage(handle, end, signal)
-      if (page === undefined) return { title: undefined, complete: false }
-      for (let frameIndex = page.frames.length - 1; frameIndex >= 0; frameIndex--) {
-        const frame = page.frames[frameIndex]!
-        const lines = decodeFrame(page.buffer, frame)
-        if (lines === undefined) return { title: undefined, complete: false }
+      if (page === undefined) return partial()
+      for (let frameIndex = page.frames.length - 1; frameIndex >= 0 && !(titleDone && modelDone); frameIndex--) {
+        const lines = decodeFrame(page.buffer, page.frames[frameIndex]!)
+        if (lines === undefined) return partial()
         for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex--) {
-          const title = titleOf(lines[lineIndex]!)
-          if (title !== undefined) return { title, complete: true }
+          if (!titleDone) titleDone = (title = titleOf(lines[lineIndex]!)) !== undefined
+          if (!modelDone) modelDone = (model = modelOf(lines[lineIndex]!)) !== undefined
+        }
+        // Proving no route needs the session header; title absence never did.
+        if (!modelDone && page.start === 0 && frameIndex === 0 && lines[0]?.['type'] !== 'session') {
+          titleDone = true
+          return partial()
         }
       }
       const nextEnd = page.start + page.frames[0]!.start
-      if (nextEnd >= end) return { title: undefined, complete: false }
+      if (nextEnd >= end) return partial()
       end = nextEnd
       await scheduler.yield()
     }
-    return { title: undefined, complete: true }
+    return { title, titleComplete: true, model, modelComplete: modelDone || bytes > 0 }
   } finally {
     await handle.close().catch(() => {})
   }
 }
 
-/** Scan from a known frame boundary through an append-only suffix. */
-export async function recoverAppendedTitle(
+export interface AppendedDigest {
+  readonly title: SessionTitle | undefined
+  readonly model: string | undefined
+  readonly label: string | undefined
+  readonly hasHumanPrompt: boolean
+  /** Only a fully decoded suffix may be folded onto cached prefix facts. */
+  readonly complete: boolean
+}
+
+/** Scan all newly appended frames from the previous EOF frame boundary. */
+export async function digestAppendedSuffix(
   path: string,
   start: number,
   end: number,
   signal?: AbortSignal,
-): Promise<{ title: SessionTitle | undefined; complete: boolean }> {
+): Promise<AppendedDigest> {
   signal?.throwIfAborted()
   let handle: SessionLogHandle
   try {
     handle = await open(path, 'r')
   } catch {
     signal?.throwIfAborted()
-    return { title: undefined, complete: false }
+    return { title: undefined, model: undefined, label: undefined, hasHumanPrompt: false, complete: false }
   }
-  let latest: SessionTitle | undefined
+  let title: SessionTitle | undefined
+  let model: string | undefined
+  let label: string | undefined
+  let hasHumanPrompt = false
+  const result = (complete: boolean): AppendedDigest => ({ title, model, label, hasHumanPrompt, complete })
   try {
     let position = start
     while (position < end) {
       signal?.throwIfAborted()
       const page = await forwardPage(handle, position, end, signal)
-      if (page === undefined) return { title: latest, complete: false }
+      if (page === undefined) return result(false)
       for (const frame of page.frames) {
         const lines = decodeFrame(page.buffer, frame)
-        if (lines === undefined) return { title: latest, complete: false }
+        if (lines === undefined) return result(false)
         for (const line of lines) {
-          latest = titleOf(line) ?? latest
+          title = titleOf(line) ?? title
+          model = modelOf(line) ?? model
+          label = labelOf(line) ?? label
+          hasHumanPrompt ||= humanPrompt(line) !== undefined
         }
       }
       const consumed = page.frames[page.frames.length - 1]!.end
-      if (consumed <= 0) return { title: latest, complete: false }
+      if (consumed <= 0) return result(false)
       position += consumed
       await scheduler.yield()
     }
-    return { title: latest, complete: true }
+    return result(true)
   } finally {
     await handle.close().catch(() => {})
   }
@@ -403,18 +446,14 @@ async function recoverFirstPrompt(
   }
 }
 
-/**
- * Recover the authoritative display title for one immutable file snapshot:
- * reverse scan for the LAST title, then (only when none exists) forward scan
- * for the FIRST human prompt. Both directions page on verified frame boundaries.
- */
-export async function recoverSessionTitle(
+/** Fall back to the first human prompt only after a complete scan proved no title. */
+async function titleRecovery(
+  latest: LatestMetadata,
   path: string,
   bytes: number,
   signal?: AbortSignal,
 ): Promise<SessionTitleRecovery> {
-  const latest = await recoverLatestTitle(path, bytes, signal)
-  if (latest.title !== undefined || !latest.complete) return latest
+  if (latest.title !== undefined || !latest.titleComplete) return { title: latest.title, complete: latest.titleComplete }
   const opening = await recoverFirstPrompt(path, bytes, signal)
   return {
     title: opening.prompt === undefined ? undefined : { text: opening.prompt, source: 'prompt' },
@@ -423,7 +462,37 @@ export async function recoverSessionTitle(
   }
 }
 
-/** Hash the previous EOF neighborhood before carrying title evidence forward. */
+/**
+ * Recover the requested display facts for one immutable file snapshot in a
+ * single reverse pass: the LAST title and/or route, then (only when no title
+ * exists) a forward scan for the FIRST human prompt. Pages stay on verified
+ * frame boundaries.
+ */
+export async function recoverSessionMetadata(
+  path: string,
+  bytes: number,
+  want: { readonly title: boolean; readonly model: boolean },
+  signal?: AbortSignal,
+): Promise<{ title?: SessionTitleRecovery; model?: SessionModelRecovery }> {
+  const latest = await recoverLatestMetadata(path, bytes, want, signal)
+  return {
+    ...(want.title ? { title: await titleRecovery(latest, path, bytes, signal) } : {}),
+    ...(want.model ? { model: { model: latest.model, complete: latest.modelComplete } } : {}),
+  }
+}
+
+/** Title-only recovery; see {@link recoverSessionMetadata}. */
+export async function recoverSessionTitle(path: string, bytes: number, signal?: AbortSignal): Promise<SessionTitleRecovery> {
+  return titleRecovery(await recoverLatestMetadata(path, bytes, { title: true, model: false }, signal), path, bytes, signal)
+}
+
+/** Route-only recovery; absence is proven only by a complete scan reaching the session header. */
+export async function recoverSessionModel(path: string, bytes: number, signal?: AbortSignal): Promise<SessionModelRecovery> {
+  const latest = await recoverLatestMetadata(path, bytes, { title: false, model: true }, signal)
+  return { model: latest.model, complete: latest.modelComplete }
+}
+
+/** Hash the previous EOF neighborhood; this detects replacement near the old tail. */
 export async function sessionTitleAnchor(
   path: string,
   bytes: number,

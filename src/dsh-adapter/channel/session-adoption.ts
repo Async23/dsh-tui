@@ -1,14 +1,16 @@
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import type { AgentSession } from '../../agent/session.js'
+import { dshHandleOf } from '../backend/session.js'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { ChannelState } from './types.js'
-import type { createChannelBinding } from './binding.js'
+import type { DshChannelBinding } from './binding.js'
 import { resetSessionProjection } from './session-reset.js'
 
-type Binding = ReturnType<typeof createChannelBinding>
+type Binding = DshChannelBinding
 type AdoptionState = Pick<
   ChannelState,
   | 'status'
   | 'agentId'
+  | 'sessionId'
   | 'agentPreset'
   | 'working'
   | 'emit'
@@ -42,16 +44,18 @@ export function createSessionAdoption(
    * synchronous so subscriptions cannot observe a half-reset projection.
    */
   const adoptForkedAgent = (
-    handle: AgentHandle,
+    candidate: AgentSession,
     capture: ReturnType<Binding['capture']>,
     seed: readonly SessionEvent[],
     agentPreset: string | undefined,
     childId: SessionId,
-  ): string => deps.binding.adopt(handle, capture, (previous, disposePrevious) => {
+  ): string => deps.binding.adopt(candidate, capture, (previous, disposePrevious) => {
+    const handle = dshHandleOf(candidate)
     const sourceSessionId = String(previous.agent.session.id)
     resetSessionProjection(state, deps.rowIds, deps.resetProjector, deps.resetSubagents, deps.resetJobs)
     state.status = handle.agent.status
     state.agentId = handle.agent.id
+    state.sessionId = handle.agent.session.id
     state.agentPreset = agentPreset
     deps.replay(seed)
     deps.settleReplay()

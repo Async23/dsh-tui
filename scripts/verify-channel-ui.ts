@@ -3,6 +3,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { compositionAndCoreSource } from './lib/channel-composition.mjs'
 import { Context } from '@deepseek-ai/cordis'
 import { createChannel } from '../src/dsh-adapter/channel.js'
 import { bindChannelCommands } from '../src/dsh-adapter/channel/commands.js'
@@ -105,8 +106,21 @@ function fixture(jobs?: unknown, options: { throwOnEvent?: string; effectCleanup
   const unregister = registerTuiChannel(ctx, raw)
   const mount = mountChannelUi(ctx, raw, undefined, 'new')
   bindChannelCommands(raw, mount.channel)
+  assert.equal(mount.channel.backendChannels(), undefined, 'DSH has no native channel host')
+  assert.equal(mount.channel.backendModes(), undefined, 'DSH keeps its shared mode pipeline')
+  assert.equal(mount.channel.backendMcp(), undefined, 'DSH reports MCP status without server controls')
   mount.channel.setWhale(false)
   assert.equal(raw.whale, false)
+  // The minimal-UI flag: `minimal` stays a live deprecated alias of
+  // `minimalUi`, both on the raw state and through the frozen UI projection,
+  // and the deprecated setter still drives the same flag.
+  mount.channel.setMinimalUi(true)
+  assert.equal(raw.minimalUi, true)
+  assert.equal(raw.minimal, true, 'deprecated `minimal` alias reads minimalUi')
+  assert.equal(mount.channel.minimal, true, 'deprecated `minimal` alias survives the UI projection')
+  mount.channel.setMinimal(false)
+  assert.equal(raw.minimalUi, false, 'deprecated `setMinimal` alias writes minimalUi')
+  assert.equal(mount.channel.minimalUi, false)
   mount.channel.submit('hello')
   await tick()
   assert.ok(writes.includes('submit'))
@@ -126,6 +140,46 @@ function fixture(jobs?: unknown, options: { throwOnEvent?: string; effectCleanup
   await assert.rejects(raw.switchWorkspace({ cwd: '/other', label: 'other' } as never), /lifetime/)
   unregister()
   raw.releaseContributions()
+}
+
+// Native subhosts keep passive reads available in shadow mode while their
+// writes and every retained callback stay behind the production UI lease.
+for (const mode of ['new', 'passive-shadow', 'replay-shadow'] as const) {
+  const { ctx, raw } = fixture()
+  const option = { id: 'native', name: 'Native', models: [], tiers: [] }
+  let writes = 0
+  raw.backendChannels = () => ({
+    snapshot: () => ({ channels: [option], activeId: option.id }),
+    peekImport: () => ({ tiers: { opus: 'mapped' } }),
+    activate: () => { writes += 1; return { ok: true, restart: false } },
+    importFromSettings: () => { writes += 1; return { option, restart: false } },
+    save: () => { writes += 1; return option }, remove: () => { writes += 1; return true },
+  })
+  raw.backendAuth = () => ({ login: async present => { writes += 1; await present(raw.providerSetup()!.oauth!, 'anthropic') } })
+  raw.backendModes = () => ({ snapshot: () => ({ modes: [{ id: 'default', name: 'Default' }], currentIndex: 0 }), set: async () => { writes += 1; return true } })
+  raw.backendMcp = () => ({ reconnect: async () => { writes += 1; return true }, toggle: async () => { writes += 1; return true } })
+  const unregister = registerTuiChannel(ctx, raw)
+  const mount = mountChannelUi(ctx, raw, undefined, mode)
+  try {
+    const channels = mount.channel.backendChannels()!
+    const modes = mount.channel.backendModes()!
+    const mcp = mount.channel.backendMcp()!
+    const auth = mount.channel.backendAuth()!
+    let logout!: () => Promise<boolean>
+    assert.equal(channels.snapshot().activeId, 'native')
+    assert.equal(channels.peekImport()?.tiers.opus, 'mapped')
+    assert.equal(modes.snapshot().currentIndex, 0)
+    assert.ok(Object.isFrozen(channels.snapshot().channels[0]), 'native roster rows are detached immutable values')
+    const calls = [() => channels.activate('native'), () => channels.importFromSettings(), () => channels.save({ id: 'native', name: 'Native' }), () => channels.remove('native'), () => modes.set('default'), () => mcp.reconnect('server'), () => mcp.toggle('server', true), () => auth.login(async oauth => { logout = () => oauth.logout('anthropic'); return 'cancelled' })]
+    for (const call of calls) {
+      if (mode === 'new') await call()
+      else assert.throws(call, /shadow policy/)
+    }
+    assert.equal(writes, mode === 'new' ? calls.length : 0)
+    mount.dispose()
+    for (const call of [...calls, () => channels.snapshot(), () => channels.peekImport(), () => modes.snapshot()]) assert.throws(call, /lifetime/)
+    if (mode === 'new') assert.throws(logout, /lifetime/)
+  } finally { mount.dispose(); unregister(); raw.releaseContributions() }
 }
 
 // Real event-router/projector wiring resets the warning latch on compaction.
@@ -711,7 +765,7 @@ for (const method of ['writeProfile', 'mutateProfile', 'removeProfile'] as const
   const first = initial[0]!
   historicalReads = 0
   for (let i = 0; i < 8; i++) {
-    raw.workingActivity = { phase: 'thinking', text: `activity ${i}` } as never
+    raw.activityFrames = `frame ${i}` as never
     raw.emitStream()
     await tick()
     assert.equal(mount.channel.rows[0], first, 'activity stream retains unchanged historical row')
@@ -873,21 +927,24 @@ for (const method of ['writeProfile', 'mutateProfile', 'removeProfile'] as const
 {
   const { createChannelOwner } = await import('../src/dsh-adapter/channel/owner.js')
   const { createChannelBinding } = await import('../src/dsh-adapter/channel/binding.js')
+  const { createDshSession } = await import('../src/dsh-adapter/backend/session.js')
+  // The binding holds sessions; wrapping a fixture agent/handle touches no host service.
+  const session = (target: unknown) => createDshSession({} as never, target as never)
   const owner = createChannelOwner()
   const { agent } = fixture()
-  const binding = createChannelBinding(agent as never, undefined, owner)
+  const binding = createChannelBinding(session({ agent, handle: undefined }), owner)
   let disposed = 0
-  let finish!: (value: unknown) => void
+  let finish!: (value: ReturnType<typeof session>) => void
   const pending = binding.prepare(binding.capture(), () => new Promise(resolve => { finish = resolve }))
   owner.dispose()
-  finish({ agent, dispose: async () => { disposed += 1 } })
+  finish(session({ agent, dispose: async () => { disposed += 1 } }))
   await assert.rejects(pending, /binding changed/)
   assert.equal(disposed, 1)
   const active = createChannelOwner()
-  const next = createChannelBinding(agent as never, undefined, active)
+  const next = createChannelBinding(session({ agent, handle: undefined }), active)
   let subscriptions = 0
   next.subscribe(() => { subscriptions += 1 })
-  next.switchTo({ ...agent, id: 'replacement' } as never, undefined, () => undefined)
+  next.switchTo(session({ agent: { ...agent, id: 'replacement' }, handle: undefined }), () => undefined)
   next.bind()
   assert.equal(subscriptions, 1)
   active.dispose()
@@ -910,7 +967,8 @@ for (const method of ['writeProfile', 'mutateProfile', 'removeProfile'] as const
   const errors: unknown[] = []
   const onError = (error: unknown) => { errors.push(error) }
   process.on('unhandledRejection', onError)
-  const delivery = createInputDelivery(ctx, owner, { agent: agent as never }, () => raw, mount.channel.notify, () => undefined, () => undefined)
+  const { createDshSession } = await import('../src/dsh-adapter/backend/session.js')
+  const delivery = createInputDelivery(ctx, owner, { agent: agent as never, session: createDshSession(ctx, { agent: agent as never, handle: undefined }) }, () => raw, mount.channel.notify, () => undefined, () => undefined)
   const parked = delivery.withDecisionPending('tui/input', new Promise(resolve => { finish = resolve }))
   await tick()
   owner.dispose(); mount.dispose(); unregister(); raw.releaseContributions()
@@ -950,7 +1008,9 @@ assert.match(plugin, /bindChannelCommands\(rawChannel, channel\)/)
 assert.ok(!plugin.includes('ViaChannelFacade('), 'bootstrap must not use legacy raw-fallback helpers')
 const rawCalls = [...plugin.matchAll(/rawChannel\.([A-Za-z]+)\s*\(/g)].map(match => match[1])
 assert.deepEqual(rawCalls.sort(), ['bindApprovalStore', 'releaseContributions'])
-const impl = readFileSync(new URL('../src/dsh-adapter/channel.ts', import.meta.url), 'utf8')
+// Every composition root (channel.ts + core/compose.ts + extensions.ts) plus
+// the channel core modules they compose.
+const impl = compositionAndCoreSource()
 for (const [name, effect] of Object.entries(CHANNEL_UI_EFFECTS)) {
   if (effect === 'mutate') assert.ok(!new RegExp(`\\bstate\\.${name}\\s*\\(`).test(impl), `internal raw mutation: ${name}`)
 }

@@ -35,7 +35,7 @@ import { selectTerminalImageProtocol } from './terminal-image-protocol.js';
 import { nodeCache } from './node-cache.js';
 import { optimize } from './optimizer.js';
 import Output from './output.js';
-import type { ParsedKey } from './parse-keypress.js';
+import type { ParsedKey, TerminalResponse } from './parse-keypress.js';
 import reconciler, { dispatcher, getLastCommitMs, getLastYogaMs, isDebugRepaintsEnabled, recordYogaMs, resetProfileCounters } from './reconciler.js';
 import renderNodeToOutput, { consumeFollowScroll, consumeViewportResizes, didLayoutShift } from './render-node-to-output.js';
 import { applyPositionedHighlight, type MatchPosition, scanPositions } from './render-to-screen.js';
@@ -47,7 +47,7 @@ import { isDecstbmSafe, SYNC_OUTPUT_SUPPORTED, serializeDiff, supportsDecrqmProb
 import { CURSOR_HOME, cursorMove, cursorPosition, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE, ENABLE_KITTY_KEYBOARD, ENABLE_MODIFY_OTHER_KEYS, ENABLE_WIN32_INPUT_MODE, ERASE_SCREEN, ERASE_SCROLLBACK, SGR_RESET } from './termio/csi.js';
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, ENTER_ALT_SCREEN, EXIT_ALT_SCREEN, SHOW_CURSOR } from './termio/dec.js';
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, setClipboard, supportsTabStatus, wrapForMultiplexer } from './termio/osc.js';
-import { decrqm, kittyGraphics, terminalCellSizePixels, terminalWindowSizePixels } from './terminal-querier.js';
+import { decrqm, kittyGraphics, terminalCellSizePixels, terminalWindowSizePixels, xtversion } from './terminal-querier.js';
 import { TerminalWriteProvider } from './useTerminalNotification.js';
 import { TerminalImagesContext } from './hooks/use-terminal-images.js';
 import { DEFAULT_TERMINAL_CELL_SIZE, resolveTerminalCellSize, type TerminalImagePlacement } from './terminal-image.js';
@@ -112,6 +112,8 @@ export default class Ink {
     getSnapshot: (): boolean => this.altScreenActive && (this.kittyGraphicsSupported || this.sixelGraphicsSupported) &&
       !this.isPaused && !this.terminalQueriesSuspended && !this.isUnmounted,
     getCellSize: () => this.measuredImageCellSize,
+    getProtocol: (): 'kitty' | 'sixel' | undefined =>
+      !this.terminalImages.getSnapshot() ? undefined : this.kittyGraphicsSupported ? 'kitty' : 'sixel',
     request: (): (() => void) => {
       if (this.isUnmounted) return noop;
       this.terminalImageRequests += 1;
@@ -379,9 +381,26 @@ export default class Ink {
       return;
     }
 
+    // While paused an external editor owns the tty (`$VISUAL`/`$EDITOR` runs
+    // with inherited stdio in the same process group, and its own Ctrl+Z
+    // suspends the whole group). Re-asserting termios or repainting here would
+    // stomp the editor's modes and screen, so a SIGCONT during the handoff is
+    // left entirely to the child.
+    if (this.isPaused) {
+      return;
+    }
+
+    // A SIGCONT can come from an EXTERNAL stop (kill -STOP, shell `suspend`,
+    // SIGTSTP) now that the app no longer stops itself: while we were stopped
+    // the shell owned the tty and left it in ITS cooked modes. A job is
+    // expected to restore its own termios when it continues — without this the
+    // composer keeps drawing frames while the line discipline echoes every
+    // keystroke and delivers nothing until Enter.
+    this.app?.reassertRawMode();
+
     // Alt screen: after SIGCONT, content is stale (shell may have written
-    // to main screen, switching focus away) and mouse tracking was
-    // disabled by handleSuspend.
+    // to main screen, switching focus away) and the DEC private modes the app
+    // enabled were reset by whoever owned the tty meanwhile.
     if (this.altScreenActive) {
       this.reenterAltScreen();
       return;
@@ -391,9 +410,10 @@ export default class Ink {
     this.frontFrame = emptyFrame(this.frontFrame.viewport.height, this.frontFrame.viewport.width, this.stylePool, this.charPool, this.hyperlinkPool);
     this.backFrame = emptyFrame(this.backFrame.viewport.height, this.backFrame.viewport.width, this.stylePool, this.charPool, this.hyperlinkPool);
     this.log.reset();
-    // Physical cursor position is unknown after the shell took over during
-    // suspend. Clear displayCursor so the next frame's cursor preamble
-    // doesn't emit a relative move from a stale park position.
+    // Physical cursor position is unknown after the shell took over during a
+    // stop (external SIGSTOP / shell `suspend`). Clear displayCursor so the
+    // next frame's cursor preamble doesn't emit a relative move from a stale
+    // park position.
     this.displayCursor = null;
   };
 
@@ -919,7 +939,7 @@ export default class Ink {
     if (this.altScreenActive) {
       selActive = hasSelection(this.selection);
       if (selActive) {
-        applySelectionOverlay(frame.screen, this.selection, this.stylePool);
+        applySelectionOverlay(frame.screen, this.selection, this.stylePool, frame.images);
       }
       // Commit-consistency guard: hash the rows under the highlight on the
       // frame the copy would actually read. An uncoordinated change since
@@ -1377,6 +1397,16 @@ export default class Ink {
   get isAltScreenActive(): boolean {
     return this.altScreenActive;
   }
+  /**
+   * Read-only source of truth for "this host may receive SGR mouse reports":
+   * true only while <AlternateScreen mouseTracking> is in effect. App injects
+   * it into KeyParseState.mouseReportingActive on every processInput
+   * (ADR-0007 D2); the parser only reads it. Public so instances.get()
+   * callers can access it, mirroring the selection field above.
+   */
+  get isAltScreenMouseTracking(): boolean {
+    return this.altScreenMouseTracking;
+  }
 
   /**
    * Re-assert terminal modes after a gap (>5s stdin silence or event-loop
@@ -1795,9 +1825,10 @@ export default class Ink {
       querier.send(kittyGraphics(queryId)),
       querier.send(terminalCellSizePixels()),
       querier.send(terminalWindowSizePixels()),
+      querier.send(xtversion()),
       querier.flush({ attributes: true }),
     ])
-      .then(async ([reply, cellPixels, windowPixels, attributes]) => {
+      .then(async ([reply, cellPixels, windowPixels, identity, attributes]) => {
         if (this.isUnmounted || this.isPaused || this.terminalQueriesSuspended) {
           return;
         }
@@ -1810,6 +1841,11 @@ export default class Ink {
           if (mode?.status === 3) return;
           this.sixelGraphicsManager.setDisplayMode(mode?.status === 1);
         }
+        // Ghostty 1.3.1 can segfault while inflating a valid RGBA upload.
+        // Resolve identity in this batch (also over SSH) before images go live.
+        const terminalName = identity?.name || process.env.TERM_PROGRAM ||
+          (process.env.TERM === 'xterm-ghostty' ? 'ghostty' : '');
+        this.kittyGraphicsManager.setCompression(!/^ghostty\b/iu.test(terminalName));
         this.kittyGraphicsSupported = protocol === 'kitty';
         this.sixelGraphicsSupported = protocol === 'sixel';
         this.notifyTerminalImagesChange();
@@ -2467,12 +2503,29 @@ export default class Ink {
     const screen = this.frontFrame.screen;
     // selectWordAt/selectLineAt no-op on noSelect/out-of-bounds. Seed with
     // a char-mode selection so the press still starts a drag even if the
-    // word/line scan finds nothing selectable.
-    startSelection(this.selection, col, row);
+    // word/line scan finds nothing selectable. The screen seeds the
+    // direction fence: a multi-click anchored on a noSelect cell (the
+    // side-panel column) selects that region's text.
+    startSelection(this.selection, col, row, screen);
     if (count === 2) selectWordAt(this.selection, screen, col, row);else selectLineAt(this.selection, screen, row);
     // Ensure hasSelection is true so release doesn't re-dispatch onClickAt.
     // selectWordAt no-ops on noSelect; selectLineAt no-ops out-of-bounds.
     if (!this.selection.focus) this.selection.focus = this.selection.anchor;
+    this.notifySelectionChange();
+  }
+
+  /**
+   * Begin a char-mode selection at (col, row), reading the anchor cell's
+   * noSelect bit from the current frame so the gesture's direction fence is
+   * seeded (SelectionState.includeNoSelectCells): a drag that starts inside
+   * a noSelect region — the side-panel column — selects that region's own
+   * text; a chat-origin drag keeps excluding panel glyphs (design §4.6).
+   * Bound as the App prop onSelectionStart (replacing App's direct
+   * startSelection calls, which had no screen to read the bit from).
+   */
+  handleSelectionStart(col: number, row: number): void {
+    if (!this.altScreenActive) return;
+    startSelection(this.selection, col, row, this.frontFrame.screen);
     this.notifySelectionChange();
   }
 
@@ -2596,10 +2649,22 @@ export default class Ink {
   };
   private setAppRef(app: App | null): void {
     this.app = app;
+    if (app !== null) app.querier.onUnsolicited = this.handleUnsolicitedResponse;
   }
+  /**
+   * Kitty placements report failures; an ENOENT means the terminal evicted a
+   * dormant image under a quota smaller than our retention budget. Repaint so
+   * the next reconcile uploads it again.
+   */
+  private handleUnsolicitedResponse = (response: TerminalResponse): void => {
+    if (response.type !== 'kittyGraphics' || this.isUnmounted) return;
+    if (this.kittyGraphicsManager.handleResponse(response.imageId, response.status)) {
+      this.scheduleRender();
+    }
+  };
   render(node: ReactNode): void {
     this.currentNode = node;
-    const tree = <App ref={this.setAppRef} stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onContextMenuAt={this.dispatchContextMenu} onHoverAt={this.dispatchHover} onWheelAt={this.dispatchWheelAt} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onDragTargetAt={this.findDragTargetAt} onDragDispatch={this.dispatchDrag} onPointerGestureChange={this.setPointerGestureActive} onProtocolCandidateChange={this.setProtocolCandidateActive} onReleaseTail={this.drainReleaseTail} onClickProbe={this.clickProbeAtBatchTail} onStdinResume={this.reassertTerminalModes} onTerminalFocus={this.handleTerminalFocusProbe} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
+    const tree = <App ref={this.setAppRef} stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onContextMenuAt={this.dispatchContextMenu} onHoverAt={this.dispatchHover} onWheelAt={this.dispatchWheelAt} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionStart={this.handleSelectionStart} onSelectionDrag={this.handleSelectionDrag} onDragTargetAt={this.findDragTargetAt} onDragDispatch={this.dispatchDrag} onPointerGestureChange={this.setPointerGestureActive} onProtocolCandidateChange={this.setProtocolCandidateActive} onReleaseTail={this.drainReleaseTail} onClickProbe={this.clickProbeAtBatchTail} onStdinResume={this.reassertTerminalModes} onTerminalFocus={this.handleTerminalFocusProbe} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
         <TerminalWriteProvider value={this.writeRaw}>
           <TerminalImagesContext.Provider value={this.terminalImages}>
             {node}
