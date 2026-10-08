@@ -20,7 +20,9 @@ if (args.includes('--help')) {
   for (const command of ['dsh', 'pnpm', ...(args.includes('--profile-only') ? [] : ['npm'])]) run(command, ['--version'])
   const archive = await downloadReleasePackage(version)
   console.log(`Verified release archive: ${archive}`)
-  run('dsh', ['plugin', '--profile', 'dsh-tui', 'add', archive])
+  // DSH resolves bundle components from its own global installation first.
+  // Align that copy before its compatibility check validates the profile.
   if (!args.includes('--profile-only')) run('npm', ['install', '--global', '--legacy-peer-deps', '--ignore-scripts', archive])
+  run('dsh', ['plugin', '--profile', 'dsh-tui', 'add', archive])
   console.log('Installed Async23/dsh-tui. Start with: dsh-tui (or dst). Existing processes use the new version after restart.')
 }

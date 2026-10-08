@@ -65,6 +65,47 @@ try {
   } finally {
     process.argv[1] = originalArgv1
   }
+  // DSH 0.2 resolves bundle components from its global installation first.
+  // Exercise the installer against that contract: a stale global launcher
+  // makes the profile transaction reject and roll back the new package.
+  const installer = await readFile(new URL('./install-release.mjs', import.meta.url), 'utf8')
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+  const install = new AsyncFunction('spawnSync', 'downloadReleasePackage', 'process', 'console',
+    installer.replace(/^import .+\n/gm, ''))
+  const invokeInstaller = async (flags = [], npmStatus = 0) => {
+    let globalReady = flags.includes('--profile-only')
+    const mutations = []
+    let error
+    try {
+      await install((command, args) => {
+        if (args[0] === '--version') return { status: 0 }
+        mutations.push({ command, args })
+        assert.equal(args.at(-1), archive, 'every installation uses the verified archive')
+        if (command === 'npm') {
+          globalReady = npmStatus === 0
+          return { status: npmStatus }
+        }
+        assert.equal(command, 'dsh')
+        return { status: globalReady ? 0 : 1 }
+      }, async requested => {
+        assert.equal(requested, version)
+        return archive
+      }, { argv: ['node', 'install.mjs', version, ...flags], platform: 'linux' }, { log() {} })
+    } catch (caught) {
+      error = caught
+    }
+    return { mutations, error }
+  }
+  const fullInstall = await invokeInstaller()
+  assert.equal(fullInstall.error, undefined, 'an older global launcher must not block the profile upgrade')
+  assert.deepEqual(fullInstall.mutations.map(call => call.command), ['npm', 'dsh'])
+  const failedLauncher = await invokeInstaller([], 1)
+  assert.match(String(failedLauncher.error), /npm failed/)
+  assert.deepEqual(failedLauncher.mutations.map(call => call.command), ['npm'], 'a launcher failure must stop before the profile transaction')
+  const profileOnly = await invokeInstaller(['--profile-only'])
+  assert.equal(profileOnly.error, undefined)
+  assert.deepEqual(profileOnly.mutations.map(call => call.command), ['dsh'])
+  checks += 6
   console.log(`Fork release: ${checks} checks passed (checksum, errors, cache, pinned installs, own update source, offline).`)
 } finally {
   globalThis.fetch = originalFetch

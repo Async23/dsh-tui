@@ -1,6 +1,8 @@
-# dsh-TUI 0.14.0-async23.1
+# dsh-TUI 0.14.0-async23.2
 
 同步上游正式版 0.14.0，基础提交 `c2eee95218d1decfce138f7d31ef7099cc391d00`，保留个人版的全部界面定制和 GitHub Release 更新来源。
+
+本次修订修复 DSH 0.2 的安装顺序：安装器先用已校验的包更新全局启动器，再更新 profile。DSH 优先从全局安装目录解析插件组件，旧的全局包会让新版 profile 被兼容性检查拒绝；更新顺序调整后仍由官方检查验证新包。增加安装流程回归，覆盖旧启动器升级、全局安装失败时停止，以及仅安装 profile。
 
 - 引入上游多内核界面：DSH 为默认内核，Claude 与 Codex 为实验性可选后端；同时更新会话管理、Agent 团队面板、侧线程、Markdown 与数学公式呈现。上游功能和兼容说明见 [0.14.0 Release](https://github.com/ccch1mneyyy/dsh-TUI/releases/tag/v0.14.0)。
 - 保留紧凑输入区和 Recap、默认上下文用量明细、回到底部按钮开关，以及跟随实际键位配置的待办快捷键提示。

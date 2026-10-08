@@ -50,6 +50,6 @@ pnpm release:pack
 
 ## 安装与回退
 
-安装脚本先校验 Release 包，再调用官方 DSH 的 profile 安装机制；全局 launcher 使用同一个已验证的文件。默认 profile 为 `dsh-tui`，不重建 DSH home。安装失败时脚本非零退出，可以修复报错后重跑。
+安装脚本先校验 Release 包，用同一个已验证的文件依次更新全局 launcher 和官方 DSH profile。DSH 0.2 优先从自身全局安装目录解析 bundle 组件，因此旧 launcher 必须先更新，才能通过新版 profile 的兼容性检查。默认 profile 为 `dsh-tui`，不重建 DSH home。安装失败时脚本非零退出，可以修复报错后重跑。
 
 已验证的包保留在 `~/.cache/dsh-tui-releases/`，因为 pnpm 会将文件路径写入 profile 依赖。回退到个人旧版时，下载该旧版 Release 的 `install.mjs` 并重新运行；无需改源码。安装上游 npm 包则会恢复上游 UI 和更新来源。
